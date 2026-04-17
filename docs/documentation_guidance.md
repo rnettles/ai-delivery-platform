@@ -36,6 +36,7 @@ Avoid:
 | Functional Requirements | What the system must do |
 | Roadmap | How the system will be built |
 | ADR | Why decisions were made |
+| Features | How the system evolves |
 
 ---
 
@@ -80,6 +81,10 @@ docs/
 │   ├── adr-002-artifact-driven-state.md
 │   ├── adr-003-deterministic-over-llm.md
 │   └── adr-004-governance-first-architecture.md
+│
+├── features/
+│   ├── feature-<name>.md
+│   └── index.md
 ```
 
 ---
@@ -87,6 +92,8 @@ docs/
 # 4. Document Responsibilities
 
 ## 4.1 PRD
+“The business intent and value promise of the system”
+
 Defines:
 - Purpose
 - Goals
@@ -96,6 +103,8 @@ Defines:
 ---
 
 ## 4.2 Architecture
+“The rules of the system’s shape and boundaries”
+
 Defines:
 - System layers
 - High-level flows
@@ -104,6 +113,8 @@ Defines:
 ---
 
 ## 4.3 Design (Execution Model)
+“How the system moves and behaves over time”
+
 Defines:
 - Role contracts (Planner, Sprint Controller)
 - State model
@@ -114,6 +125,8 @@ Defines:
 ---
 
 ## 4.4 Functional Requirements
+“The non-negotiable capabilities the system must satisfy”
+
 Defines:
 - System behaviors as “System SHALL…” statements
 - No implementation details
@@ -122,6 +135,8 @@ Defines:
 ---
 
 ## 4.5 Roadmap
+“The order in which the system becomes real”
+
 Defines:
 - Phases
 - Deliverables
@@ -130,6 +145,8 @@ Defines:
 ---
 
 ## 4.6 ADR (Architecture Decision Records)
+“The memory of why the system is the way it is”
+
 Defines:
 - Key design decisions
 - Rationale
@@ -142,7 +159,28 @@ Each ADR should answer:
 
 ---
 
+## 4.7 Features
+“A coordinated change across multiple system truths”
+
+Defines:
+- A specific system enhancement or capability
+- The areas of the system impacted
+- The required updates across documentation layers
+
+Features DO NOT:
+- Redefine architecture
+- Duplicate requirements
+- Introduce new system truths independently
+
+Instead, features:
+- Reference existing documents
+- Identify required changes
+- Coordinate updates across layers
+
+---
+
 # 5. Governance Manifest
+“The runtime contract that binds orchestration to governance”
 
 The Governance Manifest is a **contract document**, not an explanation document.
 
@@ -160,22 +198,106 @@ It must:
 
 ---
 
-# 6. Avoiding Common Problems
+# 6. Feature Documentation Model
 
-## 6.1 Duplication
+## 6.1 Purpose of Feature Documents
+
+Feature documents act as **coordination artifacts**, not sources of truth.
+
+They exist to:
+- Track system evolution
+- Identify impacted areas
+- Guide consistent updates across layers
+
+---
+
+## 6.2 Feature Structure
+
+Each feature should follow this structure:
+
+```
+# Feature: <Feature Name>
+
+## Summary
+Brief description of the feature
+
+---
+
+## Impacted Areas
+
+### PRD
+- <what changes>
+
+### Architecture
+- <what changes>
+
+### Design (Execution Model)
+- <what changes>
+
+### Governance Manifest
+- <what changes>
+
+### Functional Requirements
+- <what changes>
+
+### Roadmap
+- <phase or sequencing impact>
+
+### ADR
+- <new or updated decision>
+
+---
+
+## Dependencies
+- <required prior capabilities>
+
+---
+
+## Notes
+- Constraints, assumptions, or considerations
+```
+
+---
+
+## 6.3 Feature Lifecycle
+
+1. Create Feature Document
+2. Identify impacted layers
+3. Update authoritative documents:
+   - PRD
+   - Architecture
+   - Execution Model
+   - Governance Manifest
+   - Functional Requirements
+4. Add ADR if needed
+5. Update Roadmap
+6. Implement
+
+---
+
+## 6.4 Source of Truth Rule
+
+> Feature documents are NOT the source of truth.  
+> System documents are the source of truth.
+
+---
+
+# 7. Avoiding Common Problems
+
+## 7.1 Duplication
 If you find yourself copying content between documents:
 → STOP and refactor
 
 ---
 
-## 6.2 Blurring Layers
+## 7.2 Blurring Layers
 Do not mix:
 - Architecture with execution details
 - Requirements with implementation
 
 ---
 
-## 6.3 Hidden Logic
+## 7.3 Hidden Logic
 Do not embed logic in:
 - n8n workflows
 - documentation prose
@@ -186,7 +308,18 @@ All logic must exist in:
 
 ---
 
-# 7. Evolution Strategy
+## 7.4 Feature Drift
+Do not allow features to become:
+- standalone design documents
+- alternate sources of truth
+
+Features must always:
+- point to system documents
+- update system documents
+
+---
+
+# 8. Evolution Strategy
 
 As the system evolves:
 
@@ -194,20 +327,24 @@ As the system evolves:
 - Extend governance_manifest.md
 - Add ADRs for major decisions
 - Update roadmap, not architecture, for sequencing changes
+- Use feature documents to coordinate all cross-layer changes
 
 ---
 
-# 8. Summary
+# 9. Summary
 
 This documentation system ensures:
 
 - Clear separation of concerns
 - Single source of truth
 - Strong governance alignment
-- Scalable design evolution
+- Controlled system evolution
+- Feature-driven development without architectural drift
 
 ---
 
-# 9. Guiding Rule
+# 10. Guiding Rule
 
 > Adapt orchestration to governance — never governance to orchestration
+
+> Features describe change — system documents define truth
