@@ -1,40 +1,83 @@
 # Functional Requirements
+## Governed AI Orchestration System
 
-## 1. Intake & Routing
-- System shall accept requests from Slack
-- System shall normalize requests into structured format
-- System shall create workflow instance in Postgres
+---
 
-## 2. Governance Integration
-- System shall load prompts, rules, templates from Git
-- System shall not duplicate governance rules in n8n or DB
+## 1. Governance Integration
+
+- System SHALL load prompts, rules, and templates from Git
+- System SHALL NOT duplicate governance rules in n8n or Postgres
+- System SHALL reference governance artifacts via file paths
+
+---
+
+## 2. Intake & Workflow Initialization
+
+- System SHALL accept Slack-based requests
+- System SHALL normalize request into structured format
+- System SHALL create workflow instance in Postgres
+- System SHALL assign initial state = `received`
+
+---
 
 ## 3. Planner Execution
-- System shall invoke planner role
-- System shall generate Phase artifact
-- System shall generate Sprint Plan artifact
+
+- System SHALL load planner prompt and rules
+- System SHALL load Phase and Sprint Plan templates
+- System SHALL invoke LLM to produce structured JSON output
+- System SHALL deterministically render artifacts into templates
+- System SHALL persist artifacts in Git
+
+---
 
 ## 4. Sprint Controller Execution
-- System shall invoke sprint-controller role
-- System shall generate staged task artifacts
+
+- System SHALL load sprint-controller prompt and rules
+- System SHALL load Sprint Plan artifact
+- System SHALL generate structured task definitions
+- System SHALL render staged task artifacts in Git
+
+---
 
 ## 5. Artifact Management
-- System shall persist artifacts in Git
-- System shall store only references in Postgres
+
+- System SHALL treat Git as source of truth
+- System SHALL store only artifact references in Postgres
+- System SHALL enforce artifact location conventions
+
+---
 
 ## 6. Validation
-- System shall validate artifact existence
-- System shall enforce required structure
-- System shall pause on validation failure
+
+### Level 1 (Phase 1)
+- System SHALL validate artifact existence
+- System SHALL validate required sections present
+
+### Future
+- Governance rule validation
+- Semantic validation
+
+---
 
 ## 7. State Management
-- System shall track runtime state in Postgres
-- System shall reconstruct state from Git when needed
+
+- System SHALL track runtime state in Postgres
+- System SHALL derive true state from Git artifacts
+- System SHALL prevent transitions without valid artifacts
+
+---
 
 ## 8. Human Interaction
-- System shall support approval, rejection, revision
-- System shall pause workflows for approval
+
+- System SHALL support:
+  - approve
+  - reject
+  - request_revision
+- System SHALL pause workflow at approval boundaries
+
+---
 
 ## 9. Execution Flexibility
-- System shall support human or AI execution
-- System shall validate outputs independent of actor
+
+- System SHALL support both human and AI execution
+- System SHALL validate outcomes independent of actor
