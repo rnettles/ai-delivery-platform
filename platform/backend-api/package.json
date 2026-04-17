@@ -1,0 +1,10 @@
+{
+  "name": "backend-api",
+  "version": "0.1.0",
+  "main": "src/server.ts",
+  "scripts": {
+    "start": "ts-node src/server.ts"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}
