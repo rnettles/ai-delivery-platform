@@ -69,7 +69,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://isdev-ai-orch-dev-execution--0000005.delightfulpebble-d0e68b9c.centralus.azurecontainerapps.io/execute",
+        "url": "={{$env.EXECUTION_API_BASE_URL}}/execute",
         "sendBody": true,
         "bodyParameters": {
           "parameters": [
@@ -101,7 +101,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://isdev-ai-orch-dev-execution--0000005.delightfulpebble-d0e68b9c.centralus.azurecontainerapps.io/state",
+        "url": "={{$env.EXECUTION_API_BASE_URL}}/state",
         "sendBody": true,
         "bodyParameters": {
           "parameters": [
@@ -226,7 +226,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "3b8accac-7c7c-4161-be50-98e401de8723",
+  "versionId": "23b7b378-bd7c-4dff-870d-34a7dfefc98f",
   "meta": {
     "instanceId": "9374f5c0d92679d03383a2d317c712b562e9ac9a9a35d674b3a28317ff9ce79f"
   },

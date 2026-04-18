@@ -1,0 +1,279 @@
+# ADR-016: Versioned State Model with Immutable History
+
+## Status
+
+Accepted
+
+---
+
+## Context
+
+The system introduces a centralized **State API** backed by PostgreSQL to support:
+
+* Workflow orchestration (n8n)
+* Execution services (API-driven)
+* Local development and AI-assisted development workflows
+* Future agent-based reasoning and multi-step execution
+
+Initial implementations stored state as a single mutable record. This approach proved insufficient for:
+
+* auditing changes over time
+* debugging workflow evolution
+* replaying execution flows
+* supporting agent memory and reasoning
+
+A more robust model is required to support **temporal state evolution** and **system introspection**.
+
+---
+
+## Problem
+
+A single mutable state record results in:
+
+* loss of historical information
+* inability to reconstruct prior system behavior
+* difficulty debugging state transitions
+* no support for replay or lineage tracking
+* increased risk of silent data corruption
+
+The system requires:
+
+* a reliable **source of current truth**
+* a complete **history of all changes**
+* deterministic **version tracking**
+
+---
+
+## Decision
+
+Adopt a **versioned state model with an immutable history table**, consisting of:
+
+### 1. `state` table (current snapshot)
+
+* stores the latest version of each state object
+* optimized for read performance
+
+### 2. `state_history` table (append-only)
+
+* stores all prior versions of state
+* immutable once written
+
+### 3. Versioning strategy
+
+* each state record includes a `version` field
+* updates increment version number
+* previous version is written to history before update
+
+---
+
+## Data Model
+
+### `state` (current)
+
+| Column     | Description                                 |
+| ---------- | ------------------------------------------- |
+| state_id   | unique identifier                           |
+| type       | state category (workflow, execution, etc.)  |
+| scope      | subsystem context (planner, executor, etc.) |
+| version    | current version number                      |
+| data       | current state payload                       |
+| metadata   | optional contextual metadata                |
+| status     | optional lifecycle state                    |
+| created_at | creation timestamp                          |
+| updated_at | last update timestamp                       |
+
+---
+
+### `state_history` (immutable)
+
+| Column     | Description            |
+| ---------- | ---------------------- |
+| id         | unique record id       |
+| state_id   | reference to state     |
+| version    | version being recorded |
+| data       | historical payload     |
+| metadata   | historical metadata    |
+| created_at | timestamp of snapshot  |
+
+---
+
+## Update Semantics
+
+All updates to state follow this sequence:
+
+```text
+1. Read current state
+2. Insert current version into state_history
+3. Increment version
+4. Update state with new data
+```
+
+---
+
+## Consequences
+
+### Positive
+
+#### ✅ Full Audit Trail
+
+* complete history of all changes
+
+#### ✅ Replay Capability
+
+* ability to reconstruct system behavior at any point in time
+
+#### ✅ Debugging and Observability
+
+* inspect how state evolved across executions
+
+#### ✅ Foundation for Agent Memory
+
+* historical context enables reasoning across iterations
+
+#### ✅ Deterministic State Evolution
+
+* versioning ensures ordered, traceable updates
+
+---
+
+### Negative
+
+#### ⚠️ Increased Write Complexity
+
+* updates require multiple operations (insert + update)
+
+#### ⚠️ Increased Storage Usage
+
+* historical data accumulates over time
+
+#### ⚠️ Additional Query Complexity
+
+* consumers must distinguish between current vs historical data
+
+---
+
+## Risks
+
+* improper update sequencing could desynchronize state and history
+* high-frequency updates may increase database load
+* lack of pruning strategy may lead to unbounded growth
+
+---
+
+## Mitigations
+
+* enforce update logic in centralized API layer
+* add indexes on `state_id` and `version`
+* introduce retention or archiving strategy if needed
+* consider transaction wrapping for update operations
+
+---
+
+## Alternatives Considered
+
+---
+
+### 1. Single Mutable State Table
+
+**Rejected**
+
+* no history
+* no replay
+* poor debugging capability
+
+---
+
+### 2. Full Event Sourcing
+
+**Not Selected (for now)**
+
+* higher complexity
+* requires event replay logic
+* not necessary for current scope
+
+The chosen model provides a **hybrid approach**:
+
+* snapshot for fast reads
+* history for temporal analysis
+
+---
+
+### 3. Overwriting with External Logs
+
+**Rejected**
+
+* fragmented system of record
+* difficult to correlate logs with state changes
+
+---
+
+## Future Considerations
+
+---
+
+### 1. Optimistic Concurrency Control
+
+Add version checks:
+
+```text
+UPDATE ... WHERE version = X
+```
+
+to prevent race conditions.
+
+---
+
+### 2. State Replay Engine
+
+* reconstruct state from history
+* enable deterministic workflow re-execution
+
+---
+
+### 3. Lineage and Provenance
+
+Extend metadata to capture:
+
+* source (n8n, API, human)
+* execution_id
+* causal relationships between updates
+
+---
+
+### 4. Retention / Archival Strategy
+
+* move older history to cold storage
+* support long-term audit without impacting performance
+
+---
+
+## Summary
+
+This decision establishes:
+
+```text
+state         → current truth
+state_history → immutable lineage
+version       → ordered evolution
+```
+
+The system transitions from:
+
+```text
+mutable storage → temporal, auditable system of record
+```
+
+This forms the foundation for:
+
+* reliable orchestration
+* agent reasoning
+* reproducible execution flows
+* long-term system observability
+
+---
+
+## Decision Outcome
+
+Adopt a **versioned state model with immutable history**, implemented via `state` and `state_history` tables, with controlled update semantics enforced by the State API.
+
+---
