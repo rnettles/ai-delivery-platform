@@ -1,0 +1,235 @@
+{
+  "name": "Execution + State Pattern",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -96,
+        -160
+      ],
+      "id": "bee6e083-d9ea-46bc-8878-428ea0f729c4",
+      "name": "When clicking ‘Execute workflow’",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://isdev-ai-orch-dev-execution--0000005.delightfulpebble-d0e68b9c.centralus.azurecontainerapps.io/execute",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"script\": \"planner.generate_phase_plan\",\n  \"input\": {}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        208,
+        0
+      ],
+      "id": "1d805fcd-b2c7-4ebf-9d2c-5f0a430ab1c9",
+      "name": "HTTP Request",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "execution-test",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -96,
+        0
+      ],
+      "id": "53d66f1c-c019-46e7-97a2-102a64be1feb",
+      "name": "Webhook",
+      "webhookId": "44f53630-ddbc-437e-8991-dfaba6433ade",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "execution-state-test",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "8980742d-22e3-45fa-bf5a-7ff8e2bcd5e8",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -400,
+        256
+      ],
+      "webhookId": "execution-state-test"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://isdev-ai-orch-dev-execution--0000005.delightfulpebble-d0e68b9c.centralus.azurecontainerapps.io/execute",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "execution_id",
+              "value": "={{$now}}"
+            },
+            {
+              "name": "script",
+              "value": "planner.generate_phase_plan"
+            },
+            {
+              "name": "input",
+              "value": "={{ $json }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "36ac185d-13db-43c3-bc1c-8d9ad68440a1",
+      "name": "Execute Script",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -144,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://isdev-ai-orch-dev-execution--0000005.delightfulpebble-d0e68b9c.centralus.azurecontainerapps.io/state",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "execution_id",
+              "value": "={{$now}}"
+            },
+            {
+              "name": "script",
+              "value": "planner.generate_phase_plan"
+            },
+            {
+              "name": "input",
+              "value": "={{$json.body}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f818d621-2713-4aa1-822e-6b325134d570",
+      "name": "Store State",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        112,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.EXECUTION_API_BASE_URL}}/state/{{$json.state_id}}",
+        "options": {}
+      },
+      "id": "5bc0e8aa-61fe-4760-91f2-0c2b4ee39bf1",
+      "name": "Get State",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        352,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "1a2d09f0-bd3a-4622-944f-9e3784fc619d",
+      "name": "Return Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        608,
+        256
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        []
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Execute Script",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Script": {
+      "main": [
+        [
+          {
+            "node": "Store State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store State": {
+      "main": [
+        [
+          {
+            "node": "Get State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get State": {
+      "main": [
+        [
+          {
+            "node": "Return Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "3b8accac-7c7c-4161-be50-98e401de8723",
+  "meta": {
+    "instanceId": "9374f5c0d92679d03383a2d317c712b562e9ac9a9a35d674b3a28317ff9ce79f"
+  },
+  "id": "AsgL7WKHgSCh3jWw",
+  "tags": []
+}
