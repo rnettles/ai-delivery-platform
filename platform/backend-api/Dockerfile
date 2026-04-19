@@ -1,5 +1,7 @@
 FROM node:20-alpine
 
+RUN apk add --no-cache git
+
 WORKDIR /app
 
 # Build context is platform/ — copy backend-api and governance separately

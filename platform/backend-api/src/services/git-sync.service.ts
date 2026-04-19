@@ -1,6 +1,6 @@
 import { execFileSync } from "child_process";
 import { existsSync } from "fs";
-import { resolve } from "path";
+import { resolve, join } from "path";
 import { config } from "../config";
 import { GitSyncContext } from "../domain/execution.types";
 import { logger } from "./logger.service";
@@ -29,7 +29,7 @@ export class GitSyncService {
     }
 
     try {
-      if (existsSync(clonePath)) {
+      if (existsSync(join(clonePath, ".git"))) {
         logger.info("git-sync: pulling", { clonePath });
         execFileSync("git", ["pull", "--ff-only"], {
           cwd: clonePath,
