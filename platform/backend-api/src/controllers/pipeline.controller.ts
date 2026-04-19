@@ -156,11 +156,24 @@ async function executeCurrentStep(
   try {
     logger.info("Pipeline step executing", { pipeline_id: pipelineId, role });
 
+    // Fetch current pipeline state to pass completed artifact paths to the next role.
+    // Roles are artifact-driven — each reads from the prior step's output.
+    const currentRun = await pipelineService.get(pipelineId);
+    const previousArtifacts = currentRun.steps
+      .filter((s) => s.status === "complete" || s.status === "not_applicable")
+      .flatMap((s) => s.artifact_paths);
+
+    const enrichedInput: Record<string, unknown> = {
+      ...input,
+      pipeline_id: pipelineId,
+      previous_artifacts: previousArtifacts,
+    };
+
     const result = await executionService.execute(
       {
         correlation_id: pipelineId,
         target: { type: "role", name: role, version: "2026.04.19" },
-        input,
+        input: enrichedInput,
         metadata: { pipeline_id: pipelineId },
       },
       requestId

@@ -10,4 +10,6 @@ export const config = {
   azureOpenAiEndpoint: process.env.AZURE_OPENAI_ENDPOINT ?? "",
   azureOpenAiApiKey: process.env.AZURE_OPENAI_API_KEY ?? "",
   azureOpenAiDeployment: process.env.AZURE_OPENAI_DEPLOYMENT ?? "gpt-4.1",
+  // Local dir or Azure Files mount path for pipeline artifacts
+  artifactBasePath: process.env.ARTIFACT_BASE_PATH ?? "./artifacts",
 };
