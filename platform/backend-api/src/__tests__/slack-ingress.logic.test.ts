@@ -38,6 +38,11 @@ describe("parseSlackCommand (slack-ingress Guard & Parse node)", () => {
       const result = parseSlackCommand({ command: "/plan", text: "" });
       expect(result).toMatchObject({ type: "create_pipeline", entry_point: "planner", description: "" });
     });
+
+    it("maps /adp-plan to planner entry_point", () => {
+      const result = parseSlackCommand({ command: "/adp-plan", text: "Build the authentication module" });
+      expect(result).toMatchObject({ type: "create_pipeline", entry_point: "planner" });
+    });
   });
 
   describe("/sprint", () => {
@@ -117,6 +122,11 @@ describe("parseSlackCommand (slack-ingress Guard & Parse node)", () => {
   describe("/status", () => {
     it("returns pipeline_action with status action", () => {
       const result = parseSlackCommand({ command: "/status", text: "pipe-2026-04-19-abc12345" });
+      expect(result).toMatchObject({ type: "pipeline_action", action: "status" });
+    });
+
+    it("maps /adp-status to status action", () => {
+      const result = parseSlackCommand({ command: "/adp-status", text: "pipe-2026-04-19-abc12345" });
       expect(result).toMatchObject({ type: "pipeline_action", action: "status" });
     });
   });

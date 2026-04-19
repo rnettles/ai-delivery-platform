@@ -1,0 +1,68 @@
+_metadata:
+  major_version: 2
+  minor_version: 1
+
+display_information:
+  name: "AI Delivery Platform"
+  description: "Slack commands and interactive controls for AI pipeline operations"
+  background_color: "#0f172a"
+
+features:
+  bot_user:
+    display_name: "AI Delivery Bot"
+    always_online: false
+  slash_commands:
+    - command: "/adp-plan"
+      url: "https://isdev-ai-orchestrator-dev-n8n.delightfulpebble-d0e68b9c.centralus.azurecontainerapps.io/webhook/slack-events"
+      description: "Start a pipeline from planner"
+      usage_hint: "<description>"
+      should_escape: false
+    - command: "/adp-sprint"
+      url: "https://isdev-ai-orchestrator-dev-n8n.delightfulpebble-d0e68b9c.centralus.azurecontainerapps.io/webhook/slack-events"
+      description: "Start a pipeline from sprint-controller"
+      usage_hint: "<phase-id-or-description>"
+      should_escape: false
+    - command: "/adp-implement"
+      url: "https://isdev-ai-orchestrator-dev-n8n.delightfulpebble-d0e68b9c.centralus.azurecontainerapps.io/webhook/slack-events"
+      description: "Start a pipeline from implementer"
+      usage_hint: "<task-id-or-description>"
+      should_escape: false
+    - command: "/adp-verify"
+      url: "https://isdev-ai-orchestrator-dev-n8n.delightfulpebble-d0e68b9c.centralus.azurecontainerapps.io/webhook/slack-events"
+      description: "Start a pipeline from verifier"
+      usage_hint: "<task-id-or-description>"
+      should_escape: false
+    - command: "/adp-approve"
+      url: "https://isdev-ai-orchestrator-dev-n8n.delightfulpebble-d0e68b9c.centralus.azurecontainerapps.io/webhook/slack-events"
+      description: "Approve current gate for a pipeline"
+      usage_hint: "<pipeline-id>"
+      should_escape: false
+    - command: "/adp-takeover"
+      url: "https://isdev-ai-orchestrator-dev-n8n.delightfulpebble-d0e68b9c.centralus.azurecontainerapps.io/webhook/slack-events"
+      description: "Take over current pipeline step"
+      usage_hint: "<pipeline-id>"
+      should_escape: false
+    - command: "/adp-handoff"
+      url: "https://isdev-ai-orchestrator-dev-n8n.delightfulpebble-d0e68b9c.centralus.azurecontainerapps.io/webhook/slack-events"
+      description: "Hand off a human-completed step back to pipeline"
+      usage_hint: "<pipeline-id> [artifact-path]"
+      should_escape: false
+    - command: "/adp-status"
+      url: "https://isdev-ai-orchestrator-dev-n8n.delightfulpebble-d0e68b9c.centralus.azurecontainerapps.io/webhook/slack-events"
+      description: "Get pipeline status"
+      usage_hint: "<pipeline-id>"
+      should_escape: false
+
+oauth_config:
+  scopes:
+    bot:
+      - commands
+      - chat:write
+
+settings:
+  interactivity:
+    is_enabled: true
+    request_url: "https://isdev-ai-orchestrator-dev-n8n.delightfulpebble-d0e68b9c.centralus.azurecontainerapps.io/webhook/slack-actions"
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

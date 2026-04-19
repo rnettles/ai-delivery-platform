@@ -31,16 +31,24 @@ export type SlackCommandResult =
 
 const CREATE_MAP: Record<string, "planner" | "sprint-controller" | "implementer" | "verifier"> = {
   "/plan": "planner",
+  "/adp-plan": "planner",
   "/sprint": "sprint-controller",
+  "/adp-sprint": "sprint-controller",
   "/implement": "implementer",
+  "/adp-implement": "implementer",
   "/verify": "verifier",
+  "/adp-verify": "verifier",
 };
 
 const ACTION_MAP: Record<string, "approve" | "takeover" | "handoff" | "status"> = {
   "/approve": "approve",
+  "/adp-approve": "approve",
   "/takeover": "takeover",
+  "/adp-takeover": "takeover",
   "/handoff": "handoff",
+  "/adp-handoff": "handoff",
   "/status": "status",
+  "/adp-status": "status",
 };
 
 export function parseSlackCommand(body: Record<string, unknown>): SlackCommandResult {
