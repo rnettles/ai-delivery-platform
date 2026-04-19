@@ -1,0 +1,255 @@
+{
+  "name": "slack-action-handler",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "slack-actions",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "sa-0001",
+      "name": "Webhook – Slack Actions",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "slack-actions"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Slack interactive payloads arrive as URL-encoded: payload=<JSON>\nconst raw = $input.first().json;\n\n// n8n parses form-encoded body; payload field is a JSON string\nlet payload;\ntry {\n  payload = JSON.parse(raw.payload || '{}');\n} catch (e) {\n  return [{ json: { valid: false, error: 'Invalid payload JSON' } }];\n}\n\nif (payload.type !== 'block_actions' || !Array.isArray(payload.actions) || !payload.actions.length) {\n  return [{ json: { valid: false, error: 'Not a block_actions event' } }];\n}\n\nconst action = payload.actions[0];\nconst actionId = action.action_id;     // e.g. 'approve_pipeline'\nconst value = action.value || '';      // e.g. 'pipe-2026-04-19-xxxxxxxx' or 'pipe-id::justification'\n\nconst userId = payload.user?.id || '';\nconst userName = payload.user?.username || payload.user?.name || userId;\nconst channelId = payload.channel?.id || '';\nconst messageTs = payload.message?.ts || '';\nconst responseUrl = payload.response_url || '';\n\n// value format: '<pipeline_id>' or '<pipeline_id>::<justification>'\nconst [pipelineId, ...justParts] = value.split('::');\nconst justification = justParts.join('::') || 'Actioned via Slack button';\n\nreturn [{\n  json: {\n    valid: true,\n    action_id: actionId,\n    pipeline_id: pipelineId,\n    justification,\n    actor: userName,\n    channel_id: channelId,\n    message_ts: messageTs,\n    response_url: responseUrl,\n  }\n}];\n"
+      },
+      "id": "sa-0002",
+      "name": "Parse Slack Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "",
+        "options": { "responseCode": 200 }
+      },
+      "id": "sa-0003",
+      "name": "Respond 200 – Immediately",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [600, -200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "sa-valid-check",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "sa-0004",
+      "name": "Is Valid Action?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [600, 200]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "id": "sa-sw-approve",
+                    "leftValue": "={{ $json.action_id }}",
+                    "rightValue": "approve_pipeline",
+                    "operator": { "type": "string", "operation": "equals", "name": "filter.operator.equals" }
+                  }
+                ],
+                "combinator": "and",
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" }
+              },
+              "renameOutput": false
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "id": "sa-sw-takeover",
+                    "leftValue": "={{ $json.action_id }}",
+                    "rightValue": "takeover_pipeline",
+                    "operator": { "type": "string", "operation": "equals", "name": "filter.operator.equals" }
+                  }
+                ],
+                "combinator": "and",
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" }
+              },
+              "renameOutput": false
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "id": "sa-sw-skip",
+                    "leftValue": "={{ $json.action_id }}",
+                    "rightValue": "skip_pipeline",
+                    "operator": { "type": "string", "operation": "equals", "name": "filter.operator.equals" }
+                  }
+                ],
+                "combinator": "and",
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" }
+              },
+              "renameOutput": false
+            }
+          ]
+        },
+        "fallbackOutput": "extra",
+        "options": {}
+      },
+      "id": "sa-0005",
+      "name": "Route by Action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [900, 200]
+    },
+
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.EXECUTION_API_BASE_URL }}/pipeline/{{ $json.pipeline_id }}/approve",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ actor: $json.actor }) }}",
+        "options": {}
+      },
+      "id": "sa-0006",
+      "name": "POST – Approve",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, -60]
+    },
+    {
+      "parameters": {
+        "jsCode": "const pipelineId = $('Route by Action').first().json.pipeline_id;\nconst responseUrl = $('Route by Action').first().json.response_url;\nreturn [{ json: {\n  response_url: responseUrl,\n  follow_up: JSON.stringify({\n    response_type: 'in_channel',\n    replace_original: false,\n    text: `\\u2705 Approved — pipeline \\`${pipelineId}\\` is advancing to the next step.`\n  })\n}}];\n"
+      },
+      "id": "sa-0006b",
+      "name": "Ack – Approve",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1500, -60]
+    },
+
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.EXECUTION_API_BASE_URL }}/pipeline/{{ $json.pipeline_id }}/takeover",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ actor: $json.actor }) }}",
+        "options": {}
+      },
+      "id": "sa-0007",
+      "name": "POST – Takeover",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const pipelineId = $('Route by Action').first().json.pipeline_id;\nconst actor = $('Route by Action').first().json.actor;\nconst responseUrl = $('Route by Action').first().json.response_url;\nreturn [{ json: {\n  response_url: responseUrl,\n  follow_up: JSON.stringify({\n    response_type: 'in_channel',\n    replace_original: false,\n    text: `\\u270B <@${actor}> has taken over the current step on pipeline \\`${pipelineId}\\`.\\nUse \\`/handoff ${pipelineId}\\` when complete.`\n  })\n}}];\n"
+      },
+      "id": "sa-0007b",
+      "name": "Ack – Takeover",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1500, 200]
+    },
+
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.EXECUTION_API_BASE_URL }}/pipeline/{{ $json.pipeline_id }}/skip",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ actor: $json.actor, justification: $json.justification }) }}",
+        "options": {}
+      },
+      "id": "sa-0008",
+      "name": "POST – Skip",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 460]
+    },
+    {
+      "parameters": {
+        "jsCode": "const pipelineId = $('Route by Action').first().json.pipeline_id;\nconst responseUrl = $('Route by Action').first().json.response_url;\nreturn [{ json: {\n  response_url: responseUrl,\n  follow_up: JSON.stringify({\n    response_type: 'in_channel',\n    replace_original: false,\n    text: `\\u23ED Step skipped — pipeline \\`${pipelineId}\\` is advancing.`\n  })\n}}];\n"
+      },
+      "id": "sa-0008b",
+      "name": "Ack – Skip",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1500, 460]
+    },
+
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.response_url }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.follow_up }}",
+        "options": {}
+      },
+      "id": "sa-0009",
+      "name": "Post Follow-up to Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1800, 200]
+    }
+  ],
+  "connections": {
+    "Webhook – Slack Actions": {
+      "main": [[{ "node": "Parse Slack Payload", "type": "main", "index": 0 }]]
+    },
+    "Parse Slack Payload": {
+      "main": [
+        [
+          { "node": "Respond 200 – Immediately", "type": "main", "index": 0 },
+          { "node": "Is Valid Action?",           "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Is Valid Action?": {
+      "main": [
+        [{ "node": "Route by Action", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Route by Action": {
+      "main": [
+        [{ "node": "POST – Approve",  "type": "main", "index": 0 }],
+        [{ "node": "POST – Takeover", "type": "main", "index": 0 }],
+        [{ "node": "POST – Skip",     "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "POST – Approve":  { "main": [[{ "node": "Ack – Approve",  "type": "main", "index": 0 }]] },
+    "POST – Takeover": { "main": [[{ "node": "Ack – Takeover", "type": "main", "index": 0 }]] },
+    "POST – Skip":     { "main": [[{ "node": "Ack – Skip",     "type": "main", "index": 0 }]] },
+    "Ack – Approve":  { "main": [[{ "node": "Post Follow-up to Slack", "type": "main", "index": 0 }]] },
+    "Ack – Takeover": { "main": [[{ "node": "Post Follow-up to Slack", "type": "main", "index": 0 }]] },
+    "Ack – Skip":     { "main": [[{ "node": "Post Follow-up to Slack", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "id": "slack-action-handler",
+  "meta": { "templateCredsSetupCompleted": true },
+  "tags": [{ "name": "phase-2" }]
+}

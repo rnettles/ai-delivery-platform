@@ -1,0 +1,94 @@
+{
+  "name": "pipeline-notifier",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "pipeline-notify",
+        "responseMode": "onReceived",
+        "responseData": "noData",
+        "options": {}
+      },
+      "id": "pn-0001",
+      "name": "Webhook – Pipeline Notify",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "pipeline-notify"
+    },
+    {
+      "parameters": {
+        "jsCode": "const n = $input.first().json;\nconst { pipeline_id, step, status, gate_required, artifact_paths = [], metadata = {} } = n;\nconst channel = metadata.slack_channel;\nconst thread_ts = metadata.slack_thread_ts;\n\nif (!channel) {\n  return [{ json: { channel: null } }];\n}\n\nconst firstArtifact = artifact_paths[0] || null;\nconst stepLabel = (step || '').replace(/-/g, ' ').replace(/\\b\\w/g, l => l.toUpperCase());\n\nlet text, blocks;\n\nif (status === 'awaiting_approval') {\n  text = `\\u{1F916} ${stepLabel} completed \\u2014 ready for review`;\n  blocks = [\n    {\n      type: 'section',\n      text: {\n        type: 'mrkdwn',\n        text: `\\u{1F916} *${stepLabel} completed* \\u2014 Pipeline \\`${pipeline_id}\\` is ready for review.${ firstArtifact ? `\\n*Artifact:* \\`${firstArtifact}\\`` : '' }`\n      }\n    },\n    {\n      type: 'actions',\n      block_id: `gate_${pipeline_id}`,\n      elements: [\n        {\n          type: 'button',\n          text: { type: 'plain_text', text: '\\u2705 Approve \\u2192 Continue' },\n          style: 'primary',\n          action_id: 'approve_pipeline',\n          value: pipeline_id\n        },\n        {\n          type: 'button',\n          text: { type: 'plain_text', text: '\\u270B Take Over' },\n          action_id: 'takeover_pipeline',\n          value: pipeline_id\n        }\n      ]\n    }\n  ];\n} else if (status === 'failed') {\n  text = `\\u26A0\\uFE0F ${stepLabel} failed \\u2014 ${pipeline_id}`;\n  blocks = [\n    {\n      type: 'section',\n      text: {\n        type: 'mrkdwn',\n        text: `\\u26A0\\uFE0F *${stepLabel} failed* \\u2014 Pipeline \\`${pipeline_id}\\` needs attention.${ firstArtifact ? `\\n*Findings:* \\`${firstArtifact}\\`` : '' }`\n      }\n    },\n    {\n      type: 'actions',\n      block_id: `fail_${pipeline_id}`,\n      elements: [\n        {\n          type: 'button',\n          text: { type: 'plain_text', text: '\\u270B Take Over Fix' },\n          style: 'primary',\n          action_id: 'takeover_pipeline',\n          value: pipeline_id\n        },\n        {\n          type: 'button',\n          text: { type: 'plain_text', text: '\\u23ED Skip Step' },\n          style: 'danger',\n          action_id: 'skip_pipeline',\n          value: `${pipeline_id}::Auto-skip after failure`\n        }\n      ]\n    }\n  ];\n} else if (status === 'complete') {\n  text = `\\u2705 Pipeline complete \\u2014 ${pipeline_id}`;\n  blocks = [\n    {\n      type: 'section',\n      text: {\n        type: 'mrkdwn',\n        text: `\\u2705 *Pipeline complete* \\u2014 \\`${pipeline_id}\\`${ artifact_paths.length ? `\\n*Artifacts:* ${ artifact_paths.map(p => `\\`${p}\\``).join(', ') }` : '' }`\n      }\n    }\n  ];\n} else if (status === 'paused_takeover') {\n  text = `\\u270B Takeover active \\u2014 ${stepLabel}`;\n  blocks = [\n    {\n      type: 'section',\n      text: {\n        type: 'mrkdwn',\n        text: `\\u270B *Takeover active* \\u2014 A human owns the *${stepLabel}* step on pipeline \\`${pipeline_id}\\`.\\nUse \\`/handoff ${pipeline_id}\\` when complete.`\n      }\n    }\n  ];\n} else {\n  // running — progress context message\n  text = `\\u2699\\uFE0F ${stepLabel} is running \\u2014 ${pipeline_id}`;\n  blocks = [\n    {\n      type: 'context',\n      elements: [\n        { type: 'mrkdwn', text: `\\u2699\\uFE0F *${stepLabel}* is now running \\u2014 Pipeline \\`${pipeline_id}\\`` }\n      ]\n    }\n  ];\n}\n\nconst payload = { channel, text, blocks };\nif (thread_ts) payload.thread_ts = thread_ts;\n\nreturn [{ json: { channel, slack_payload: JSON.stringify(payload) } }];\n"
+      },
+      "id": "pn-0002",
+      "name": "Build Slack Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "pn-if-channel",
+              "leftValue": "={{ $json.channel }}",
+              "rightValue": "",
+              "operator": { "type": "string", "operation": "notEmpty", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "pn-0003",
+      "name": "Has Slack Channel?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [600, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.slack_payload }}",
+        "options": {}
+      },
+      "id": "pn-0004",
+      "name": "Post to Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, -120],
+      "credentials": {
+        "slackApi": {
+          "id": "JazA00WJJZbm0w6V",
+          "name": "Slack account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook – Pipeline Notify": {
+      "main": [[{ "node": "Build Slack Message", "type": "main", "index": 0 }]]
+    },
+    "Build Slack Message": {
+      "main": [[{ "node": "Has Slack Channel?", "type": "main", "index": 0 }]]
+    },
+    "Has Slack Channel?": {
+      "main": [
+        [{ "node": "Post to Slack", "type": "main", "index": 0 }],
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "id": "pipeline-notifier",
+  "meta": { "templateCredsSetupCompleted": true },
+  "tags": [{ "name": "phase-2" }]
+}
