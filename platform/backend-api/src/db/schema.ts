@@ -93,7 +93,7 @@ export const executionRecords = pgTable(
 export const pipelineRuns = pgTable(
   "pipeline_runs",
   {
-    pipeline_id: uuid("pipeline_id").primaryKey().notNull(),
+    pipeline_id: text("pipeline_id").primaryKey().notNull(),
     entry_point: text("entry_point").notNull(),
     current_step: text("current_step").notNull(),
     status: text("status").notNull(),

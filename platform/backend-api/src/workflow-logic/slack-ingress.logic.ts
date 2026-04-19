@@ -51,18 +51,56 @@ const ACTION_MAP: Record<string, "approve" | "takeover" | "handoff" | "status"> 
   "/adp-status": "status",
 };
 
-export function parseSlackCommand(body: Record<string, unknown>): SlackCommandResult {
-  // URL verification challenge
-  if (body["type"] === "url_verification") {
-    return { type: "challenge", challenge: String(body["challenge"] ?? "") };
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseUrlEncodedBody(body: string): Record<string, unknown> {
+  const params = new URLSearchParams(body);
+  return Object.fromEntries(params.entries());
+}
+
+function normalizeSlackPayload(input: Record<string, unknown>): Record<string, unknown> {
+  const nestedBody = input["body"];
+
+  if (isRecord(nestedBody)) {
+    return nestedBody;
   }
 
-  const command = String(body["command"] ?? "").toLowerCase().trim();
-  const rawText = String(body["text"] ?? "").trim();
-  const channelId = String(body["channel_id"] ?? "");
-  const userId = String(body["user_id"] ?? "");
-  const userName = String(body["user_name"] ?? "");
-  const responseUrl = String(body["response_url"] ?? "");
+  if (typeof nestedBody === "string" && nestedBody.trim()) {
+    const trimmed = nestedBody.trim();
+
+    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+      try {
+        const parsed = JSON.parse(trimmed) as unknown;
+        if (isRecord(parsed)) {
+          return parsed;
+        }
+      } catch {
+        // Fall through to urlencoded parsing.
+      }
+    }
+
+    return parseUrlEncodedBody(trimmed);
+  }
+
+  return input;
+}
+
+export function parseSlackCommand(body: Record<string, unknown>): SlackCommandResult {
+  const payload = normalizeSlackPayload(body);
+
+  // URL verification challenge
+  if (payload["type"] === "url_verification") {
+    return { type: "challenge", challenge: String(payload["challenge"] ?? "") };
+  }
+
+  const command = String(payload["command"] ?? "").toLowerCase().trim();
+  const rawText = String(payload["text"] ?? "").trim();
+  const channelId = String(payload["channel_id"] ?? "");
+  const userId = String(payload["user_id"] ?? "");
+  const userName = String(payload["user_name"] ?? "");
+  const responseUrl = String(payload["response_url"] ?? "");
 
   if (CREATE_MAP[command]) {
     return {

@@ -123,7 +123,16 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.EXECUTION_API_BASE_URL }}/pipeline/{{ $json.pipeline_id }}/approve",
+        "url": "={{ 'https://__EXECUTION_API_BASE_URL__/pipeline/' + $json.pipeline_id + '/approve' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "__EXECUTION_API_KEY__"
+            }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ actor: $json.actor }) }}",
@@ -149,7 +158,16 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.EXECUTION_API_BASE_URL }}/pipeline/{{ $json.pipeline_id }}/takeover",
+        "url": "={{ 'https://__EXECUTION_API_BASE_URL__/pipeline/' + $json.pipeline_id + '/takeover' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "__EXECUTION_API_KEY__"
+            }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ actor: $json.actor }) }}",
@@ -175,7 +193,16 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.EXECUTION_API_BASE_URL }}/pipeline/{{ $json.pipeline_id }}/skip",
+        "url": "={{ 'https://__EXECUTION_API_BASE_URL__/pipeline/' + $json.pipeline_id + '/skip' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "__EXECUTION_API_KEY__"
+            }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ actor: $json.actor, justification: $json.justification }) }}",

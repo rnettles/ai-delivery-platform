@@ -43,6 +43,37 @@ describe("parseSlackCommand (slack-ingress Guard & Parse node)", () => {
       const result = parseSlackCommand({ command: "/adp-plan", text: "Build the authentication module" });
       expect(result).toMatchObject({ type: "create_pipeline", entry_point: "planner" });
     });
+
+    it("maps nested n8n body payloads to planner entry_point", () => {
+      const result = parseSlackCommand({
+        body: {
+          command: "/adp-plan",
+          text: "Build the authentication module",
+          channel_id: "C123",
+          user_id: "U456",
+          user_name: "alice",
+          response_url: "https://hooks.slack.com/resp/001",
+        },
+      });
+      expect(result).toMatchObject({
+        type: "create_pipeline",
+        entry_point: "planner",
+        description: "Build the authentication module",
+        channel_id: "C123",
+      });
+    });
+
+    it("maps urlencoded nested body strings to planner entry_point", () => {
+      const result = parseSlackCommand({
+        body: "command=%2Fadp-plan&text=Build+the+authentication+module&channel_id=C123&user_id=U456&user_name=alice&response_url=https%3A%2F%2Fhooks.slack.com%2Fresp%2F001",
+      });
+      expect(result).toMatchObject({
+        type: "create_pipeline",
+        entry_point: "planner",
+        description: "Build the authentication module",
+        channel_id: "C123",
+      });
+    });
   });
 
   describe("/sprint", () => {

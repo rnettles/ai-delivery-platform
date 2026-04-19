@@ -313,6 +313,11 @@ x-api-key: <execution-service API_KEY>
 
 Use n8n credentials or env vars, not hardcoded secrets.
 
+If you import the repository workflow JSON directly, replace these placeholders before activating the workflows:
+
+- `__EXECUTION_API_BASE_URL__`
+- `__EXECUTION_API_KEY__`
+
 ### 4. Install Slack App
 
 Install app to workspace and confirm commands are available in the target channel.
