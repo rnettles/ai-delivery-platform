@@ -1,4 +1,21 @@
-export interface Script<TInput = Record<string, unknown>, TOutput = unknown> {
+export interface ScriptDescriptor {
   name: string;
-  run(input: TInput): Promise<TOutput>;
+  version: string;
+  description: string;
+  input_schema?: Record<string, unknown>;
+  output_schema?: Record<string, unknown>;
+  tags?: string[];
+}
+
+export interface ScriptExecutionContext {
+  execution_id: string;
+  correlation_id?: string;
+  request_id?: string;
+  metadata: Record<string, unknown>;
+  log: (message: string, context?: Record<string, unknown>) => void;
+}
+
+export interface Script<TInput = Record<string, unknown>, TOutput = unknown> {
+  descriptor: ScriptDescriptor;
+  run(input: TInput, context: ScriptExecutionContext): Promise<TOutput>;
 }
