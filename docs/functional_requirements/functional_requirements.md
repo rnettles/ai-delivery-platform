@@ -199,7 +199,94 @@ These requirements specify **what the system must do**, independent of implement
 
 ---
 
-# 14. Summary
+# 14. Multi-Agent Pipeline Execution
+
+## FR-12.1 Pipeline Run Entity
+- System SHALL support Pipeline Runs as first-class, persistent entities with unique identifiers.
+- A Pipeline Run SHALL track current step, status, step history, and artifact references across its full lifecycle.
+- Pipeline Run state SHALL be recoverable after failure, restart, or human intervention.
+
+## FR-12.2 Role Sequence
+- System SHALL execute governed roles in a defined sequence: Planner → Sprint Controller → Implementer → Verifier → Fixer (conditional) → Sprint Controller (close-out).
+- Role sequence SHALL be governed by role definitions in the registry, not hardcoded in orchestration workflows.
+- The Fixer role SHALL be invoked only when Verifier produces a failing result.
+
+## FR-12.3 Variable Entry Points
+- System SHALL support starting a Pipeline Run at any role in the sequence.
+- Steps prior to the configured entry point SHALL be recorded as `not_applicable` in the run history.
+- Entry point SHALL be specified at pipeline creation time and SHALL not be changeable after creation.
+
+## FR-12.4 Pipeline Notifications
+- System SHALL emit a structured notification to the configured callback URL when a pipeline step completes or a gate is reached.
+- Notifications SHALL include: pipeline_id, step, status, gate_required flag, artifact paths, and interface correlation metadata.
+- The notification mechanism SHALL be decoupled from the interface layer (Slack, web, API).
+
+## FR-12.5 Step Artifact Linkage
+- System SHALL record the artifact paths produced at each pipeline step.
+- Artifact paths SHALL be queryable by pipeline_id and step name.
+- Each pipeline step SHALL reference the execution_id of the underlying governed execution.
+
+---
+
+# 15. Pipeline Human Override and Control
+
+## FR-13.1 Approve Action
+- System SHALL support an Approve action that advances the pipeline past the current gate.
+- Approve SHALL be rejected if the pipeline is not in `awaiting_approval` state.
+- Actor identity and timestamp SHALL be recorded on approval.
+
+## FR-13.2 Takeover Action
+- System SHALL support a Takeover action that pauses the pipeline and assigns the current step to a human actor.
+- Once taken over, the system SHALL NOT attempt to execute the current step via AI.
+- Actor identity and timestamp SHALL be recorded on takeover.
+
+## FR-13.3 Handoff Action
+- System SHALL support a Handoff action that resumes the pipeline after a human has completed a taken-over step.
+- Handoff SHALL optionally accept an artifact path reference representing the human-produced output.
+- Pipeline SHALL advance to the next step upon successful handoff.
+
+## FR-13.4 Skip Action
+- System SHALL support a Skip action that advances past the current step without AI or human execution.
+- Skip SHALL require a justification string.
+- Justification, actor, and timestamp SHALL be recorded in the step history.
+
+## FR-13.5 Override Auditability
+- All human override actions (approve, takeover, handoff, skip) SHALL produce immutable records in the pipeline step history.
+- The complete pipeline history — including all AI executions and human actions — SHALL be queryable via the pipeline API.
+
+---
+
+# 16. Conversational Command Interface
+
+## FR-14.1 Slash Commands
+- System SHALL support the following slash commands as pipeline entry points:
+  - `/plan [description]` — create a full pipeline run from Planner
+  - `/sprint [phase-id]` — create a pipeline run from Sprint Controller
+  - `/implement [task-id]` — create a pipeline run from Implementer
+  - `/verify [task-id]` — create a pipeline run from Verifier
+- System SHALL support the following pipeline control commands:
+  - `/status` — return current pipeline run state for the active channel
+  - `/approve` — approve the current gate
+  - `/takeover` — claim the current step
+  - `/handoff` — signal human step complete and resume pipeline
+
+## FR-14.2 Thread Continuity
+- All pipeline notifications, gate messages, and status updates SHALL be posted to the same Slack thread that originated the pipeline run.
+- Thread correlation SHALL be preserved across the full pipeline lifecycle.
+
+## FR-14.3 Interface Isolation
+- Slack credentials and message formatting SHALL reside exclusively in the orchestration layer (n8n).
+- The Execution Service SHALL NOT call Slack APIs directly.
+- The interface layer SHALL be replaceable without modifying the Execution Service.
+
+## FR-14.4 Interactive Gate Messages
+- At each human approval gate, the system SHALL post an interactive message to the conversation thread.
+- The message SHALL include: role that completed, artifact reference, and action buttons (Approve, Take Over).
+- Verifier failure gates SHALL additionally include: Fix (invoke Fixer) and Take Over Fix options.
+
+---
+
+# 17. Summary
 
 These functional requirements ensure:
 
@@ -210,4 +297,7 @@ These functional requirements ensure:
 - Immutable observability and replayability
 - Conversational interface consistency
 - Safe coordination context without mutable truth drift
+- First-class pipeline execution with persistent state
+- Human override and takeover at every pipeline step
+- Interface-isolated Slack integration with thread continuity
 
