@@ -299,7 +299,7 @@ Each role execution uses a structured contract:
 
 ## 10.1 AI Execution
 
-n8n invokes role → artifacts created → validated
+n8n submits canonical execution request → Execution Service runs governed role/script (including any internal LLM usage) → artifacts created → validated
 
 ---
 

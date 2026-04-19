@@ -75,21 +75,25 @@ User submits:
   "ok": true,
   "execution_id": "exec-001",
   "output": {
-    "prompt": "Generate a phase plan...",
-    "template": "phase_plan"
+    "plan": {
+      "phase": "Phase 1",
+      "tasks": ["..."],
+      "checks": ["..."]
+    }
   }
 }
 ```
 
 ---
 
-## Step 4 - n8n -> LLM
+## Step 4 - Execution Service Internal Processing
 
-Input prompt from execution output and receive structured JSON plan data.
+Any LLM use required by planner logic occurs inside governed scripts/roles within the Execution Service boundary.
+n8n does not call LLM providers directly.
 
 ---
 
-## Step 5 - n8n -> Execution Service (`POST /execute` render)
+## Step 5 - n8n -> Execution Service (`POST /execute` follow-up target)
 
 ### Response (simplified)
 
@@ -105,7 +109,7 @@ Input prompt from execution output and receive structured JSON plan data.
 
 ---
 
-## Step 6 - n8n -> Execution Service (`POST /execute` validate)
+## Step 6 - n8n -> Execution Service (`POST /execute` validation target)
 
 ### Response (simplified)
 

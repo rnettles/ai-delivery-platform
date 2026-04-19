@@ -23,17 +23,17 @@ This document is implementation-grade.
 
 ---
 
-# 3. Standard Planner Workflow
+# 3. Standard Governed Workflow
 
 ## 3.1 Flow Overview
 
 ```
 Webhook (Slack/Event)
-→ Build /execute request (target: role@version)
-→ HTTP: POST /execute (planner)
-→ LLM node (if requested by contract output)
-→ HTTP: POST /execute (render)
-→ HTTP: POST /execute (validate)
+→ Interpret command to canonical target (role or script @ version)
+→ Build canonical /execute request
+→ HTTP: POST /execute
+→ Route on structured response (artifacts, approvals, errors, next action)
+→ Optional follow-up HTTP: POST /execute (canonical contract only)
 → End
 ```
 
@@ -61,7 +61,7 @@ Entry point from Slack or external trigger.
 
 ---
 
-## Node 2 — Execute Planner Contract
+## Node 2 — Execute Governed Target
 
 ### Type
 HTTP Request
@@ -77,7 +77,7 @@ POST /execute
   "correlation_id": "{{ $json.workflow_id }}",
   "target": {
     "type": "role",
-    "name": "planner",
+    "name": "{{ $json.resolved_target_name }}",
     "version": "2026.04.18"
   },
   "input": {
@@ -95,39 +95,47 @@ POST /execute
 ```json
 {
   "ok": true,
-  "execution_id": "exec-001",
-  "artifacts": [],
-  "output": {
-    "prompt": "...",
-    "template": "phase_plan"
+  "resolved_target": {
+    "type": "role",
+    "name": "{{ $json.resolved_target_name }}",
+    "version": "2026.04.18"
+  },
+  "artifacts": ["..."],
+  "output": {"...": "..."}
   }
 }
 ```
 
 ---
-
+## Node 3 — Route Contract Response
 ## Node 3 — LLM Execution (If Required)
 
-### Type
+If / Switch
 OpenAI / Azure OpenAI Node
+### Purpose
+Branch only on structured execution response fields (for example: `ok`, error category, approval_required, next_target).
 
 ### Input
 
-```text
-{{ $json.output.prompt }}
-```
-
-### Output
-
 ```json
 {
-  "llm_output": { ... }
+  "ok": true,
+  "execution_id": "exec-001",
+  "artifacts": ["..."],
+  "output": {"...": "..."}
 }
+```
+
+### Rule
+
+```text
+n8n MUST NOT invoke LLM providers directly in governed workflow paths.
+LLM usage is internal to governed roles/scripts executed by the Execution Service.
 ```
 
 ---
 
-## Node 4 — Execute Render Step
+## Node 4 — Optional Follow-up Execute
 
 ### Type
 HTTP Request
@@ -142,14 +150,11 @@ POST /execute
   "request_id": "req-002",
   "correlation_id": "{{ $json.workflow_id }}",
   "target": {
-    "type": "script",
-    "name": "render_template",
-    "version": "2026.04.18"
+    "type": "{{ $json.next_target.type }}",
+    "name": "{{ $json.next_target.name }}",
+    "version": "{{ $json.next_target.version }}"
   },
-  "input": {
-    "template": "phase_plan",
-    "data": "{{ $json.llm_output }}"
-  },
+  "input": "{{ $json.next_input }}",
   "metadata": {
     "workflow_id": "{{ $json.workflow_id }}",
     "caller": "n8n"
@@ -159,34 +164,13 @@ POST /execute
 
 ---
 
-## Node 5 — Execute Validation Step
+## Node 5 — Approval/Completion Routing
 
 ### Type
-HTTP Request
+If / Switch / Notification
 
-### Endpoint
-POST /execute
-
-### Input
-
-```json
-{
-  "request_id": "req-003",
-  "correlation_id": "{{ $json.workflow_id }}",
-  "target": {
-    "type": "script",
-    "name": "validate_artifacts",
-    "version": "2026.04.18"
-  },
-  "input": {
-    "artifacts": "{{ $json.artifacts }}"
-  },
-  "metadata": {
-    "workflow_id": "{{ $json.workflow_id }}",
-    "caller": "n8n"
-  }
-}
-```
+### Purpose
+Handle approval checkpoints and completion notifications using execution identifiers and correlation metadata.
 
 ---
 
@@ -197,7 +181,7 @@ POST /execute
 | Node Type | Retry Count | Strategy |
 |----------|------------|----------|
 | HTTP Nodes | 3 | Exponential backoff |
-| LLM Node | 2 | Retry on timeout |
+| Routing Nodes | 0 | Deterministic branch |
 | Webhook | 0 | Fail fast |
 
 ---
@@ -222,11 +206,13 @@ Do not retry when:
 
 ## 6.1 Pattern
 
-```
+### Input
 If Node Fails
 → Capture Error
 → Log execution_id + request_id
 → Stop Execution
+```text
+{{ $json.output.prompt }}
 ```
 
 ## 6.2 Standard Error Output
@@ -260,6 +246,8 @@ n8n must pass forward:
 # 8. Prohibited Patterns
 
 - Using specialized execution endpoints for governed behavior
+- Directly invoking LLM providers in governed execution paths
 - Omitting explicit target version
 - Embedding business logic in n8n nodes
+- Assembling planner-only bespoke execution flows
 - Treating transient workflow context as authoritative state

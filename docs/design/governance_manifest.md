@@ -232,12 +232,12 @@ Defines allowed system states.
 n8n performs:
 
 1. Load manifest
-2. Resolve role configuration
-3. Build execution contract
-4. Invoke LLM
-5. Render artifacts (scripts)
-6. Validate outputs
-7. Transition state
+2. Interpret command into canonical execution intent
+3. Build canonical execution request (target + explicit version + input)
+4. Call Execution Service canonical endpoint
+5. Route on structured response, approvals, and retries
+6. Trigger additional canonical executions only when required
+7. Surface execution status to interface channels
 
 ---
 
@@ -275,5 +275,5 @@ The Governance Manifest enables:
 
 > The manifest defines WHAT the system must do.  
 > n8n defines WHEN it happens.  
-> Scripts define HOW it is executed.  
-> LLM defines HOW content is generated.
+> Execution Service defines HOW it is executed.  
+> Roles/scripts (inside Execution Service) define HOW content is generated.
