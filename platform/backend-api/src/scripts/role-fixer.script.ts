@@ -7,49 +7,68 @@ export interface FixerInput {
   pipeline_id?: string;
 }
 
-export interface Fix {
-  task_id: string;
-  issue: string;
-  fix_approach: string;
-  priority: "high" | "medium" | "low";
+/**
+ * Handoff contract — matches AI_HANDOFF_CONTRACT.md
+ */
+export interface HandoffContract {
+  changed_scope: string[];
+  verification_state: "pass" | "fail" | "not_run";
+  open_risks: string[];
+  next_role_action: string;
+  evidence_refs: string[];
 }
 
 export interface FixerOutput {
+  task_id: string;
   sprint_id: string;
-  fixes: Fix[];
-  fix_summary: string;
+  fixes_applied: string[];
+  handoff: HandoffContract;
   artifact_path: string;
 }
 
 const SYSTEM_PROMPT = `You are the Fixer AI in a governed software delivery pipeline.
-You receive verification failure findings and produce a specific fix plan.
+You receive verification failure findings and produce a targeted fix plan.
+
+You always re-verify after fixing — the Verifier runs again after the Fixer completes.
+
+Primary inputs (Stage A per AI_RUNTIME_LOADING_RULES.md):
+- verification_result.json — the machine-readable FAIL result
+- current_task.json — task identity
+- AI_IMPLEMENTATION_BRIEF.md — original requirements
+
+Rules:
+- Address ONLY the corrections listed in verification_result.json
+- Do NOT expand scope or fix issues not listed
+- Keep each fix targeted and minimal
+- Produce a handoff contract per AI_HANDOFF_CONTRACT.md
 
 Output ONLY valid JSON — no markdown, no prose:
 {
+  "task_id": "string",
   "sprint_id": "string",
-  "fixes": [
-    {
-      "task_id": "string",
-      "issue": "exact issue from the verification result",
-      "fix_approach": "specific step-by-step fix",
-      "priority": "high|medium|low"
-    }
+  "fixes_applied": [
+    "Fix 1: specific description of what was corrected and why"
   ],
-  "fix_summary": "one paragraph describing what was fixed and what the new state should be"
+  "handoff": {
+    "changed_scope": ["file paths that will be modified by these fixes"],
+    "verification_state": "not_run",
+    "open_risks": ["any unresolved risks after fixing"],
+    "next_role_action": "Verifier re-runs verification against the corrected implementation.",
+    "evidence_refs": ["path/to/verification_result.json", "path/to/brief"]
+  }
 }
 
 Rules:
-- One fix entry per failing issue (not per task)
-- fix_approach must be actionable and specific
-- priority high = blocks delivery, medium = degrades quality, low = nice-to-have
-- Do NOT invent new issues not present in the verification result
+- fixes_applied: one entry per correction item from verification_result.json
+- verification_state is always "not_run" — the Verifier decides pass/fail after re-checking
+- Do NOT invent fixes for issues not in the required_corrections list
 - Do NOT wrap output in markdown code fences`;
 
 export class FixerScript implements Script<Record<string, unknown>, unknown> {
   public readonly descriptor = {
     name: "role.fixer",
     version: "2026.04.19",
-    description: "Produces a fix plan from verification failures. Output is re-verified by Verifier.",
+    description: "Addresses verification failures. Produces handoff contract per AI_HANDOFF_CONTRACT.md. Verifier re-runs after Fixer.",
     input_schema: {
       type: "object",
       properties: {
@@ -60,13 +79,7 @@ export class FixerScript implements Script<Record<string, unknown>, unknown> {
     },
     output_schema: {
       type: "object",
-      required: ["sprint_id", "fixes", "fix_summary", "artifact_path"],
-      properties: {
-        sprint_id: { type: "string" },
-        fixes: { type: "array" },
-        fix_summary: { type: "string" },
-        artifact_path: { type: "string" },
-      },
+      required: ["task_id", "sprint_id", "fixes_applied", "handoff", "artifact_path"],
     },
     tags: ["role", "fixer"],
   };
@@ -79,61 +92,76 @@ export class FixerScript implements Script<Record<string, unknown>, unknown> {
 
     const previousArtifacts = typed.previous_artifacts ?? [];
 
-    // Prioritise the verification result; include all artifacts for full context
-    const prioritised = [
-      ...previousArtifacts.filter((p) => p.includes("verification_result")),
-      ...previousArtifacts.filter((p) => !p.includes("verification_result")),
-    ];
-
-    const artifactContents = await Promise.all(
-      prioritised.map(async (p) => {
-        const content = await artifactService.tryRead(p);
-        return content ? `### ${p}\n\n${content}` : null;
-      })
+    // Stage A: required inputs — verification result is primary
+    const verificationJsonArtifact = await artifactService.findFirst(
+      previousArtifacts.filter((p) => p.includes("verification_result.json"))
     );
-    const contextText = artifactContents.filter(Boolean).join("\n\n---\n\n");
+    const briefArtifact = await artifactService.findFirst(
+      previousArtifacts.filter((p) => p.includes("AI_IMPLEMENTATION_BRIEF"))
+    );
+    const taskArtifact = await artifactService.findFirst(
+      previousArtifacts.filter((p) => p.includes("current_task"))
+    );
+    const implArtifact = await artifactService.findFirst(
+      previousArtifacts.filter((p) => p.includes("implementation_summary"))
+    );
 
-    const userContent = contextText
-      ? `Available artifacts:\n\n${contextText}\n\nProduce a fix plan addressing all failing issues.`
-      : "No verification result found. Return a fix plan with a note that context was unavailable.";
+    const contextParts: string[] = [];
+    if (verificationJsonArtifact) contextParts.push(`# verification_result.json\n\n${verificationJsonArtifact.content}`);
+    if (briefArtifact) contextParts.push(`# AI_IMPLEMENTATION_BRIEF.md\n\n${briefArtifact.content}`);
+    if (taskArtifact) contextParts.push(`# current_task.json\n\n${taskArtifact.content}`);
+    if (implArtifact) contextParts.push(`# implementation_summary.md\n\n${implArtifact.content}`);
 
-    const result = await azureOpenAiService.chatJson<FixerOutput>([
+    const userContent = contextParts.length > 0
+      ? `${contextParts.join("\n\n---\n\n")}\n\nProduce a fix plan addressing ONLY the listed required_corrections.`
+      : "No verification result found. Return a fix plan noting that context was unavailable.";
+
+    const llm = await azureOpenAiService.chatJson<FixerOutput>([
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: userContent },
     ]);
 
-    if (!result.sprint_id || !Array.isArray(result.fixes)) {
+    if (!llm.task_id || !Array.isArray(llm.fixes_applied) || !llm.handoff) {
       throw new Error("Fixer LLM response missing required fields");
     }
 
-    const artifactContent = this.formatMarkdown(result);
+    const artifactContent = this.formatMarkdown(llm);
     const artifactPath = await artifactService.write(pipelineId, "fix_plan.md", artifactContent);
 
+    // Update the handoff with evidence refs pointing to real artifact paths
+    const handoff: HandoffContract = {
+      ...llm.handoff,
+      evidence_refs: [
+        ...(verificationJsonArtifact ? [verificationJsonArtifact.path] : []),
+        ...(briefArtifact ? [briefArtifact.path] : []),
+        artifactPath,
+      ],
+    };
+
     context.log("Fixer complete", {
-      sprint_id: result.sprint_id,
-      fix_count: result.fixes.length,
+      task_id: llm.task_id,
+      fixes_applied: llm.fixes_applied.length,
       artifact_path: artifactPath,
     });
 
-    return { ...result, artifact_path: artifactPath };
+    return { ...llm, handoff, artifact_path: artifactPath };
   }
 
   private formatMarkdown(result: FixerOutput): string {
-    const fixLines = result.fixes
-      .map(
-        (f) =>
-          `### [${f.priority.toUpperCase()}] ${f.task_id}\n**Issue:** ${f.issue}\n**Fix:** ${f.fix_approach}`
-      )
-      .join("\n\n");
+    const fixes = result.fixes_applied.map((f) => `- ${f}`).join("\n");
 
-    return `# Fix Plan: ${result.sprint_id}
+    return `# Fix Plan: ${result.task_id}
 
-## Summary
-${result.fix_summary}
+**Sprint:** ${result.sprint_id}
 
-## Fixes
+## Fixes Applied
+${fixes}
 
-${fixLines}
+## Handoff Contract
+\`\`\`json
+${JSON.stringify(result.handoff, null, 2)}
+\`\`\`
 `;
   }
 }
+

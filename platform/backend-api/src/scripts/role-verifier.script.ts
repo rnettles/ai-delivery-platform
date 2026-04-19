@@ -7,51 +7,89 @@ export interface VerifierInput {
   pipeline_id?: string;
 }
 
-export interface TaskFinding {
+/**
+ * Machine-readable verification result — matches AI_REVIEW.md output contract.
+ * Written to verification_result.json (required by Fixer and Sprint Controller).
+ */
+export interface VerificationResult {
   task_id: string;
-  passed: boolean;
-  notes: string;
-  issues: string[];
+  result: "PASS" | "FAIL";
+  summary: string;
+  required_corrections: string[];
+  verified_at: string;
+}
+
+/**
+ * Handoff contract — matches AI_HANDOFF_CONTRACT.md (emitted on FAIL).
+ */
+export interface HandoffContract {
+  changed_scope: string[];
+  verification_state: "pass" | "fail" | "not_run";
+  open_risks: string[];
+  next_role_action: string;
+  evidence_refs: string[];
 }
 
 export interface VerifierOutput {
-  sprint_id: string;
+  task_id: string;
   passed: boolean;
-  findings: TaskFinding[];
-  overall_assessment: string;
+  verification_result_path: string;
   artifact_path: string;
+  handoff?: HandoffContract;
 }
 
 const SYSTEM_PROMPT = `You are the Verifier AI in a governed software delivery pipeline.
-You evaluate an implementation plan against the original sprint plan's acceptance criteria.
+You act as a quality gate. You evaluate an implementation summary against the implementation brief's acceptance criteria.
+
+Required inputs you will receive:
+- AI_IMPLEMENTATION_BRIEF.md — the source of truth for what was required
+- current_task.json — task identity and deliverables
+- implementation_summary.md — what the Implementer produced
+
+Verification checklist (per AI_REVIEW.md):
+1. Confirm task_id in current_task.json matches the implementation summary
+2. Validate Deliverables Checklist — each file listed has an explicit Create or Modify action
+3. For each deliverable: Create → file exists in plan; Modify → file is changed for this task
+4. Confirm required tests exist and match brief expectations
+5. Confirm no unrelated scope expansion (≤5 files, ≤200 lines constraint)
+6. Confirm implementation traces to at least one acceptance criterion per file
 
 Output ONLY valid JSON — no markdown, no prose:
 {
-  "sprint_id": "string",
-  "passed": true|false,
-  "findings": [
-    {
-      "task_id": "string",
-      "passed": true|false,
-      "notes": "assessment of this task",
-      "issues": ["specific issue 1", "specific issue 2"]
-    }
-  ],
-  "overall_assessment": "one paragraph summary of the verification result"
+  "task_id": "string",
+  "result": "PASS|FAIL",
+  "summary": "one paragraph assessment",
+  "required_corrections": [],
+  "handoff": {
+    "changed_scope": ["file paths changed"],
+    "verification_state": "pass|fail",
+    "open_risks": [],
+    "next_role_action": "what the downstream role must do",
+    "evidence_refs": ["path/to/brief", "path/to/summary"]
+  }
 }
 
 Rules:
-- passed at the top level is true ONLY if ALL tasks pass
-- Check each acceptance criterion from the sprint plan against the implementation plan
-- issues must be specific and actionable — vague issues are not acceptable
-- If no sprint plan is available, mark as passed with a note about missing context
+- result is "PASS" only if ALL acceptance criteria are met
+- required_corrections: empty array on PASS; specific actionable items on FAIL
+- handoff.next_role_action on PASS: "Sprint Controller archives task and closes it."
+- handoff.next_role_action on FAIL: "Fixer addresses only the listed corrections and re-verifies."
+- Do NOT invent issues not evidenced in the artifacts
 - Do NOT wrap output in markdown code fences`;
+
+interface LlmResponse {
+  task_id: string;
+  result: "PASS" | "FAIL";
+  summary: string;
+  required_corrections: string[];
+  handoff: HandoffContract;
+}
 
 export class VerifierScript implements Script<Record<string, unknown>, unknown> {
   public readonly descriptor = {
     name: "role.verifier",
     version: "2026.04.19",
-    description: "Verifies an implementation plan against sprint acceptance criteria.",
+    description: "Quality gate — verifies implementation against acceptance criteria. Writes verification_result.json and handoff contract.",
     input_schema: {
       type: "object",
       properties: {
@@ -62,14 +100,7 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
     },
     output_schema: {
       type: "object",
-      required: ["sprint_id", "passed", "findings", "overall_assessment", "artifact_path"],
-      properties: {
-        sprint_id: { type: "string" },
-        passed: { type: "boolean" },
-        findings: { type: "array" },
-        overall_assessment: { type: "string" },
-        artifact_path: { type: "string" },
-      },
+      required: ["task_id", "passed", "verification_result_path", "artifact_path"],
     },
     tags: ["role", "verifier"],
   };
@@ -82,29 +113,53 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
 
     const previousArtifacts = typed.previous_artifacts ?? [];
 
-    // Collect all available previous artifacts to give the verifier full context
-    const artifactContents = await Promise.all(
-      previousArtifacts.map(async (p) => {
-        const content = await artifactService.tryRead(p);
-        return content ? `### Artifact: ${p}\n\n${content}` : null;
-      })
+    // Stage A: required inputs per AI_REVIEW.md
+    const briefArtifact = await artifactService.findFirst(
+      previousArtifacts.filter((p) => p.includes("AI_IMPLEMENTATION_BRIEF"))
     );
-    const context_text = artifactContents.filter(Boolean).join("\n\n---\n\n");
+    const taskArtifact = await artifactService.findFirst(
+      previousArtifacts.filter((p) => p.includes("current_task"))
+    );
+    const implArtifact = await artifactService.findFirst(
+      previousArtifacts.filter((p) => p.includes("implementation_summary"))
+    );
 
-    const userContent = context_text
-      ? `Available artifacts:\n\n${context_text}\n\nVerify the implementation against all acceptance criteria.`
-      : "No artifacts available. Return a passing result with a note that no artifacts were provided.";
+    const contextParts: string[] = [];
+    if (briefArtifact) contextParts.push(`# AI_IMPLEMENTATION_BRIEF.md\n\n${briefArtifact.content}`);
+    if (taskArtifact) contextParts.push(`# current_task.json\n\n${taskArtifact.content}`);
+    if (implArtifact) contextParts.push(`# implementation_summary.md\n\n${implArtifact.content}`);
 
-    const result = await azureOpenAiService.chatJson<VerifierOutput>([
+    const userContent = contextParts.length > 0
+      ? `${contextParts.join("\n\n---\n\n")}\n\nVerify the implementation against all acceptance criteria.`
+      : "No artifacts available. Return FAIL with 'No implementation artifacts found' as the correction.";
+
+    const llm = await azureOpenAiService.chatJson<LlmResponse>([
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: userContent },
     ]);
 
-    if (!result.sprint_id || !Array.isArray(result.findings)) {
+    if (!llm.task_id || !llm.result) {
       throw new Error("Verifier LLM response missing required fields");
     }
 
-    const artifactContent = this.formatMarkdown(result);
+    const verifiedAt = new Date().toISOString();
+
+    // Write verification_result.json — machine-readable, consumed by Fixer and Sprint Controller
+    const verificationResult: VerificationResult = {
+      task_id: llm.task_id,
+      result: llm.result,
+      summary: llm.summary,
+      required_corrections: llm.required_corrections ?? [],
+      verified_at: verifiedAt,
+    };
+    const verificationResultPath = await artifactService.write(
+      pipelineId,
+      "verification_result.json",
+      JSON.stringify(verificationResult, null, 2)
+    );
+
+    // Write human-readable markdown summary
+    const artifactContent = this.formatMarkdown(verificationResult, llm.handoff);
     const artifactPath = await artifactService.write(
       pipelineId,
       "verification_result.md",
@@ -112,39 +167,46 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
     );
 
     context.log("Verifier complete", {
-      sprint_id: result.sprint_id,
-      passed: result.passed,
-      findings_count: result.findings.length,
-      artifact_path: artifactPath,
+      task_id: llm.task_id,
+      result: llm.result,
+      corrections: verificationResult.required_corrections.length,
     });
 
-    return { ...result, artifact_path: artifactPath };
+    const output: VerifierOutput = {
+      task_id: llm.task_id,
+      passed: llm.result === "PASS",
+      verification_result_path: verificationResultPath,
+      artifact_path: artifactPath,
+      handoff: llm.handoff,
+    };
+
+    return output;
   }
 
-  private formatMarkdown(result: VerifierOutput): string {
-    const status = result.passed ? "✅ PASSED" : "❌ FAILED";
+  private formatMarkdown(result: VerificationResult, handoff?: HandoffContract): string {
+    const status = result.result === "PASS" ? "✅ PASS" : "❌ FAIL";
+    const corrections =
+      result.required_corrections.length > 0
+        ? result.required_corrections.map((c) => `- ${c}`).join("\n")
+        : "None — all acceptance criteria met.";
 
-    const findingLines = result.findings
-      .map((f) => {
-        const taskStatus = f.passed ? "✅" : "❌";
-        const issues =
-          f.issues.length > 0
-            ? "\n**Issues:**\n" + f.issues.map((i) => `  - ${i}`).join("\n")
-            : "";
-        return `### ${taskStatus} ${f.task_id}\n${f.notes}${issues}`;
-      })
-      .join("\n\n");
+    const handoffSection = handoff
+      ? `\n## Handoff Contract\n\`\`\`json\n${JSON.stringify(handoff, null, 2)}\n\`\`\``
+      : "";
 
-    return `# Verification Result: ${result.sprint_id}
+    return `# Verification Result: ${result.task_id}
 
 ## Status: ${status}
 
-## Overall Assessment
-${result.overall_assessment}
+**Verified at:** ${result.verified_at}
 
-## Task Findings
+## Summary
+${result.summary}
 
-${findingLines}
+## Required Corrections
+${corrections}
+${handoffSection}
 `;
   }
 }
+

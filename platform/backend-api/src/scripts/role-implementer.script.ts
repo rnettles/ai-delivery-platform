@@ -7,53 +7,61 @@ export interface ImplementerInput {
   pipeline_id?: string;
 }
 
-export interface TaskImplementation {
-  task_id: string;
-  title: string;
-  summary: string;
-  approach: string;
-  files_to_modify: string[];
-  test_approach: string;
+export interface FileChange {
+  path: string;
+  action: "Create" | "Modify";
+  description: string;
 }
 
 export interface ImplementerOutput {
+  task_id: string;
   sprint_id: string;
-  task_implementations: TaskImplementation[];
+  summary: string;
+  files_changed: FileChange[];
+  test_approach: string;
   artifact_path: string;
 }
 
 const SYSTEM_PROMPT = `You are the Implementer AI in a governed software delivery pipeline.
-You receive a sprint plan and produce an implementation plan describing what code changes to make.
+Your primary source of truth is AI_IMPLEMENTATION_BRIEF.md.
+
+You receive an implementation brief and produce an implementation summary describing the exact code changes.
 This is a design-level implementation — you describe the changes precisely without writing raw code.
+
+Constraints per ai_dev_stack governance:
+- Modify no more than 5 files
+- Keep changes under ~200 lines of code
+- Do not refactor unrelated code
+- Do not implement future sprint tasks
+- Every file change must trace to an acceptance criterion in the brief
 
 Output ONLY valid JSON — no markdown, no prose:
 {
+  "task_id": "string",
   "sprint_id": "string",
-  "task_implementations": [
+  "summary": "one paragraph — what this implementation achieves",
+  "files_changed": [
     {
-      "task_id": "string",
-      "title": "string",
-      "summary": "what this implementation achieves",
-      "approach": "step-by-step description of the implementation approach",
-      "files_to_modify": ["src/path/to/file.ts", "..."],
-      "test_approach": "how to test this implementation"
+      "path": "src/path/to/file.ts",
+      "action": "Create|Modify",
+      "description": "what changes are made and why, tracing to the acceptance criterion"
     }
-  ]
+  ],
+  "test_approach": "specific test types (unit, integration) and what to test"
 }
 
 Rules:
-- Implement ALL tasks from the sprint plan
-- files_to_modify must be specific file paths relative to the project root
-- approach must be actionable and specific enough for a developer to execute
-- test_approach must reference specific test types (unit, integration, e2e)
-- Do NOT write actual code, only describe what to implement
+- files_changed max 5 entries
+- action must be exactly "Create" or "Modify" (Deliverables Checklist convention)
+- description must be specific enough for a developer or Verifier to verify
+- test_approach must be concrete, not generic
 - Do NOT wrap output in markdown code fences`;
 
 export class ImplementerScript implements Script<Record<string, unknown>, unknown> {
   public readonly descriptor = {
     name: "role.implementer",
     version: "2026.04.19",
-    description: "Produces an implementation plan from a sprint plan. Describes code changes needed.",
+    description: "Produces an implementation summary from AI_IMPLEMENTATION_BRIEF.md. Describes exact code changes needed (≤5 files, ≤200 lines).",
     input_schema: {
       type: "object",
       properties: {
@@ -64,12 +72,7 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
     },
     output_schema: {
       type: "object",
-      required: ["sprint_id", "task_implementations", "artifact_path"],
-      properties: {
-        sprint_id: { type: "string" },
-        task_implementations: { type: "array" },
-        artifact_path: { type: "string" },
-      },
+      required: ["task_id", "sprint_id", "summary", "files_changed", "test_approach", "artifact_path"],
     },
     tags: ["role", "implementer"],
   };
@@ -81,22 +84,40 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
     context.log("Implementer running", { pipeline_id: pipelineId });
 
     const previousArtifacts = typed.previous_artifacts ?? [];
+
+    // Primary source: AI_IMPLEMENTATION_BRIEF.md (Sprint Controller's output)
+    // Stage A loads per AI_RUNTIME_LOADING_RULES.md
+    const briefArtifact = await artifactService.findFirst(
+      previousArtifacts.filter((p) => p.includes("AI_IMPLEMENTATION_BRIEF"))
+    );
+    const taskArtifact = await artifactService.findFirst(
+      previousArtifacts.filter((p) => p.includes("current_task"))
+    );
+    // Stage B conditional: sprint plan for broader context
     const sprintArtifact = await artifactService.findFirst(
-      // Prefer the sprint plan artifact; fall back to any artifact
-      previousArtifacts.filter((p) => p.includes("sprint_plan")).concat(previousArtifacts)
+      previousArtifacts.filter((p) => p.includes("sprint_plan"))
     );
 
-    const userContent = sprintArtifact
-      ? `Sprint plan:\n\n${sprintArtifact.content}\n\nProduce a detailed implementation plan for all tasks.`
-      : "No sprint plan artifact found. Produce a generic 2-task implementation plan.";
+    const contextParts: string[] = [];
+    if (briefArtifact) contextParts.push(`# AI_IMPLEMENTATION_BRIEF.md\n\n${briefArtifact.content}`);
+    if (taskArtifact) contextParts.push(`# current_task.json\n\n${taskArtifact.content}`);
+    if (sprintArtifact) contextParts.push(`# Sprint Plan (context)\n\n${sprintArtifact.content}`);
+
+    const userContent = contextParts.length > 0
+      ? `${contextParts.join("\n\n---\n\n")}\n\nProduce the implementation summary for the active task.`
+      : "No implementation brief found. Produce a generic 2-file implementation summary for a data model task.";
 
     const impl = await azureOpenAiService.chatJson<ImplementerOutput>([
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: userContent },
     ]);
 
-    if (!impl.sprint_id || !impl.task_implementations?.length) {
+    if (!impl.task_id || !Array.isArray(impl.files_changed)) {
       throw new Error("Implementer LLM response missing required fields");
+    }
+
+    if (impl.files_changed.length > 5) {
+      throw new Error(`Implementer produced ${impl.files_changed.length} file changes — governance limit is 5`);
     }
 
     const artifactContent = this.formatMarkdown(impl);
@@ -107,8 +128,8 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
     );
 
     context.log("Implementer complete", {
-      sprint_id: impl.sprint_id,
-      tasks_implemented: impl.task_implementations.length,
+      task_id: impl.task_id,
+      files_changed: impl.files_changed.length,
       artifact_path: artifactPath,
     });
 
@@ -116,28 +137,25 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
   }
 
   private formatMarkdown(impl: ImplementerOutput): string {
-    const taskSections = impl.task_implementations
-      .map((t) => {
-        const files = t.files_to_modify.map((f) => `  - \`${f}\``).join("\n");
-        return `### ${t.task_id}: ${t.title}
-
-**Summary:** ${t.summary}
-
-**Approach:**
-${t.approach}
-
-**Files to modify:**
-${files}
-
-**Test approach:** ${t.test_approach}`;
-      })
+    const fileLines = impl.files_changed
+      .map((f) => `### ${f.action}: \`${f.path}\`\n${f.description}`)
       .join("\n\n");
 
-    return `# Implementation Summary: ${impl.sprint_id}
+    return `# Implementation Summary
 
-## Task Implementations
+**Task:** ${impl.task_id}
+**Sprint:** ${impl.sprint_id}
 
-${taskSections}
+## Summary
+${impl.summary}
+
+## Deliverables Checklist
+
+${fileLines}
+
+## Test Approach
+${impl.test_approach}
 `;
   }
 }
+
