@@ -258,7 +258,7 @@ This transitions from Phase 1 (bundled governance) to Phase 2 (Azure Files runti
 
 | Variable | Required | Description |
 |---|---|---|
-| `API_KEY` | Yes (non-dev) | Shared secret for `x-api-key` auth on execution service endpoints |
+| `API_KEY` | Yes (non-dev) | Shared secret for `x-api-key` auth on execution service endpoints. Set via `api_key` in `secrets.auto.tfvars` |
 | `GOVERNANCE_PATH` | No | Defaults to `./governance`; set to `/mnt/repo/platform/governance` in Phase 2 |
 | `ARTIFACT_BASE_PATH` | Yes | Path for artifact writes (Azure Files mount in production) |
 | `AZURE_OPENAI_ENDPOINT` | Yes | Azure OpenAI endpoint |
@@ -269,6 +269,15 @@ This transitions from Phase 1 (bundled governance) to Phase 2 (Azure Files runti
 | `GIT_CLONE_PATH` | No | Defaults to `/mnt/repo` |
 | `DATABASE_URL` | Yes | Postgres connection string |
 | `N8N_CALLBACK_URL` | Yes | n8n webhook URL for pipeline notifications |
+
+### n8n Environment Variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `EXECUTION_API_BASE_URL` | Yes | Full `https://` base URL of the execution-service. Set by Terraform from the container app FQDN |
+| `EXECUTION_API_KEY` | Yes | Same value as `API_KEY` on the execution-service. Set via `api_key` in `secrets.auto.tfvars` |
+| `N8N_BLOCK_ENV_ACCESS_IN_NODE` | Yes | Must be `false` — allows workflows to read env vars via `$env` |
+| `N8N_BLOCK_RUNNER_ENV_ACCESS` | Yes | Must be `false` — same for runner context |
 
 ---
 
@@ -303,20 +312,16 @@ Import and activate:
 - `platform/workflow/slack-action-handler.json`
 - `platform/workflow/pipeline-notifier.json`
 
-### 3. Configure n8n API Key Header
+### 3. n8n Environment Variables
 
-All n8n HTTP nodes calling execution service must send:
+The workflow JSON uses `$env` expressions — no placeholders to replace. The values are injected into the n8n container app by Terraform:
 
-```
-x-api-key: <execution-service API_KEY>
-```
+| n8n Environment Variable | Source | Description |
+|---|---|---|
+| `EXECUTION_API_BASE_URL` | Terraform `execution_api_base_url` | Full `https://` base URL of the execution-service |
+| `EXECUTION_API_KEY` | Terraform `execution_api_key` (→ `var.api_key`) | Shared secret sent as `x-api-key` header |
 
-Use n8n credentials or env vars, not hardcoded secrets.
-
-If you import the repository workflow JSON directly, replace these placeholders before activating the workflows:
-
-- `__EXECUTION_API_BASE_URL__`
-- `__EXECUTION_API_KEY__`
+Both variables are set automatically when you run `terraform apply` with `api_key` populated in `secrets.auto.tfvars`. Import the workflow JSON as-is — no manual substitution required.
 
 ### 4. Install Slack App
 

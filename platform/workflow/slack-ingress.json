@@ -102,13 +102,13 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://__EXECUTION_API_BASE_URL__/pipeline",
+        "url": "={{ $env.EXECUTION_API_BASE_URL + '/pipeline' }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "x-api-key",
-              "value": "__EXECUTION_API_KEY__"
+              "value": "={{ $env.EXECUTION_API_KEY }}"
             }
           ]
         },
@@ -148,7 +148,7 @@
 
     {
       "parameters": {
-        "jsCode": "const data = $input.first().json;\nconst { action, pipeline_id, artifact_path, user_name, user_id } = data;\nconst actor = user_name || user_id || 'unknown';\n\nif (!pipeline_id) {\n  return [{\n    json: {\n      skip_http: true,\n      response_body: JSON.stringify({\n        response_type: 'ephemeral',\n        text: `\\u274C Please provide a pipeline ID: \\`/${action} <pipeline-id>\\``\n      })\n    }\n  }];\n}\n\nconst base = 'https://__EXECUTION_API_BASE_URL__';\nlet method = 'POST';\nlet url;\nlet body;\n\nif (action === 'approve') {\n  url = `${base}/pipeline/${pipeline_id}/approve`;\n  body = JSON.stringify({ actor });\n} else if (action === 'takeover') {\n  url = `${base}/pipeline/${pipeline_id}/takeover`;\n  body = JSON.stringify({ actor });\n} else if (action === 'handoff') {\n  url = `${base}/pipeline/${pipeline_id}/handoff`;\n  body = JSON.stringify({ actor, artifact_path: artifact_path || undefined });\n} else if (action === 'status') {\n  method = 'GET';\n  url = `${base}/pipeline/${pipeline_id}`;\n  body = null;\n}\n\nreturn [{ json: { ...data, actor, skip_http: false, http_method: method, http_url: url, http_body: body } }];\n"
+        "jsCode": "const data = $input.first().json;\nconst { action, pipeline_id, artifact_path, user_name, user_id } = data;\nconst actor = user_name || user_id || 'unknown';\n\nif (!pipeline_id) {\n  return [{\n    json: {\n      skip_http: true,\n      response_body: JSON.stringify({\n        response_type: 'ephemeral',\n        text: `\\u274C Please provide a pipeline ID: \\`/${action} <pipeline-id>\\``\n      })\n    }\n  }];\n}\n\nconst base = $env.EXECUTION_API_BASE_URL;\nlet method = 'POST';\nlet url;\nlet body;\n\nif (action === 'approve') {\n  url = `${base}/pipeline/${pipeline_id}/approve`;\n  body = JSON.stringify({ actor });\n} else if (action === 'takeover') {\n  url = `${base}/pipeline/${pipeline_id}/takeover`;\n  body = JSON.stringify({ actor });\n} else if (action === 'handoff') {\n  url = `${base}/pipeline/${pipeline_id}/handoff`;\n  body = JSON.stringify({ actor, artifact_path: artifact_path || undefined });\n} else if (action === 'status') {\n  method = 'GET';\n  url = `${base}/pipeline/${pipeline_id}`;\n  body = null;\n}\n\nreturn [{ json: { ...data, actor, skip_http: false, http_method: method, http_url: url, http_body: body } }];\n"
       },
       "id": "si-0008",
       "name": "Build Action Request",
@@ -165,7 +165,7 @@
           "parameters": [
             {
               "name": "x-api-key",
-              "value": "__EXECUTION_API_KEY__"
+              "value": "={{ $env.EXECUTION_API_KEY }}"
             }
           ]
         },

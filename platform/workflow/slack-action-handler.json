@@ -123,13 +123,13 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ 'https://__EXECUTION_API_BASE_URL__/pipeline/' + $json.pipeline_id + '/approve' }}",
+        "url": "={{ $env.EXECUTION_API_BASE_URL + '/pipeline/' + $json.pipeline_id + '/approve' }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "x-api-key",
-              "value": "__EXECUTION_API_KEY__"
+              "value": "={{ $env.EXECUTION_API_KEY }}"
             }
           ]
         },
@@ -158,13 +158,13 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ 'https://__EXECUTION_API_BASE_URL__/pipeline/' + $json.pipeline_id + '/takeover' }}",
+        "url": "={{ $env.EXECUTION_API_BASE_URL + '/pipeline/' + $json.pipeline_id + '/takeover' }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "x-api-key",
-              "value": "__EXECUTION_API_KEY__"
+              "value": "={{ $env.EXECUTION_API_KEY }}"
             }
           ]
         },
@@ -193,13 +193,13 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ 'https://__EXECUTION_API_BASE_URL__/pipeline/' + $json.pipeline_id + '/skip' }}",
+        "url": "={{ $env.EXECUTION_API_BASE_URL + '/pipeline/' + $json.pipeline_id + '/skip' }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "x-api-key",
-              "value": "__EXECUTION_API_KEY__"
+              "value": "={{ $env.EXECUTION_API_KEY }}"
             }
           ]
         },
