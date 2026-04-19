@@ -1,7 +1,7 @@
 # ADR-020: Schema and Contract Lifecycle Management
 
 ## Status
-Proposed
+Accepted
 
 ## Date
 2026-04-18

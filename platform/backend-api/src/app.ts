@@ -6,6 +6,7 @@ import gitSyncRoutes from "./routes/git-sync.routes";
 import pipelineRoutes from "./routes/pipeline.routes";
 import { requestIdMiddleware } from "./middleware/request-id.middleware";
 import { errorMiddleware } from "./middleware/error.middleware";
+import { apiKeyMiddleware } from "./middleware/api-key.middleware";
 
 export const app = express();
 
@@ -16,6 +17,8 @@ app.use(requestIdMiddleware);
 app.get("/health", (_req, res) => {
 	res.status(200).json({ status: "ok" });
 });
+
+app.use(apiKeyMiddleware);
 
 app.use(executionRoutes);
 app.use(coordinationRoutes);

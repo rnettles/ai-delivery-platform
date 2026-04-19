@@ -132,6 +132,53 @@ Non-authoritative snapshot files may exist for convenience, but they must be rec
 
 ---
 
+# 11. Terminology Mapping: Docs vs. Implementation
+
+Two distinct status vocabularies exist in the platform. They operate at **different layers** and should not be confused.
+
+## Project Lifecycle Stages (this document)
+
+These stages describe the **high-level progress of a project or work item** through the governed delivery process. They are derived from artifacts and execution records, not directly stored as mutable state.
+
+| Stage | Meaning |
+|-------|---------|
+| `intake` | Work captured, no planning artifacts yet |
+| `planning` | Planner role generating phase/sprint artifacts |
+| `staging` | Artifacts validated, ready for execution |
+| `active` | Tasks being executed |
+| `validation` | Outputs under validation |
+| `completed` | Work finished and validated |
+
+## Pipeline Run Operational Status (implementation: `PipelineStatus`)
+
+These values describe the **current operational state of a pipeline run** (a single execution of a sequence of roles). Defined in `platform/backend-api/src/domain/pipeline.types.ts`.
+
+| `PipelineStatus` | Meaning |
+|-----------------|---------|
+| `running` | A role is actively executing |
+| `awaiting_approval` | Execution paused; human gate required before next step |
+| `paused_takeover` | Human has claimed ownership of the current step |
+| `failed` | A role execution failed; pipeline halted |
+| `complete` | All pipeline steps finished successfully |
+| `cancelled` | Pipeline was explicitly cancelled |
+
+## Mapping
+
+A project's **lifecycle stage** is determined by inspecting which pipeline runs have completed and what artifacts they produced. The `PipelineStatus` is an implementation-level detail of a single pipeline run; it does not directly correspond 1:1 to a lifecycle stage.
+
+Example correspondence (not exhaustive):
+
+| Project Lifecycle Stage | Typical `PipelineStatus` context |
+|------------------------|----------------------------------|
+| `planning` | Pipeline run for planner role is `running` or `awaiting_approval` |
+| `staging` | Planner pipeline run is `complete`; artifacts validated |
+| `active` | Implementer pipeline run is `running` |
+| `validation` | Verifier pipeline run is `running` or `awaiting_approval` |
+| `completed` | Final pipeline run is `complete`; all validation passed |
+```
+
+---
+
 # 11. Enforcement Rules
 
 - Execution Service must validate transition eligibility before finalizing stage-changing artifacts

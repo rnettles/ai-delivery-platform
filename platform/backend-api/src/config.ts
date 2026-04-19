@@ -20,4 +20,6 @@ export const config = {
   gitPat: process.env.GIT_PAT ?? "",
   // Path where repo is cloned; on Azure Files mount this is /mnt/repo
   gitClonePath: process.env.GIT_CLONE_PATH ?? "/mnt/repo",
+  // API authentication — required in all non-development environments
+  apiKey: process.env.API_KEY ?? "",
 };

@@ -1,7 +1,7 @@
 # ADR-014: API-Driven Coordination and Execution Context Layer
 
 ## Status
-Proposed
+Accepted
 
 ## Date
 2026-04-18
