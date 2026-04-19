@@ -29,3 +29,4 @@ This directory contains all architectural decisions for the system.
 - ADR-022: Multi-Agent Pipeline Execution Model
 - ADR-023: n8n as Slack Interface Adapter
 - ADR-024: Pipeline Human Override and Takeover Model
+- ADR-025: Two-Tier Governance Composition Model

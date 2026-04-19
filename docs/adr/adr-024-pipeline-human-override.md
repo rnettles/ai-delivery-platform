@@ -1,7 +1,7 @@
 # ADR-024: Pipeline Human Override and Takeover Model
 
 ## Status
-Proposed
+Accepted
 
 ## Date
 2026-04-19

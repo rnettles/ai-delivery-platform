@@ -1,7 +1,7 @@
 # ADR-023: n8n as Slack Interface Adapter
 
 ## Status
-Proposed
+Accepted
 
 ## Date
 2026-04-19

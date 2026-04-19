@@ -1,7 +1,7 @@
 # ADR-022: Multi-Agent Pipeline Execution Model
 
 ## Status
-Proposed
+Accepted
 
 ## Date
 2026-04-19
