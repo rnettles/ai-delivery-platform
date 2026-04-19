@@ -1,5 +1,6 @@
 import { Script } from "../scripts/script.interface";
 import { TestEchoScript } from "../scripts/test-echo.script";
+import { PlannerScript } from "../scripts/role-planner.script";
 import { ExecutionTarget, RoleDiscovery, ScriptDiscovery, ScriptsDiscoveryResponse } from "../domain/execution.types";
 import { HttpError } from "../utils/http-error";
 
@@ -16,7 +17,11 @@ export class ScriptRegistryService {
 
   constructor() {
     this.register(new TestEchoScript());
+    this.register(new PlannerScript());
+    // Legacy test binding kept for backward compat
     this.registerRoleBinding("planner", "2026.04.18", "test.echo", "2026.04.18");
+    // Production planner role bound to the real planner script
+    this.registerRoleBinding("planner", "2026.04.19", "role.planner", "2026.04.19");
   }
 
   register(script: Script): void {

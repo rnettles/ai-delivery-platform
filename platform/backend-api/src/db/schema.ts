@@ -5,7 +5,8 @@ import {
   jsonb,
   timestamp,
   integer,
-  index
+  index,
+  boolean
 } from "drizzle-orm/pg-core";
 
 export const state = pgTable(
@@ -49,5 +50,28 @@ export const stateHistory = pgTable(
   },
   (table) => ({
     stateIdx: index("idx_state_history_state").on(table.state_id),
+  })
+);
+
+// Pipeline runs — one row per pipeline execution
+export const pipelineRuns = pgTable(
+  "pipeline_runs",
+  {
+    pipeline_id: uuid("pipeline_id").primaryKey().notNull(),
+    entry_point: text("entry_point").notNull(),
+    current_step: text("current_step").notNull(),
+    status: text("status").notNull(),
+    // steps: full ordered history of step records (jsonb array)
+    steps: jsonb("steps").notNull().$type<object[]>().default([]),
+    // metadata: slack_channel, slack_user, slack_thread_ts, source, etc.
+    metadata: jsonb("metadata").notNull().$type<Record<string, unknown>>().default({}),
+    // input provided at pipeline creation
+    input: jsonb("input").$type<Record<string, unknown>>().default({}),
+    created_at: timestamp("created_at").defaultNow().notNull(),
+    updated_at: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    statusIdx: index("idx_pipeline_runs_status").on(table.status),
+    channelIdx: index("idx_pipeline_runs_channel").on(table.metadata),
   })
 );

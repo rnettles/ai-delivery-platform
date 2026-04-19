@@ -1,0 +1,214 @@
+import { Request, Response, NextFunction } from "express";
+import { pipelineService } from "../services/pipeline.service";
+import { pipelineNotifierService } from "../services/pipeline-notifier.service";
+import { executionService } from "../services/execution.service";
+import {
+  CreatePipelineRequest,
+  PipelineHandoffRequest,
+  PipelineRole,
+  PipelineSkipRequest,
+} from "../domain/pipeline.types";
+import { HttpError } from "../utils/http-error";
+
+function getSlackActor(req: Request): string {
+  // Actor identity from Slack metadata or a fallback header
+  const slackUser = req.body?.actor ?? req.headers["x-actor"] ?? "unknown";
+  return String(slackUser);
+}
+
+export async function createPipeline(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const body = req.body as Partial<CreatePipelineRequest>;
+
+    const validRoles: PipelineRole[] = ["planner", "sprint-controller", "implementer", "verifier", "fixer"];
+    const entryPoint = body.entry_point;
+
+    if (!entryPoint || !validRoles.includes(entryPoint)) {
+      throw new HttpError(
+        400,
+        "INVALID_ENTRY_POINT",
+        `entry_point must be one of: ${validRoles.join(", ")}`
+      );
+    }
+
+    const run = await pipelineService.create({
+      entry_point: entryPoint,
+      input: body.input ?? {},
+      metadata: body.metadata ?? {},
+    });
+
+    // Kick off execution of the first role asynchronously — do not await
+    // This allows the API to return immediately with the pipeline_id
+    executeCurrentStep(run.pipeline_id, run.entry_point, body.input ?? {}, req.requestId).catch(() => {
+      // Errors logged inside executeCurrentStep
+    });
+
+    res.status(202).json(run);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function getPipeline(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const pipelineId = String(req.params.pipelineId);
+    const run = await pipelineService.get(pipelineId);
+    res.status(200).json(run);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function approvePipeline(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const pipelineId = String(req.params.pipelineId);
+    const actor = getSlackActor(req);
+    const run = await pipelineService.approve(pipelineId, actor);
+
+    // If advancing to a new running step, kick off execution
+    if (run.status === "running" && run.current_step !== "complete") {
+      const currentStep = run.current_step as PipelineRole;
+      executeCurrentStep(run.pipeline_id, currentStep, {}, undefined).catch(() => {});
+    }
+
+    res.status(200).json(run);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function takeoverPipeline(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const pipelineId = String(req.params.pipelineId);
+    const actor = getSlackActor(req);
+    const run = await pipelineService.takeover(pipelineId, actor);
+
+    await pipelineNotifierService.notify({
+      pipeline_id: run.pipeline_id,
+      step: run.current_step,
+      status: run.status,
+      gate_required: false,
+      artifact_paths: [],
+      metadata: run.metadata,
+    });
+
+    res.status(200).json(run);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function handoffPipeline(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const pipelineId = String(req.params.pipelineId);
+    const actor = getSlackActor(req);
+    const body = req.body as Partial<PipelineHandoffRequest>;
+    const run = await pipelineService.handoff(pipelineId, {
+      actor,
+      artifact_path: typeof body.artifact_path === "string" ? body.artifact_path : undefined,
+    });
+
+    if (run.status === "running" && run.current_step !== "complete") {
+      executeCurrentStep(run.pipeline_id, run.current_step as PipelineRole, {}, undefined).catch(() => {});
+    }
+
+    res.status(200).json(run);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function skipPipeline(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const pipelineId = String(req.params.pipelineId);
+    const actor = getSlackActor(req);
+    const body = req.body as Partial<PipelineSkipRequest>;
+
+    if (typeof body.justification !== "string" || body.justification.trim().length === 0) {
+      throw new HttpError(400, "JUSTIFICATION_REQUIRED", "A justification string is required to skip a step");
+    }
+
+    const run = await pipelineService.skip(pipelineId, {
+      actor,
+      justification: body.justification,
+    });
+
+    if (run.status === "running" && run.current_step !== "complete") {
+      executeCurrentStep(run.pipeline_id, run.current_step as PipelineRole, {}, undefined).catch(() => {});
+    }
+
+    res.status(200).json(run);
+  } catch (error) {
+    next(error);
+  }
+}
+
+// ─── INTERNAL: execute the current pipeline step via the execution service ──
+
+async function executeCurrentStep(
+  pipelineId: string,
+  role: PipelineRole,
+  input: Record<string, unknown>,
+  requestId: string | undefined
+): Promise<void> {
+  const { logger } = await import("../services/logger.service");
+
+  try {
+    logger.info("Pipeline step executing", { pipeline_id: pipelineId, role });
+
+    const result = await executionService.execute(
+      {
+        correlation_id: pipelineId,
+        target: { type: "role", name: role, version: "2026.04.19" },
+        input,
+        metadata: { pipeline_id: pipelineId },
+      },
+      requestId
+    );
+
+    const artifactPaths: string[] = [];
+    if (result.output && typeof result.output === "object" && "artifact_path" in result.output) {
+      const path = (result.output as Record<string, unknown>).artifact_path;
+      if (typeof path === "string") artifactPaths.push(path);
+    }
+
+    const run = await pipelineService.completeStep(
+      pipelineId,
+      role,
+      result.execution_id,
+      artifactPaths,
+      !result.ok
+    );
+
+    await pipelineNotifierService.notify({
+      pipeline_id: pipelineId,
+      step: run.current_step,
+      status: run.status,
+      gate_required: run.status === "awaiting_approval",
+      artifact_paths: artifactPaths,
+      metadata: run.metadata,
+    });
+  } catch (error) {
+    logger.error("Pipeline step execution failed", {
+      pipeline_id: pipelineId,
+      role,
+      error: error instanceof Error ? error.message : String(error),
+    });
+
+    // Attempt to mark step as failed in the pipeline
+    try {
+      const run = await pipelineService.completeStep(pipelineId, role, "failed", [], true);
+      await pipelineNotifierService.notify({
+        pipeline_id: pipelineId,
+        step: run.current_step,
+        status: "failed",
+        gate_required: false,
+        artifact_paths: [],
+        metadata: run.metadata,
+      });
+    } catch {
+      // If this also fails, the pipeline is in an inconsistent state — log only
+      logger.error("Failed to mark pipeline step as failed", { pipeline_id: pipelineId, role });
+    }
+  }
+}
