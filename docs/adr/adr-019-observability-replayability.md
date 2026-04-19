@@ -1,49 +1,36 @@
 # ADR-019: Execution Observability and Replayability
 
 ## Status
-Proposed
+Accepted
 
 ## Date
 2026-04-18
-
-## Deciders
-- Product Engineering
-- Platform Architecture
 
 ---
 
 ## Context
 
-ADR-018 established the Execution Service as a **deterministic, contract-enforced execution layer**.
+ADR-018 established the Execution Service as a deterministic, contract-enforced execution layer.
 
-While this guarantees:
-- Valid input/output contracts
-- Structured error handling
-- Deterministic behavior
+However, correctness alone is insufficient without:
 
-…it does **not guarantee operational visibility or traceability**.
+- Visibility into execution behavior
+- Traceability across systems
+- Ability to inspect and debug historical executions
+- Replay capability for validation and recovery
 
-At present, the system lacks:
-- Persistent execution records
-- Queryable execution history
-- Replay capability
-- Cross-system traceability (e.g., n8n workflows)
+Without observability:
 
-This creates critical gaps:
-
-- Failures cannot be reliably investigated after the fact
-- Execution behavior cannot be audited or validated
-- Debugging requires guesswork instead of evidence
-- Workflow-level tracing across systems is not possible
-- Agents and automation cannot safely retry or reason about past executions
-
-To operate reliably at scale, the system must treat execution as a **first-class, persistent, and queryable artifact**.
+- Failures cannot be investigated reliably
+- Execution cannot be audited
+- Determinism cannot be verified
+- Orchestrated workflows cannot be traced end-to-end
 
 ---
 
 ## Decision
 
-The Execution Service SHALL implement **Execution Observability and Replayability**, ensuring that all executions are:
+The system SHALL implement **Execution Observability and Replayability**, ensuring that all executions are:
 
 - Persisted
 - Queryable
@@ -52,205 +39,214 @@ The Execution Service SHALL implement **Execution Observability and Replayabilit
 
 ---
 
-### 1. Execution Record (Canonical Model)
+## Core Principle
 
-Every execution MUST produce a persistent **ExecutionRecord**.
-
-```ts
-interface ExecutionRecord {
-  execution_id: string;
-
-  script: string;
-  script_version: string;
-
-  input: unknown;
-  output?: unknown;
-
-  status: "success" | "error";
-
-  error?: {
-    code: string;
-    message: string;
-    details?: any;
-  };
-
-  started_at: string;
-  completed_at?: string;
-  duration_ms?: number;
-
-  metadata?: {
-    source?: string;          // e.g., n8n, API, CLI
-    correlation_id?: string;  // workflow or request trace
-    user_id?: string;
-  };
-}
-```
-
-#### Requirement
-
-> If an execution is not recorded, it is considered not to have occurred.
+> If an execution is not recorded, it did not happen.
 
 ---
 
-### 2. Execution Persistence
+## Execution Record Model (Conceptual)
 
-ExecutionRecords MUST be persisted in a durable data store.
+Each execution MUST produce a persistent **ExecutionRecord** containing:
 
-Acceptable initial implementations:
-- SQLite
-- PostgreSQL
-
-The system MUST NOT rely on:
-- In-memory storage
-- Ephemeral logs without persistence
-
-Persistence MUST ensure:
-- Durability across restarts
-- Queryability
-- Consistency with execution results
+- execution identifier
+- script identifier
+- script version
+- input (structured)
+- output (if successful, structured and schema-valid)
+- error (if failure, structured)
+- execution status
+- timing information (start, end, duration)
+- metadata (e.g., correlation_id, source, user)
 
 ---
 
-### 3. Execution Query API
+## Execution Record Requirements
 
-The Execution Service SHALL expose APIs to retrieve execution history.
+ExecutionRecords MUST:
 
-#### Endpoints
+- Be immutable once written
+- Represent the exact outcome of execution
+- Be consistent with execution contract (ADR-018)
+- Be reproducible
 
-```
-GET /executions
-GET /executions/:id
-```
+ExecutionRecords MUST NOT:
 
-#### Behavior
-
-- `GET /executions` returns a list of execution summaries
-- `GET /executions/:id` returns the full ExecutionRecord
-
-Responses MUST include:
-- Input
-- Output (if success)
-- Error (if failure)
-- Metadata
-- Timing information
+- Be modified after creation
+- Contain partial or unvalidated data
 
 ---
 
-### 4. Execution Replay Capability
+## Persistence Requirements
 
-The Execution Service SHALL support deterministic replay of executions.
+ExecutionRecords MUST be persisted in a durable, queryable data store.
 
-#### Endpoint
+The system MUST:
 
-```
-POST /executions/:id/replay
-```
+- Ensure durability across restarts
+- Support querying and filtering
+- Maintain consistency with execution outcomes
 
-#### Behavior
-
-- Re-executes the original script using:
-  - same script name
-  - same script version
-  - same input
-
-#### Constraint
-
-Replay MUST adhere to ADR-018 determinism guarantees:
-
-> Replay MUST produce:
-> - the same output  
-> OR  
-> - the same structured error  
+Implementation choice of storage is not part of this ADR.
 
 ---
 
-### 5. Execution Lifecycle Events
+## Relationship to Artifact-Driven State (ADR-002)
 
-The system SHALL emit structured lifecycle events for each execution.
+ExecutionRecords are:
 
-#### Required Events
+- authoritative records of execution behavior
+- inputs to debugging and replay
 
-- `execution.started`
-- `execution.completed`
-- `execution.failed`
+ExecutionRecords are NOT:
 
-#### Minimum Event Fields
+- the source of system state
+- a replacement for artifacts
 
-- `execution_id`
-- `script`
-- `script_version`
-- `timestamp`
-- `status`
-
-These events MUST be:
-- Logged
-- Correlated with ExecutionRecords
+Artifacts remain the source of truth.
 
 ---
 
-### 6. Correlation and Traceability
+## Execution Query Capability
 
-The system SHALL support cross-system tracing via `correlation_id`.
+The system SHALL expose query capabilities for execution history.
 
-#### Requirements
+Clients MUST be able to:
 
-- ExecutionRequests MAY include a `correlation_id`
-- The Execution Service MUST persist this value in the ExecutionRecord
-- All logs and events MUST include the `correlation_id` when present
+- retrieve execution summaries
+- retrieve full execution details by identifier
 
-#### Purpose
+Returned data MUST include:
 
-Enables tracing across systems:
-
-```
-External Trigger → n8n → Execution Service → Script(s)
-```
+- input
+- output or error
+- metadata
+- timing information
 
 ---
 
-### 7. Orchestration Integration (n8n)
+## Replay Capability
 
-n8n SHALL provide metadata for traceability:
+The system SHALL support deterministic replay of executions.
 
-```json
-{
-  "metadata": {
-    "source": "n8n",
-    "correlation_id": "<workflow_run_id>"
-  }
-}
-```
+Replay MUST:
 
-n8n MUST NOT:
-- Store execution state as source of truth
-- Replace Execution Service observability
-- Break correlation chains
-
-The Execution Service remains the **system of record for execution history**.
+- use the same script identifier
+- use the same script version
+- use the same input
+- use the same execution context definition
 
 ---
 
-### 8. Replay Safety Constraints
+### Replay Guarantee
 
-Replay functionality MUST NOT:
-- Mutate original ExecutionRecords
-- Override historical data
-- Introduce non-deterministic behavior
+Replay MUST produce:
 
-Each replay MUST:
-- Create a new ExecutionRecord
-- Reference the original execution (e.g., `replayed_from_execution_id`)
+- the same output  
+OR  
+- the same structured error  
 
 ---
 
-### 9. Data Retention Considerations
+### Replay Constraints
+
+Replay MUST:
+
+- create a new ExecutionRecord
+- reference the original execution
+- not mutate historical records
+
+---
+
+## Execution Context Consideration
+
+ExecutionRecords SHOULD capture sufficient context to ensure replay determinism.
+
+This MAY include:
+
+- environment identifiers
+- dependency versions (future)
+- configuration references
+
+---
+
+## Observability Requirements
+
+Observability is a **core execution guarantee**.
+
+Each execution MUST:
+
+- generate structured logs
+- include execution identifier in all logs
+- include script and version
+- include status and timing
+
+---
+
+## Lifecycle Events
+
+The system SHALL emit structured lifecycle events:
+
+- execution.started
+- execution.completed
+- execution.failed
+
+These events MUST:
+
+- include execution identifier
+- be correlated with ExecutionRecords
+- support tracing and monitoring
+
+---
+
+## Correlation and Traceability
+
+The system SHALL support cross-system tracing via metadata.
+
+ExecutionRequests MAY include:
+
+- correlation_id
+- source identifier
+
+The Execution Service MUST:
+
+- persist this metadata
+- propagate it through logs and events
+
+---
+
+## Orchestration Integration (ADR-007)
+
+Orchestration systems (e.g., n8n) SHALL:
+
+- provide correlation metadata
+- rely on Execution Service for observability
+
+They MUST NOT:
+
+- maintain separate execution truth
+- replace ExecutionRecords
+
+---
+
+## Data Lifecycle
 
 ExecutionRecords SHOULD support:
-- Retention policies
-- Archival strategies
-- Filtering/query capabilities
 
-Initial implementation MAY store all executions without pruning, but future scalability MUST be considered.
+- retention policies
+- archival strategies
+- indexing and querying
+
+---
+
+## Prohibited Behavior
+
+The system MUST NOT:
+
+- execute without recording
+- mutate ExecutionRecords
+- allow replay without traceability
+- treat logs as the primary source of execution truth
 
 ---
 
@@ -258,98 +254,62 @@ Initial implementation MAY store all executions without pruning, but future scal
 
 ### Positive
 
-- Full visibility into all executions
-- Deterministic debugging and failure analysis
-- Replay capability enables root cause validation
-- Enables UI tooling (execution history, dashboards)
-- Supports agent-based retry and reasoning workflows
-- Establishes foundation for auditability and compliance
-- Improves trust in system behavior
+- Complete execution visibility
+- Deterministic debugging and validation
+- Strong auditability
+- Enables replay and recovery workflows
+- Supports agent reasoning and automation
 
 ---
 
 ### Negative
 
 - Increased storage requirements
-- Additional implementation complexity
-- Potential performance overhead for persistence
-- Requires schema design and indexing for scalability
+- Additional system complexity
+- Performance overhead for persistence
 
 ---
 
 ## Alternatives Considered
 
-### 1. Log-Only Observability (Rejected)
+### Log-Only Observability (Rejected)
+Logs are insufficient for structured analysis and replay
 
-Rely solely on logs without structured execution records.
+### Partial Recording (Rejected)
+Breaks traceability and determinism validation
 
-**Rejected because:**
-- Logs are unstructured and difficult to query
-- Cannot reliably reconstruct execution state
-- No replay capability
+### External Observability Only (Rejected)
+Execution Service must own its execution history
 
----
-
-### 2. Partial Recording (Rejected)
-
-Record only failures or only metadata.
-
-**Rejected because:**
-- Prevents full traceability
-- Breaks determinism validation
-- Limits debugging capability
-
----
-
-### 3. External Observability Only (Rejected)
-
-Delegate observability entirely to external systems (e.g., logging platforms).
-
-**Rejected because:**
-- Execution Service loses control of its own state
-- Tight coupling to external tooling
-- No guaranteed replay support
-
----
-
-### 4. Replay Without Persistence (Rejected)
-
-Allow replay via re-sending inputs without stored execution context.
-
-**Rejected because:**
-- No guarantee inputs are preserved
-- Cannot verify determinism
-- Breaks auditability
+### Replay Without Persistence (Rejected)
+Breaks reproducibility and auditability
 
 ---
 
 ## Relationship to ADR-018
 
-ADR-018 defined:
-- Deterministic execution
-- Contract enforcement
-- Structured error handling
+ADR-018 ensures:
+- execution correctness
+- contract enforcement
 
-ADR-019 extends this by:
-- Persisting execution results
-- Enabling query and inspection
-- Supporting deterministic replay
-- Introducing cross-system traceability
+ADR-019 ensures:
+- execution visibility
+- traceability
+- replayability
 
-Together:
+Together, they define a **complete execution model**:
 
-- ADR-018 ensures **execution correctness**
-- ADR-019 ensures **execution visibility and reproducibility**
+```
+Deterministic Execution + Persistent Observability = Reproducible System
+```
 
 ---
 
 ## Future Considerations
 
-- Execution indexing and search optimization
-- Distributed tracing integration (e.g., OpenTelemetry)
-- Execution visualization UI
-- Metrics and alerting (latency, failure rates)
-- Role-based access to execution data
-- Data redaction and privacy controls
-- Batch replay and workflow-level replay
-- Integration with Canonical Knowledge System (CKS) for execution intelligence
+- distributed tracing integration
+- execution visualization tooling
+- metrics and alerting
+- role-based access to execution data
+- privacy and data redaction
+- batch and workflow-level replay

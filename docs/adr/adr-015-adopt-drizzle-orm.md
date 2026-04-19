@@ -1,325 +1,251 @@
-# ADR-006: Adopt Drizzle ORM for Schema Management and Migrations
+# ADR-015: Application-Owned Schema Lifecycle and Migration Model
 
 ## Status
-
 Accepted
+
+## Date
+2026-04-18
+
+## Deciders
+- Product Engineering
+- Platform Architecture
 
 ---
 
 ## Context
 
-The system introduces a shared state layer backed by PostgreSQL to support:
+The system introduces a persistent coordination and execution context layer (ADR-014), backed by PostgreSQL, to support:
 
-* Execution tracking
-* Workflow / agent state
-* Cross-system coordination between:
+- Execution tracking (ADR-019)
+- Coordination state for workflows and agents
+- Cross-system interaction (n8n, local dev, Execution Service)
 
-  * n8n workflows
-  * Local development environments
-  * API-driven execution services
+The architecture requires:
 
-The current architecture separates responsibilities across two repositories:
+- Deterministic execution (ADR-018)
+- Artifact-driven state (ADR-002)
+- Governance-first design (ADR-004)
+- Controlled API boundaries (ADR-013)
 
-* **`devops`** (Terraform): infrastructure provisioning
-* **`ai-project_template`**: application logic (Execution + State API)
+A consistent model is required for:
 
-A decision is required on:
-
-* How to define and evolve the PostgreSQL schema
-* Where schema ownership should reside
-* How to manage schema changes safely across environments
-
----
-
-## Problem
-
-Without a structured schema management approach:
-
-* Database schemas drift between environments
-* Changes are not versioned or auditable
-* Application code and schema become misaligned
-* Rollbacks are difficult or impossible
-* Agent-driven development introduces uncontrolled schema mutation risk
-
-A migration-less approach (manual SQL or `CREATE IF NOT EXISTS`) is insufficient for a system intended to support:
-
-* long-lived state
-* agent workflows
-* reproducibility
-* auditability
+- Defining database schemas
+- Managing schema evolution
+- Ensuring reproducibility and traceability
+- Preventing uncontrolled schema mutation
 
 ---
 
 ## Decision
 
-Adopt **Drizzle ORM + Drizzle Kit** as the standard for:
+The system SHALL adopt an **application-owned schema lifecycle model**, where:
 
-* Schema definition
-* Migration generation
-* Schema evolution
-
----
-
-## Key Principles
+- Schema definitions are owned by the application layer
+- Schema changes are versioned and controlled
+- Migrations are required for all schema evolution
 
 ---
 
-### 1. Schema is Application-Owned
+## Core Principle
 
-* Schema definitions reside in:
-
-  ```
-  ai-project_template
-  ```
-* Defined as TypeScript via Drizzle
-* Versioned alongside application code
+> Infrastructure provisions databases.  
+> Applications define and evolve schemas.
 
 ---
 
-### 2. Infrastructure is Terraform-Owned
+## Schema Ownership Model
 
-* PostgreSQL server, database, and networking are defined in:
+### Application-Owned Schema
 
-  ```
-  devops
-  ```
-* Terraform **does NOT manage tables or schema**
+Schema definitions MUST:
 
----
-
-### 3. Migrations are Required
-
-* All schema changes must be:
-
-  * generated via Drizzle
-  * committed to source control
-  * applied via controlled deployment
+- Reside in the application repository
+- Be version-controlled
+- Be defined in a structured, declarative format
+- Be tightly coupled with application logic
 
 ---
 
-### 4. Single Source of Truth
+### Infrastructure-Owned Database
 
-Schema definition is declared in:
+Infrastructure (e.g., Terraform) SHALL:
 
-```text id="0o6x0j"
-src/db/schema.ts
-```
-
-This file defines:
-
-* tables
-* columns
-* indexes
-* relationships
+- Provision database servers and instances
+- Manage networking and access
+- NOT define or manage schema structure
 
 ---
 
-## Implementation
+## Migration Requirements
+
+All schema changes MUST:
+
+- Be defined as versioned migrations
+- Be committed to source control
+- Be applied through controlled processes
+
+The system MUST NOT:
+
+- Allow ad-hoc or manual schema changes
+- Allow schema drift between environments
+- Allow schema mutation outside migration workflows
 
 ---
 
-### Directory Structure
+## Determinism and Reproducibility
 
-```text id="a1w8mb"
-ai-project_template/
-  platform/backend-api/
-    src/
-      db/
-        schema.ts
-        client.ts
-    drizzle/
-      0000_initial.sql
-      0001_add_fields.sql
-    drizzle.config.ts
-```
+The system SHALL ensure:
 
----
+- Schema state is reproducible from source control
+- Migrations are applied in a deterministic order
+- Application code and schema remain aligned
 
-### Schema Definition (Example)
+Given:
+- A code version
 
-```ts id="a4k4s6"
-import { pgTable, uuid, text, jsonb, timestamp } from "drizzle-orm/pg-core";
-
-export const state = pgTable("state", {
-  state_id: uuid("state_id").primaryKey(),
-  type: text("type"),
-  scope: text("scope"),
-  data: jsonb("data"),
-  metadata: jsonb("metadata"),
-  created_at: timestamp("created_at"),
-  updated_at: timestamp("updated_at")
-});
-```
+The system SHALL be able to:
+- Reconstruct the exact database schema
 
 ---
 
-### Migration Workflow
+## Relationship to Coordination Layer (ADR-014)
 
-1. Update schema:
-
-```ts id="5eqy6m"
-schema.ts
-```
-
-2. Generate migration:
-
-```bash id="r66tzl"
-npx drizzle-kit generate
-```
-
-3. Commit migration:
-
-```text id="r6p8tx"
-drizzle/000X_*.sql
-```
-
-4. Apply migration:
-
-```bash id="x6ec2z"
-npx drizzle-kit push
-```
+- Database stores coordination and execution context
+- Database is NOT the source of truth for system state
+- Data stored MUST be treated as:
+  - transient (coordination)
+  - derived (non-authoritative)
 
 ---
 
-### Database Connection
+## Relationship to Execution Service (ADR-009)
 
-Configured via environment variable:
-
-```text id="0qz87y"
-DATABASE_URL
-```
-
-Set by Terraform in the execution service container.
+- Execution Service interacts with database via application layer
+- Execution logic MUST NOT bypass schema constraints
+- Schema validation MUST align with execution contracts
 
 ---
 
-## Responsibilities
+## Relationship to Governance (ADR-004)
 
-| Concern             | Owner                               |
-| ------------------- | ----------------------------------- |
-| Postgres server     | Terraform (`devops`)                |
-| Database instance   | Terraform                           |
-| Schema definition   | Application (`ai-project_template`) |
-| Schema evolution    | Drizzle migrations                  |
-| Migration execution | CI/CD or deployment step            |
+- Schema definitions are governed artifacts
+- Changes MUST follow governance workflows (e.g., PRs)
+- Schema evolution MUST be auditable
+
+---
+
+## Implementation Strategy
+
+The system SHALL use a **schema definition + migration toolchain** that supports:
+
+- Declarative schema definition
+- Migration generation
+- Version control integration
+- Type-safe interaction (preferred)
+
+---
+
+### Initial Implementation
+
+The system SHALL use:
+
+- **Drizzle ORM + Drizzle Kit**
+
+for:
+
+- Schema definition
+- Migration generation
+- Type-safe database interaction
+
+---
+
+### Implementation Constraint
+
+The chosen tool MUST:
+
+- Support explicit schema control (no hidden abstraction)
+- Align with TypeScript-first architecture
+- Enable deterministic migrations
+- Allow inspection of generated SQL
+
+---
+
+## Prohibited Behavior
+
+The system MUST NOT:
+
+- Define schema in infrastructure (Terraform)
+- Allow direct manual schema changes in production
+- Allow runtime systems (n8n, agents) to mutate schema
+- Introduce schema changes without versioning
 
 ---
 
 ## Consequences
 
----
-
 ### Positive
 
-#### ✅ Strong Schema Governance
-
-* Versioned and reproducible schema changes
-
-#### ✅ Alignment with Application Logic
-
-* Schema evolves with API code
-
-#### ✅ Safe Deployments
-
-* Controlled migration application
-* rollback capability
-
-#### ✅ Agent-Safe Evolution
-
-* Prevents uncontrolled schema mutation
-
-#### ✅ Developer Productivity
-
-* Type-safe schema definitions
-* minimal boilerplate
+- Strong schema governance
+- Reproducible environments
+- Alignment between code and data
+- Safe schema evolution
+- Supports agent-driven workflows safely
 
 ---
 
 ### Negative
 
-#### ⚠️ Additional Tooling
-
-* Requires Drizzle setup and learning curve
-
-#### ⚠️ Migration Discipline Required
-
-* Developers must follow workflow
-
----
-
-### Risks
-
-* Improper migration practices could still cause drift
-* Direct manual DB changes can bypass system if not controlled
-* Requires CI/CD integration for best results
+- Requires migration discipline
+- Additional tooling and setup
+- Increased initial complexity
 
 ---
 
 ## Alternatives Considered
 
----
+### 1. Infrastructure-Managed Schema (Rejected)
 
-### 1. Terraform-Managed Schema
-
-**Rejected**
-
-* Not designed for iterative schema evolution
-* Poor developer experience
-* No application-level versioning
+**Rejected because:**
+- Not suited for iterative evolution
+- Poor developer experience
+- No application-level versioning
 
 ---
 
-### 2. Manual SQL / No Migrations
+### 2. Manual SQL / No Migrations (Rejected)
 
-**Rejected**
-
-* No version control
-* High risk of drift
-* No rollback capability
+**Rejected because:**
+- No version control
+- High risk of drift
+- No rollback capability
 
 ---
 
-### 3. Other ORMs (Prisma, TypeORM)
+### 3. Database as Source of Truth (Rejected)
 
-**Not Selected**
+**Rejected because:**
+- Violates artifact-driven architecture (ADR-002)
+- Reduces transparency and reproducibility
 
-* Heavier abstraction layers
-* Less control over SQL
-* Drizzle better aligns with:
+---
 
-  * lightweight architecture
-  * explicit schema control
-  * TypeScript-first approach
+### 4. Alternative ORMs (Prisma, TypeORM)
+
+**Not selected (implementation-level)**
+
+- Heavier abstraction layers
+- Less control over SQL
+- May not align with explicit schema control requirements
 
 ---
 
 ## Future Considerations
 
----
-
-### 1. Schema Versioning Enhancements
-
-* Add `version` column to state
-* introduce historical tables for snapshots
-
----
-
-### 2. Migration Automation
-
-* integrate migration execution into CI/CD pipeline
-* enforce migration checks before deployment
-
----
-
-### 3. Multi-Service Schema Sharing
-
-* shared schema package if multiple services depend on state
-
----
-
-### 4. CKS Integration
-
-* schema evolution may expand to support knowledge graph structures
+- Schema versioning metadata
+- Migration automation in CI/CD
+- Multi-service schema sharing
+- Schema evolution strategies for CKS integration
+- Backward compatibility and migration safety policies
 
 ---
 
@@ -327,22 +253,13 @@ Set by Terraform in the execution service container.
 
 This decision establishes:
 
-```text id="2ghg2q"
-Terraform → infrastructure lifecycle
-Drizzle   → schema lifecycle
+```
+Infrastructure (Terraform) → database lifecycle
+Application (Schema + Migrations) → schema lifecycle
 ```
 
-This separation ensures:
+ensuring:
 
-* clean architecture boundaries
-* reproducible deployments
-* safe schema evolution
-* support for agent-driven workflows
-
----
-
-## Decision Outcome
-
-Adopt Drizzle ORM as the **standard schema management and migration solution**, with schema owned by the application and infrastructure managed by Terraform.
-
----
+- clear ownership boundaries
+- deterministic schema evolution
+- alignment with execution and coordination layers

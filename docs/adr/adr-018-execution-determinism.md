@@ -6,60 +6,142 @@ Accepted
 ## Date
 2026-04-18
 
-## Deciders
-- Product Engineering
-- Platform Architecture
+---
 
 ## Context
 
-ADR-017 introduced a dynamic script execution model using a registry-based approach, enabling flexible and extensible execution of scripts via a centralized Execution Service.
+ADR-017 introduced a dynamic, registry-based execution model.
 
-While ADR-017 enables dynamic execution, it does not guarantee:
+However, dynamic execution alone does not guarantee:
+
 - Deterministic behavior
 - Strict contract enforcement
 - Reliable error handling
-- Execution observability
+- Full observability
 
-At present, the system is **implicitly correct**, meaning:
-- Input/output expectations are assumed, not enforced
-- Failures may result in unstructured errors or undefined behavior
-- Execution outcomes may vary under edge conditions
-- Observability into execution is limited or inconsistent
+Without these guarantees, the system risks:
 
-This creates significant risks:
-- Unpredictable failures in orchestrated workflows (e.g., n8n)
-- Difficulty debugging or replaying executions
-- Inability to guarantee system integrity at scale
-- Tight coupling of orchestration and execution logic
+- Non-reproducible execution outcomes
+- Unstructured failures
+- Orchestration instability (e.g., n8n)
+- Debugging and replay limitations
 
-To support reliable automation, agent-driven workflows, and production-scale usage, the Execution Service must evolve into a **deterministic, contract-driven, and observable system**.
+To support production-grade automation and AI-driven workflows, execution must be:
+
+- Deterministic
+- Contract-driven
+- Observable
 
 ---
 
 ## Decision
 
-The Execution Service SHALL be transformed into a **Deterministic Execution Layer** with strict contract enforcement, structured error handling, and full observability.
+The Execution Service SHALL operate as a **Deterministic Execution Layer**, enforcing:
 
-### 1. Execution Contract Enforcement
+- Strict input/output contracts
+- Structured error handling
+- Reproducible execution behavior
+- Full observability
 
-All scripts MUST define:
-- `script_input.schema.json`
-- `script_output.schema.json`
+---
 
-Validation SHALL be enforced using Ajv or an equivalent JSON Schema validator.
+## Core Principle
 
-The system SHALL guarantee that every execution results in exactly one of:
+> Execution is not "best effort."  
+> Execution is guaranteed, validated, and observable.
 
-1. A valid output conforming to the declared output schema  
-2. A structured error conforming to the ExecutionError contract  
+---
+
+## Execution Contract Guarantee
+
+Every execution MUST result in exactly one of:
+
+1. A valid output conforming to the declared output contract  
+2. A structured error conforming to the error contract  
 
 No other outcomes are permitted.
 
 ---
 
-### 2. Structured Error Handling
+## Contract Enforcement
 
-All failures MUST return a structured error object:
+### Requirements
+
+- All scripts MUST define:
+  - an input contract
+  - an output contract
+
+- The Execution Service MUST:
+  - validate input before execution
+  - validate output after execution
+
+- Validation MUST be:
+  - centralized
+  - deterministic
+  - consistent across all executions
+
+---
+
+### Constraint
+
+Validation MUST NOT be performed inside scripts.
+
+---
+
+### Implementation Note
+
+Validation tooling (e.g., JSON Schema validators) is an implementation concern and not part of this ADR.
+
+---
+
+## Deterministic Execution Guarantee
+
+Determinism is defined as:
+
+> Given the same:
+> - script identifier
+> - script version  
+> - input  
+> - execution context  
+
+The system SHALL produce:
+
+- the same output  
+OR  
+- the same structured error  
+
+---
+
+## Execution Context Constraints
+
+Execution context MUST be:
+
+- deterministic
+- controlled
+- explicitly defined
+
+Execution context MUST NOT include:
+
+- mutable global state
+- non-deterministic inputs (e.g., current time, random values) unless explicitly injected
+- external data without versioning or traceability
+
+---
+
+## Versioning Requirement
+
+All executions MUST resolve to a specific script version.
+
+The system MUST NOT:
+
+- execute against an implicit or untracked version
+- rely on “latest” without traceability
+
+---
+
+## Structured Error Handling
+
+All failures MUST return a structured error:
 
 ```json
 {
@@ -72,143 +154,138 @@ All failures MUST return a structured error object:
 }
 ```
 
-Error types SHALL include (but are not limited to):
-- `INPUT_VALIDATION`
-- `OUTPUT_VALIDATION`
-- `RUNTIME`
-- `TIMEOUT`
-- `UNKNOWN_SCRIPT`
-- `VERSION_MISMATCH`
+---
+
+### Error Requirements
+
+Errors MUST:
+
+- be machine-readable
+- be deterministic
+- include standardized error codes
+
+---
+
+### Prohibited Behavior
 
 The system MUST NOT:
-- Throw unhandled exceptions to callers
-- Return unstructured errors
-- Return partial or malformed outputs
+
+- return unstructured errors
+- leak internal exceptions
+- return partial or malformed outputs
 
 ---
 
-### 3. Deterministic Execution Guarantee
+## Execution Timeout Policy
 
-Determinism is defined as:
+The system SHALL enforce execution time limits.
 
-> Given the same:
-> - script version  
-> - input  
-> - execution context  
+Scripts exceeding the limit MUST:
 
-The system SHALL produce:
-- the same output  
-OR  
-- the same structured error  
-
-The system MUST NOT exhibit undefined or non-repeatable behavior.
+- be terminated
+- return a structured TIMEOUT error
 
 ---
 
-### 4. Execution Timeout Policy
+## Observability Requirements
 
-The system SHALL enforce execution timeouts.
+Observability is a **core part of the execution contract**.
 
-Scripts exceeding the configured duration MUST:
-- Be terminated
-- Return a structured `TIMEOUT` error
+Each execution MUST produce:
 
----
-
-### 5. Observability Requirements
-
-All executions MUST be observable.
-
-Each execution SHALL produce structured logs containing:
-- `execution_id`
-- `script` name
-- `script_version`
-- `start_timestamp`
-- `end_timestamp`
-- `status` (success/error)
-- `error` (if applicable)
-
-This enables:
-- Debugging
-- Replayability
-- Monitoring
-- Auditability
+- execution identifier
+- script identifier
+- script version
+- start timestamp
+- end timestamp
+- status (success/error)
+- error details (if applicable)
 
 ---
 
-### 6. Orchestration Boundary (n8n)
+### Observability Guarantees
 
-n8n SHALL act strictly as an orchestration layer.
+The system SHALL support:
 
-n8n MUST:
-- Send `ExecutionRequest`
-- Receive `ExecutionResponse`
+- execution tracing
+- debugging
+- replayability
+- auditability
+
+---
+
+## Orchestration Boundary (ADR-007)
+
+n8n (or any orchestrator) SHALL:
+
+- send execution requests
+- receive execution responses
 
 n8n MUST NOT:
-- Contain business logic
-- Interpret script behavior
-- Modify execution contracts
-- Perform schema validation
 
-The Execution Service SHALL be the sole authority for:
-- Script execution
-- Contract validation
-- Error normalization
+- perform validation
+- interpret script logic
+- modify execution contracts
+- contain business logic
 
 ---
 
-### 7. Failure Testing Requirements
+## Failure Handling Requirements
 
-The system SHALL be validated against controlled failure scenarios, including:
+The system MUST handle failure scenarios deterministically, including:
 
-- Unknown script
-- Invalid input shape
-- Script runtime exception
-- Long-running execution (timeout)
-- Null or empty input
-- Version mismatch
+- unknown script
+- version mismatch
+- invalid input
+- runtime exception
+- timeout
+- null or malformed input
 
-All scenarios MUST result in structured error responses.
+All failures MUST:
 
-No crashes, hangs, or undefined states are permitted.
-
----
-
-### 8. Script Discovery Endpoint
-
-The Execution Service SHALL expose:
-
-```
-GET /scripts
-```
-
-This endpoint SHALL return:
-- Script name
-- Version
-- Input schema
-- Output schema
-
-This enables:
-- UI integration
-- Debugging tools
-- Agent-driven discovery
-- Schema-driven automation
+- return structured errors
+- not crash the system
+- not hang execution
 
 ---
 
-### 9. Non-Trivial Script Validation Requirement
+## Script Discovery
 
-The system MUST demonstrate capability beyond trivial scripts (e.g., `test.echo`).
+The Execution Service SHALL expose script discovery capabilities.
 
-At least one script MUST:
-- Validate structured input
-- Perform transformation logic
-- Utilize execution context (e.g., logging, metadata)
+This MUST include:
 
-This ensures:
-- Contract enforcement is real
-- Registry supports real workloads
-- Execution layer is production-capable
+- script identifier
+- version
+- input contract
+- output contract
+
+---
+
+## Non-Trivial Execution Requirement
+
+The system MUST support scripts that:
+
+- validate structured input
+- perform meaningful transformation
+- use execution context
+- produce contract-compliant output
+
+---
+
+## Relationship to ADR-017
+
+ADR-017 defines:
+
+- execution model
+- script registry
+
+ADR-018 enforces:
+
+- determinism
+- contract guarantees
+- observability
+- execution boundaries
 
 ---
 
@@ -216,88 +293,42 @@ This ensures:
 
 ### Positive
 
-- Deterministic and reliable execution behavior
-- Strong contract guarantees between systems
-- Improved debugging and observability
-- Safe integration with orchestration systems (e.g., n8n)
-- Foundation for agent-driven and automated workflows
-- Clear separation of concerns between orchestration and execution
+- Fully deterministic execution behavior
+- Strong contract guarantees
+- Reliable orchestration
+- Improved debugging and replayability
+- Safe AI integration
+
+---
 
 ### Negative
 
 - Increased implementation complexity
-- Additional overhead for schema definition and validation
-- Strict contracts reduce flexibility during rapid prototyping
-- Requires versioning strategy for schemas and scripts
+- Requires strict schema discipline
+- Reduces flexibility during rapid prototyping
 
 ---
 
 ## Alternatives Considered
 
-### 1. Implicit Contract Model (Rejected)
+### Implicit Contracts (Rejected)
+Leads to unpredictable behavior and fragile systems
 
-Allow scripts to define input/output informally without enforced schemas.
+### Input-Only Validation (Rejected)
+Output integrity cannot be guaranteed
 
-**Rejected because:**
-- Leads to unpredictable behavior
-- Breaks orchestration reliability
-- Makes debugging and scaling difficult
+### Unstructured Errors (Rejected)
+Breaks automation and orchestration
 
----
-
-### 2. Validation Only on Input (Rejected)
-
-Validate input but not output.
-
-**Rejected because:**
-- Output may still violate downstream expectations
-- Breaks system integrity guarantees
-
----
-
-### 3. Allow Unstructured Errors (Rejected)
-
-Permit scripts to return arbitrary error formats.
-
-**Rejected because:**
-- Breaks automation and orchestration layers
-- Prevents consistent error handling
-
----
-
-### 4. Embed Logic in n8n (Rejected)
-
-Allow n8n workflows to contain business logic and transformations.
-
-**Rejected because:**
-- Violates separation of concerns
-- Leads to duplication and drift
-- Makes system harder to maintain and scale
-
----
-
-## Relationship to ADR-017
-
-ADR-017 introduced:
-- Dynamic script execution
-- Registry-based architecture
-
-ADR-018 extends this by:
-- Enforcing strict input/output contracts
-- Introducing deterministic execution guarantees
-- Defining execution boundaries
-- Adding structured error handling
-- Establishing observability requirements
-
-ADR-018 transforms the Execution Service from a flexible execution mechanism into a **reliable, production-grade execution platform**.
+### Logic in Orchestration (Rejected)
+Violates separation of concerns (ADR-007)
 
 ---
 
 ## Future Considerations
 
 - Schema versioning strategy
-- Execution replay capability
-- Distributed tracing integration
+- Execution replay capabilities
+- Distributed tracing
 - Metrics and performance monitoring
-- Script lifecycle management (deploy, deprecate, migrate)
-- Role-based access control for script execution
+- Script lifecycle management

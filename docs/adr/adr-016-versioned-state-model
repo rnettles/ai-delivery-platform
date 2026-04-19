@@ -1,112 +1,188 @@
-# ADR-016: Versioned State Model with Immutable History
+# ADR-016: Versioned State Snapshots (Derived State Model)
 
 ## Status
-
 Accepted
 
----
+## Date
+2026-04-18
 
 ## Context
 
-The system introduces a centralized **State API** backed by PostgreSQL to support:
+The system requires the ability to:
 
-* Workflow orchestration (n8n)
-* Execution services (API-driven)
-* Local development and AI-assisted development workflows
-* Future agent-based reasoning and multi-step execution
+- Understand how system state evolves over time
+- Debug and replay workflows
+- Inspect historical system conditions
+- Support agent reasoning over prior states
 
-Initial implementations stored state as a single mutable record. This approach proved insufficient for:
+The architecture already defines:
 
-* auditing changes over time
-* debugging workflow evolution
-* replaying execution flows
-* supporting agent memory and reasoning
+- Artifacts as the source of truth (ADR-002)
+- ExecutionRecords as observable history (ADR-019)
+- Coordination state as non-authoritative (ADR-014)
 
-A more robust model is required to support **temporal state evolution** and **system introspection**.
+Therefore, state must remain:
 
----
-
-## Problem
-
-A single mutable state record results in:
-
-* loss of historical information
-* inability to reconstruct prior system behavior
-* difficulty debugging state transitions
-* no support for replay or lineage tracking
-* increased risk of silent data corruption
-
-The system requires:
-
-* a reliable **source of current truth**
-* a complete **history of all changes**
-* deterministic **version tracking**
+- Derived
+- Reproducible
+- Non-authoritative
 
 ---
 
 ## Decision
 
-Adopt a **versioned state model with an immutable history table**, consisting of:
+The system SHALL support **versioned state snapshots**, derived from artifacts.
 
-### 1. `state` table (current snapshot)
+State snapshots SHALL:
 
-* stores the latest version of each state object
-* optimized for read performance
-
-### 2. `state_history` table (append-only)
-
-* stores all prior versions of state
-* immutable once written
-
-### 3. Versioning strategy
-
-* each state record includes a `version` field
-* updates increment version number
-* previous version is written to history before update
+- Represent the system at a point in time
+- Be fully reconstructable from artifacts
+- Not be treated as the source of truth
 
 ---
 
-## Data Model
+## Core Principle
 
-### `state` (current)
-
-| Column     | Description                                 |
-| ---------- | ------------------------------------------- |
-| state_id   | unique identifier                           |
-| type       | state category (workflow, execution, etc.)  |
-| scope      | subsystem context (planner, executor, etc.) |
-| version    | current version number                      |
-| data       | current state payload                       |
-| metadata   | optional contextual metadata                |
-| status     | optional lifecycle state                    |
-| created_at | creation timestamp                          |
-| updated_at | last update timestamp                       |
+> State evolves.  
+> Artifacts explain evolution.  
+> Snapshots observe evolution.
 
 ---
 
-### `state_history` (immutable)
+## State Model
 
-| Column     | Description            |
-| ---------- | ---------------------- |
-| id         | unique record id       |
-| state_id   | reference to state     |
-| version    | version being recorded |
-| data       | historical payload     |
-| metadata   | historical metadata    |
-| created_at | timestamp of snapshot  |
+### Authoritative Layer
+
+- Artifacts (plans, outputs, execution results)
+- ExecutionRecords
 
 ---
 
-## Update Semantics
+### Derived Layer
 
-All updates to state follow this sequence:
+State is computed from:
 
-```text
-1. Read current state
-2. Insert current version into state_history
-3. Increment version
-4. Update state with new data
 ```
+Artifacts + Execution History → Derived State
+```
+
+---
+
+### Snapshot Layer
+
+State snapshots are:
+
+- Materialized views of derived state
+- Versioned representations
+- Stored for convenience and performance
+
+---
+
+## Snapshot Characteristics
+
+State snapshots MUST:
+
+- Be derived from artifacts
+- Be timestamped or versioned
+- Be reproducible
+- Be discardable
+
+State snapshots MUST NOT:
+
+- Be manually edited
+- Serve as input to execution logic
+- Become authoritative
+
+---
+
+## Versioning Model
+
+Snapshots MAY be versioned by:
+
+- execution_id
+- timestamp
+- logical milestone (phase, sprint)
+
+Example:
+
+```
+state_v1.json
+state_v2.json
+state_v3.json
+```
+
+---
+
+## Determinism Requirement
+
+Given:
+
+- a set of artifacts
+- a specific version boundary
+
+The system MUST be able to:
+
+- regenerate the exact state snapshot
+
+---
+
+## Relationship to Artifact-Driven State (ADR-002)
+
+- Artifacts remain the source of truth
+- Snapshots are projections
+- State is always derivable
+
+---
+
+## Relationship to Execution Service (ADR-009)
+
+- Execution produces artifacts
+- Execution does not modify snapshots directly
+- Snapshot generation is a separate concern
+
+---
+
+## Relationship to Observability (ADR-019)
+
+- Snapshots SHOULD reference:
+  - execution_ids
+  - artifact lineage
+
+This enables:
+
+- debugging
+- replay
+- historical analysis
+
+---
+
+## Relationship to Coordination Layer (ADR-014)
+
+- Coordination state MAY assist snapshot generation
+- Coordination state MUST NOT define snapshots
+
+---
+
+## Storage Considerations
+
+Snapshots MAY be stored in:
+
+- filesystem (workspace)
+- database (PostgreSQL)
+- object storage (future)
+
+Storage location does not change authority.
+
+---
+
+## Prohibited Behavior
+
+The system MUST NOT:
+
+- Treat snapshots as source of truth
+- Allow manual mutation of snapshots
+- Use snapshots as execution input
+- Skip artifact-based derivation
 
 ---
 
@@ -114,166 +190,41 @@ All updates to state follow this sequence:
 
 ### Positive
 
-#### ✅ Full Audit Trail
-
-* complete history of all changes
-
-#### ✅ Replay Capability
-
-* ability to reconstruct system behavior at any point in time
-
-#### ✅ Debugging and Observability
-
-* inspect how state evolved across executions
-
-#### ✅ Foundation for Agent Memory
-
-* historical context enables reasoning across iterations
-
-#### ✅ Deterministic State Evolution
-
-* versioning ensures ordered, traceable updates
+- Enables historical state inspection
+- Supports debugging and replay
+- Improves performance (cached state)
+- Enables agent reasoning over time
 
 ---
 
 ### Negative
 
-#### ⚠️ Increased Write Complexity
-
-* updates require multiple operations (insert + update)
-
-#### ⚠️ Increased Storage Usage
-
-* historical data accumulates over time
-
-#### ⚠️ Additional Query Complexity
-
-* consumers must distinguish between current vs historical data
-
----
-
-## Risks
-
-* improper update sequencing could desynchronize state and history
-* high-frequency updates may increase database load
-* lack of pruning strategy may lead to unbounded growth
-
----
-
-## Mitigations
-
-* enforce update logic in centralized API layer
-* add indexes on `state_id` and `version`
-* introduce retention or archiving strategy if needed
-* consider transaction wrapping for update operations
+- Requires state derivation logic
+- Snapshot storage overhead
+- Risk of misuse if boundaries are not enforced
 
 ---
 
 ## Alternatives Considered
 
----
+### 1. State as Source of Truth (Rejected)
 
-### 1. Single Mutable State Table
-
-**Rejected**
-
-* no history
-* no replay
-* poor debugging capability
+- Breaks artifact-driven architecture
+- Introduces drift
 
 ---
 
-### 2. Full Event Sourcing
+### 2. No State Snapshots (Rejected)
 
-**Not Selected (for now)**
-
-* higher complexity
-* requires event replay logic
-* not necessary for current scope
-
-The chosen model provides a **hybrid approach**:
-
-* snapshot for fast reads
-* history for temporal analysis
-
----
-
-### 3. Overwriting with External Logs
-
-**Rejected**
-
-* fragmented system of record
-* difficult to correlate logs with state changes
+- Poor debugging
+- Expensive recomputation
+- Limited observability
 
 ---
 
 ## Future Considerations
 
----
-
-### 1. Optimistic Concurrency Control
-
-Add version checks:
-
-```text
-UPDATE ... WHERE version = X
-```
-
-to prevent race conditions.
-
----
-
-### 2. State Replay Engine
-
-* reconstruct state from history
-* enable deterministic workflow re-execution
-
----
-
-### 3. Lineage and Provenance
-
-Extend metadata to capture:
-
-* source (n8n, API, human)
-* execution_id
-* causal relationships between updates
-
----
-
-### 4. Retention / Archival Strategy
-
-* move older history to cold storage
-* support long-term audit without impacting performance
-
----
-
-## Summary
-
-This decision establishes:
-
-```text
-state         → current truth
-state_history → immutable lineage
-version       → ordered evolution
-```
-
-The system transitions from:
-
-```text
-mutable storage → temporal, auditable system of record
-```
-
-This forms the foundation for:
-
-* reliable orchestration
-* agent reasoning
-* reproducible execution flows
-* long-term system observability
-
----
-
-## Decision Outcome
-
-Adopt a **versioned state model with immutable history**, implemented via `state` and `state_history` tables, with controlled update semantics enforced by the State API.
-
----
+- Incremental state computation
+- Snapshot compaction strategies
+- State diffing between versions
+- Integration with CKS reasoning layer

@@ -1,342 +1,305 @@
-# ADR-014: API-Driven State Management for Execution and Agent Workflows
+# ADR-014: API-Driven Coordination and Execution Context Layer
 
 ## Status
-
 Proposed
+
+## Date
+2026-04-18
+
+## Deciders
+- Product Engineering
+- Platform Architecture
 
 ---
 
 ## Context
 
-The system is evolving into a hybrid execution environment supporting:
+The system supports:
 
-* Local human/AI-assisted development (e.g., VSCode + Copilot)
-* n8n-based agentic workflows
-* A centralized Execution Service deployed in Azure (Container Apps)
-* Shared infrastructure (Postgres, Storage, ACR)
+- Local human/AI-assisted development (VSCode, Copilot)
+- n8n-based orchestration workflows (ADR-007)
+- Deterministic execution via Execution Service (ADR-009)
+- Artifact-driven state (ADR-002)
+- Observability via ExecutionRecords (ADR-019)
 
-Currently:
+A shared runtime layer is required to:
 
-* The Execution Service exposes `/health` and `/execute`
-* n8n can invoke execution logic via HTTP
-* There is no persistent, shared state layer
-* State (if any) is transient or tool-specific (n8n memory, local files, etc.)
+- Coordinate multi-step workflows
+- Support agent collaboration and handoffs
+- Track execution context across systems
+- Enable debugging and replay
 
-### Problem
+However:
 
-We need a **consistent, shared state model** that:
+The system MUST NOT introduce a mutable, authoritative state layer, as this would violate:
 
-* Works across **local development and n8n workflows**
-* Avoids **direct database access from n8n**
-* Enables **execution traceability, replay, and debugging**
-* Supports **agent coordination and handoffs**
-* Does not conflict with **Git as the canonical source of truth**
-
-Without this:
-
-* State becomes fragmented across tools
-* Debugging becomes difficult
-* Agent workflows cannot reliably coordinate
-* Tight coupling to Postgres spreads across the system
+- Artifact-driven state (ADR-002)
+- Deterministic execution (ADR-018)
+- Governance-first architecture (ADR-004)
 
 ---
 
 ## Decision
 
-Introduce an **API-driven State Management Layer**, exposed via the Execution Service (or a closely related service), with the following principles:
+Introduce an **API-driven Coordination and Execution Context Layer**, exposed via the Execution Service (or a closely related service).
+
+This layer SHALL provide:
+
+- Shared, transient coordination data
+- Execution context tracking
+- Agent interaction memory
+
+This layer SHALL NOT be treated as the source of truth for system state.
 
 ---
 
-### 1. All State Access Occurs via API
+## Core Principle
 
-* n8n **must not** directly access Postgres
-* Local development tools **must use the same API**
-* The API becomes the **single interface to system state**
-
----
-
-### 2. State is Explicitly Modeled and Typed
-
-State is categorized into three types:
-
-#### a. Execution State (short-lived)
-
-* execution_id
-* status
-* timestamps
-* logs
-
-#### b. Workflow / Agent State (medium-lived)
-
-* current phase
-* task progression
-* intermediate outputs
-* agent coordination data
-
-#### c. Canonical State (long-lived)
-
-* plans
-* architecture artifacts
-* schemas
-* documentation
-
-> Canonical state remains stored in **Git** and is not replaced by the State API.
+> Artifacts define truth.  
+> Coordination state enables interaction.
 
 ---
 
-### 3. Introduce State API Endpoints
+## Coordination State Model
 
-#### Create / Update State
-
-```http
-POST /state
-```
-
-```json
-{
-  "state_id": "optional",
-  "type": "workflow | agent | session",
-  "scope": "planner | sprint | execution",
-  "data": {},
-  "metadata": {
-    "source": "n8n | local | api"
-  }
-}
-```
+The system SHALL define three categories of runtime data:
 
 ---
 
-#### Retrieve State
+### 1. Execution Context (Short-Lived)
 
-```http
-GET /state/:id
-```
+- execution_id
+- status
+- timestamps
+- logs
+- correlation_id
 
----
-
-#### Query State
-
-```http
-POST /state/query
-```
+Source of truth:
+- ExecutionRecords (ADR-019)
 
 ---
 
-#### Partial Update
+### 2. Coordination State (Medium-Lived)
 
-```http
-PATCH /state/:id
-```
+Used for:
 
----
+- Workflow progression
+- Agent coordination
+- Intermediate results
+- Temporary decision context
 
-#### Delete / Archive
+Examples:
 
-```http
-DELETE /state/:id
-```
-
----
-
-### 4. Backing Storage
-
-* Primary: **Postgres (JSONB-based storage)**
-* Accessed only through API layer
-* Designed to support:
-
-  * flexible schemas
-  * versioning
-  * indexing on metadata fields
+- current step in workflow
+- partial outputs
+- agent-to-agent handoff data
 
 ---
 
-### 5. Separation of Concerns
+### 3. Canonical Artifacts (Long-Lived)
 
-| Responsibility      | Component         |
-| ------------------- | ----------------- |
-| Execute logic       | Execution Service |
-| Manage state        | State API Layer   |
-| Persist data        | Postgres          |
-| Canonical artifacts | Git               |
+Examples:
+
+- plans
+- schemas
+- architecture documents
+
+Source of truth:
+- Git (ADR-001)
 
 ---
 
-### 6. Git Remains Source of Truth
+## Critical Constraint
 
-State API is **not authoritative** for long-term artifacts.
+> Coordination state MUST NOT be treated as authoritative system state.
 
-Instead:
+---
 
-1. Agents write intermediate results to State API
-2. Results are reviewed/promoted
-3. Promoted artifacts are committed to Git
-4. Git becomes canonical record
+## API Model
+
+The system SHALL expose an API for managing coordination state.
+
+### Capabilities
+
+- Create coordination entries
+- Retrieve coordination context
+- Query coordination data
+- Update coordination data
+- Archive or expire entries
+
+---
+
+## API Contract Principles
+
+The API MUST:
+
+- Accept structured data (JSON)
+- Be fully observable (ADR-019)
+- Be deterministic in behavior
+- Be accessible to all clients (n8n, local tools, agents)
+
+The exact endpoint structure is defined in API specification, not this ADR.
+
+---
+
+## Backing Storage
+
+Primary storage:
+
+- PostgreSQL (JSONB-based storage)
+
+Used for:
+
+- Flexible coordination data
+- Queryable execution context
+- Agent interaction memory
+
+This storage MUST:
+
+- Be accessed only via API
+- Not be directly accessed by n8n or clients
+
+---
+
+## Relationship to Artifact-Driven State (ADR-002)
+
+- Coordination state is NOT authoritative
+- Artifacts remain the source of truth
+- State derivation MUST ignore coordination data
+
+---
+
+## Relationship to Execution Service (ADR-009)
+
+- Execution Service MAY:
+  - read coordination context
+  - write intermediate results
+
+- Execution Service MUST:
+  - produce artifacts for authoritative outputs
+  - not rely on coordination state for final truth
+
+---
+
+## Relationship to Observability (ADR-019)
+
+- Coordination entries SHOULD be linked to:
+  - execution_id
+  - correlation_id
+
+- Enables:
+  - tracing workflows
+  - debugging multi-step processes
+  - replay analysis
+
+---
+
+## Relationship to n8n (ADR-007)
+
+n8n SHALL:
+
+- Use API for coordination state
+- Store workflow context via API
+
+n8n MUST NOT:
+
+- Store authoritative state
+- Access database directly
+
+---
+
+## Relationship to Git (ADR-001)
+
+- Coordination state is transient
+- Canonical artifacts are promoted to Git
+- Git remains the authoritative source of long-term truth
+
+---
+
+## Data Lifecycle
+
+Coordination state SHOULD:
+
+- Be time-bound
+- Support expiration or archival
+- Be reconstructable or discardable
+
+---
+
+## Prohibited Behavior
+
+The system MUST NOT:
+
+- Treat coordination state as source of truth
+- Use coordination data as input to final state derivation
+- Allow direct database access from clients
+- Allow coordination state to bypass validation or approval
 
 ---
 
 ## Consequences
 
----
-
 ### Positive
 
-#### ✅ Consistent Access Model
-
-* All components (n8n, local dev, future agents) use the same interface
-
-#### ✅ Decoupling from Database
-
-* No direct Postgres usage outside backend
-* Enables storage evolution (Redis, event store, etc.)
-
-#### ✅ Improved Observability
-
-* Execution history and workflow progression are trackable
-
-#### ✅ Agent Interoperability
-
-* Shared memory model enables coordinated agent workflows
-
-#### ✅ Replay and Debugging
-
-* Historical state enables deterministic replay
+- Enables multi-agent coordination
+- Supports complex workflow execution
+- Improves debugging and traceability
+- Decouples orchestration from persistence
+- Enables flexible runtime interaction
 
 ---
 
 ### Negative
 
-#### ⚠️ Increased System Complexity
-
-* Introduces new API surface and data model
-
-#### ⚠️ Requires Schema Discipline
-
-* Poorly structured `data` fields can lead to entropy
-
-#### ⚠️ Potential Over-Centralization
-
-* Risk of creating a “god service” if boundaries are not enforced
-
----
-
-### Risks
-
-* State model becomes inconsistent without governance
-* Versioning not implemented early → difficult migrations later
-* Execution and state concerns may become tightly coupled if not carefully separated
+- Adds complexity to system architecture
+- Requires discipline to prevent misuse
+- Risk of “state creep” if boundaries are not enforced
 
 ---
 
 ## Alternatives Considered
 
----
+### 1. Direct Postgres Access (Rejected)
 
-### 1. Direct Postgres Access from n8n
-
-**Rejected**
-
-* Tight coupling
-* Schema leakage
-* Hard to evolve
-* Security concerns
+**Rejected because:**
+- Tight coupling
+- Security risks
+- Breaks abstraction
 
 ---
 
-### 2. Store All State in Git
+### 2. Git as Runtime State (Rejected)
 
-**Rejected**
-
-* Too slow for runtime state
-* Poor fit for transient / intermediate data
-* High friction for agent workflows
-
----
-
-### 3. Keep State Local to Each Tool
-
-**Rejected**
-
-* Fragmented system
-* No shared memory
-* No coordination between agents
+**Rejected because:**
+- Too slow
+- Not suitable for transient data
+- High friction
 
 ---
 
-## Implementation Plan
+### 3. Tool-Local State (Rejected)
+
+**Rejected because:**
+- Fragmentation
+- No shared coordination
+- Breaks agent workflows
 
 ---
 
-### Phase 1 (Immediate)
+## Implementation Considerations
 
-* Add minimal endpoints:
+The system SHOULD:
 
-  * `POST /state`
-  * `GET /state/:id`
-* Store data in Postgres JSONB
-* Integrate execution results → state
-
----
-
-### Phase 2
-
-* Add:
-
-  * query endpoint
-  * partial updates
-* Introduce indexing strategy
-* Wire n8n workflows to use State API
+- Enforce schema discipline for coordination data
+- Provide indexing and query capabilities
+- Link coordination entries to execution metadata
 
 ---
 
-### Phase 3
+## Future Considerations
 
-* Add:
-
-  * versioning
-  * lineage tracking
-  * audit logs
-
----
-
-### Phase 4
-
-* Integrate with:
-
-  * Git promotion workflows
-  * Canonical Knowledge System (CKS)
-
----
-
-## Decision Outcome
-
-Adopt an **API-first state management model** to unify:
-
-* execution tracking
-* workflow coordination
-* human + AI collaboration
-
-while preserving:
-
-* clean architectural boundaries
-* Git as canonical source of truth
-* future extensibility of storage and orchestration layers
-
----
-
-## Notes
-
-This decision establishes the foundation for:
-
-* agentic system coordination
-* reproducible workflows
-* scalable multi-environment execution
-
-It should be revisited once:
-
-* persistence layer is implemented
-* first multi-agent workflows are operational
-
-```markdown
-# ADR-005: API-Driven State Management for Execution and Agent Workflows
-...
-```
+- State lineage tracking
+- Coordination schema standardization
+- TTL-based cleanup strategies
+- Integration with Canonical Knowledge System (CKS)
+- Advanced agent coordination patterns

@@ -1,67 +1,62 @@
 # ADR-017: Script Registry & Execution Model
 
 ## Status
-
 Accepted
 
 ## Date
-
 2026-04-18
 
 ---
 
 ## Context
 
-The platform requires a **flexible, scalable, and deterministic execution model** to support:
+The platform requires a **deterministic, contract-driven execution model** to support:
 
-* AI-driven workflows (e.g., planner → implementer → verifier)
-* Orchestrators such as n8n
-* Future multi-tenant SaaS execution
-* Dynamic feature expansion without redeploying core services
+- AI-driven workflows (planner → implementer → verifier)
+- Orchestration systems (ADR-007)
+- Role-based execution (ADR-005)
+- Multi-tenant SaaS evolution
+- Dynamic feature expansion without redeployment
 
-Historically, execution logic has been:
+Execution must align with:
 
-* Hardcoded
-* Workflow-specific
-* Tightly coupled to orchestration layers
-
-This approach does not scale for:
-
-* Rapid iteration
-* Contract enforcement
-* Versioned behavior
-* Observability and debugging
+- Deterministic execution (ADR-018)
+- Structured contracts (ADR-013)
+- Artifact-driven state (ADR-002)
+- Observability (ADR-019)
 
 ---
 
 ## Decision
 
-We will introduce a **Script Registry & Execution Model** as the foundational execution mechanism for the platform.
+The system SHALL implement a **Script Registry & Execution Model** as the foundational execution mechanism.
 
-### Core Principles
-
-1. **Scripts are first-class execution units**
-2. **Execution is dynamically resolved at runtime**
-3. **All execution is contract-driven**
-4. **Execution is context-aware and observable**
-5. **Versioning is mandatory**
+Scripts SHALL be the **atomic units of deterministic execution**, resolved dynamically at runtime via a registry.
 
 ---
 
-## Architecture Overview
+## Core Principle
 
-### High-Level Flow
+> Scripts execute logic.  
+> Registry resolves logic.  
+> Execution Service enforces truth.
+
+---
+
+## Execution Model
+
+All execution SHALL follow:
 
 ```
 Execution Request
       ↓
 Execution Service
       ↓
-Script Registry (resolve script + version)
+Script Registry (resolve name + version)
       ↓
 Schema Validation (input)
       ↓
-Script Execution (with context)
+Script Execution
       ↓
 Schema Validation (output)
       ↓
@@ -70,259 +65,194 @@ Execution Response
 
 ---
 
-## Script Definition
+## Script Definition (Conceptual)
 
-Scripts encapsulate discrete units of execution logic.
+A script is a **versioned unit of execution logic** that:
 
-```ts
-interface Script<I = any, O = any> {
-  name: string
-  version: string
+- Accepts structured input
+- Produces structured output
+- Executes deterministically
+- Does not own validation
+- Does not mutate system state
 
-  validateInput?: (input: unknown) => I
-  validateOutput?: (output: unknown) => O
+Scripts MUST:
 
-  run(input: I, context: ScriptContext): Promise<O>
-}
-```
+- Be versioned
+- Be pure relative to inputs + context
+- Be observable
+
+---
+
+## Script Responsibilities
+
+Scripts MAY:
+
+- Transform data
+- Invoke external systems
+- Generate artifacts
+
+Scripts MUST NOT:
+
+- Perform schema validation (handled by Execution Service)
+- Define business logic outside governance artifacts
+- Mutate authoritative state
+- Bypass execution contracts
 
 ---
 
 ## Script Context
 
-All scripts receive a standardized execution context.
+Scripts receive a standardized execution context that includes:
 
-```ts
-interface ScriptContext {
-  executionId: string
-  state?: any
+- execution identifier
+- logging interface
+- correlation metadata
 
-  logger: {
-    info(message: string, data?: any): void
-    error(message: string, data?: any): void
-  }
-}
-```
+Context MAY include:
 
-### Responsibilities
+- coordination data (ADR-014)
 
-* Correlate logs via `executionId`
-* Provide access to state (future: external state service)
-* Enable observability and tracing
+Context MUST NOT include:
+
+- authoritative state
+- mutable system truth
 
 ---
 
 ## Script Registry
 
-A centralized registry responsible for script lifecycle and lookup.
+The Script Registry SHALL:
 
-```ts
-class ScriptRegistry {
-  register(script: Script): void
-  get(name: string, version?: string): Script | undefined
-}
-```
-
-### Behavior
-
-* Scripts are stored as `name@version`
-* If no version is provided, the **latest version** is returned
-* Supports multiple concurrent versions
+- Store scripts as `name@version`
+- Resolve scripts deterministically
+- Support multiple concurrent versions
 
 ---
 
-## Execution Request Contract
+## Version Resolution Rules
 
-```ts
-interface ExecutionRequest {
-  execution_id?: string
-  script: string
-  version?: string
-  input: unknown
-  metadata?: Record<string, any>
-}
-```
+### REQUIRED
+
+Execution MUST specify a version OR be resolved deterministically.
 
 ---
 
-## Execution Response Contract
+### Allowed Modes
 
-```ts
-interface ExecutionResponse {
-  execution_id: string
-  status: "success" | "error"
-  output?: unknown
-  error?: {
-    message: string
-    code?: string
-    details?: any
-  }
-}
+#### 1. Explicit Version (Preferred)
+
 ```
+script + version → deterministic resolution
+```
+
+#### 2. Version Alias (Controlled)
+
+Examples:
+- `latest`
+- `stable`
+- `v1`
+
+Aliases MUST:
+- Resolve to a fixed version at execution time
+- Be recorded in ExecutionRecord
 
 ---
 
-## Execution Engine
+### PROHIBITED
 
-The Execution Service orchestrates the full lifecycle.
-
-### Execution Flow
-
-1. Resolve script from registry
-2. Create execution context
-3. Validate input
-4. Execute script
-5. Validate output
-6. Return standardized response
-
-### Example
-
-```ts
-async function execute(request: ExecutionRequest): Promise<ExecutionResponse> {
-  const executionId = request.execution_id ?? crypto.randomUUID()
-
-  try {
-    const script = registry.get(request.script, request.version)
-
-    if (!script) {
-      throw new Error("SCRIPT_NOT_FOUND")
-    }
-
-    const context: ScriptContext = {
-      executionId,
-      logger: console
-    }
-
-    const input = script.validateInput
-      ? script.validateInput(request.input)
-      : request.input
-
-    const output = await script.run(input, context)
-
-    const validatedOutput = script.validateOutput
-      ? script.validateOutput(output)
-      : output
-
-    return {
-      execution_id: executionId,
-      status: "success",
-      output: validatedOutput
-    }
-
-  } catch (err: any) {
-    return {
-      execution_id: executionId,
-      status: "error",
-      error: {
-        message: err.message || "Execution failed"
-      }
-    }
-  }
-}
-```
+- Implicit “latest” without traceability
 
 ---
 
-## Contract Enforcement
+## Relationship to Roles (ADR-005)
 
-All scripts must align with schema definitions:
+Roles SHALL resolve to scripts.
 
-* `script_input.schema.json`
-* `script_output.schema.json`
-* `execution_contract.schema.json`
+```
+Role → Script + Version → Execution
+```
 
-### Requirements
+This ensures:
 
-* Input must be validated before execution
-* Output must be validated before returning
-* Validation failures must return structured errors
+- roles remain governed abstractions
+- execution remains deterministic
 
 ---
 
-## Error Handling Model
+## Contract Enforcement (ADR-018)
 
-Errors must be normalized and never leak raw exceptions.
+The Execution Service SHALL:
 
-### Error Types
+- Validate input against schema
+- Validate output against schema
+- Reject invalid execution
 
-* `SCRIPT_NOT_FOUND`
-* `VALIDATION_ERROR`
-* `EXECUTION_ERROR`
-* `TIMEOUT_ERROR` (future)
-
-### Format
-
-```json
-{
-  "execution_id": "uuid",
-  "status": "error",
-  "error": {
-    "message": "Validation failed",
-    "code": "VALIDATION_ERROR",
-    "details": {}
-  }
-}
-```
+Scripts MUST NOT perform validation internally.
 
 ---
 
-## Versioning Strategy
+## Execution Contract
 
-* All scripts must include a semantic version
-* Multiple versions may coexist
-* Default resolution returns latest version
+All scripts SHALL execute within the canonical execution contract (ADR-013).
 
-### Benefits
+They MUST:
 
-* Backward compatibility
-* Safe iteration
-* A/B experimentation
+- Accept structured input
+- Produce structured output
+- Return deterministic results
 
 ---
 
-## Observability
+## Error Handling
 
-Execution must support:
+Errors MUST:
 
-* Structured logging (with execution_id)
-* Metrics (future)
-* Distributed tracing (future)
+- Be normalized
+- Be structured
+- Be deterministic
 
----
+Error types include:
 
-## Script Manifest (Future Extension)
-
-```ts
-interface ScriptManifest {
-  name: string
-  version: string
-  inputSchema: string
-  outputSchema: string
-  timeoutMs?: number
-}
-```
-
-### Purpose
-
-* Bind scripts to schema files
-* Enable dynamic loading
-* Support UI discovery and documentation
+- SCRIPT_NOT_FOUND
+- VALIDATION_ERROR
+- EXECUTION_ERROR
+- TIMEOUT_ERROR (future)
 
 ---
 
-## API Surface
+## Observability (ADR-019)
 
-### Execute Script
+Execution MUST:
 
-```
-POST /execute
-```
+- Produce ExecutionRecords
+- Include execution_id
+- Capture script name + version
+- Capture inputs, outputs, and errors
 
-### List Scripts (Future)
+---
 
-```
-GET /scripts
-```
+## Determinism Requirements
+
+Given:
+
+- script name
+- version
+- input
+
+The system MUST produce:
+
+- identical output OR identical error
+
+---
+
+## Prohibited Behavior
+
+The system MUST NOT:
+
+- Execute scripts without version resolution
+- Allow scripts to bypass validation
+- Allow scripts to mutate authoritative state
+- Allow multiple execution paths outside the registry
 
 ---
 
@@ -330,60 +260,53 @@ GET /scripts
 
 ### Positive
 
-* Decouples execution from orchestration
-* Enables dynamic behavior without redeployments
-* Provides strong contract enforcement
-* Supports versioned evolution of logic
-* Improves observability and debugging
+- Strong execution determinism
+- Versioned evolution of logic
+- Clean separation of orchestration and execution
+- Enables scalable AI-driven workflows
 
 ---
 
 ### Negative
 
-* Introduces additional complexity
-* Requires strict schema governance
-* Adds overhead for validation and version management
+- Requires strict version discipline
+- Adds registry management complexity
+- Requires schema governance
 
 ---
 
 ## Alternatives Considered
 
-### 1. Hardcoded Execution Logic
+### Hardcoded Execution Logic
+Rejected: Not scalable, no versioning
 
-Rejected: Not scalable, tightly coupled, no versioning
+### Orchestration-Driven Logic
+Rejected: Violates ADR-007
 
-### 2. Workflow-Driven Execution Only (e.g., n8n)
-
-Rejected: Orchestration should not own execution logic
-
-### 3. Function-as-a-Service (FaaS) Only
-
-Deferred: May be integrated later, but does not replace registry model
+### Direct Function Invocation
+Rejected: Breaks contract and observability model
 
 ---
 
 ## Future Enhancements
 
-* Filesystem-based script loading
-* Remote script registry (distributed)
-* Execution isolation (containers/sandboxes)
-* Rate limiting and quotas
-* Multi-tenant context injection
-* Retry and idempotency support
+- Distributed registry
+- Script manifests with schema binding
+- Execution isolation (sandboxing)
+- Rate limiting and quotas
+- Retry and idempotency support
 
 ---
 
 ## Summary
 
-ADR-017 establishes the **Script Registry & Execution Model** as the foundational execution layer of the platform.
+ADR-017 defines the **deterministic execution backbone** of the platform.
 
-It enables:
+It ensures:
 
-* Dynamic, versioned execution
-* Strong contract enforcement
-* Clean separation between orchestration and execution
-* Scalable architecture for AI-driven systems
+- All logic is versioned
+- All execution is contract-driven
+- All behavior is reproducible
+- All orchestration remains decoupled from execution
 
-This ADR is a **core architectural boundary** and must be adhered to by all execution-related components.
-
----
+This ADR is a **core architectural boundary** and must be strictly enforced.
