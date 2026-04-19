@@ -12,4 +12,7 @@ export const config = {
   azureOpenAiDeployment: process.env.AZURE_OPENAI_DEPLOYMENT ?? "gpt-4.1",
   // Local dir or Azure Files mount path for pipeline artifacts
   artifactBasePath: process.env.ARTIFACT_BASE_PATH ?? "./artifacts",
+  // Governance content directory — bundled at /app/governance/ in container (ADR-025)
+  // For local development: set GOVERNANCE_PATH=../governance (relative to platform/backend-api/)
+  governancePath: process.env.GOVERNANCE_PATH ?? "./governance",
 };

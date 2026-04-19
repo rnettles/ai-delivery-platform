@@ -1,6 +1,7 @@
 import { Script, ScriptExecutionContext } from "./script.interface";
 import { azureOpenAiService } from "../services/azure-openai.service";
 import { artifactService } from "../services/artifact.service";
+import { governanceService } from "../services/governance.service";
 
 export interface PlannerInput {
   description: string;
@@ -27,40 +28,6 @@ export interface PlannerOutput {
   phase_plan: PlannerPhasePlan;
   artifact_path: string;
 }
-
-const SYSTEM_PROMPT = `You are the Planner AI in a governed software delivery pipeline.
-Your job is to produce a structured phase plan from a human description.
-You determine WHAT should be built. You never write code.
-
-Follow the ai_dev_stack governance model. Tasks must be small and deterministic:
-- <= 5 files modified per task
-- <= 200 lines of code per task
-
-Output ONLY valid JSON matching this exact schema (phase_plan.schema.json) -- no markdown, no prose:
-{
-  "phase_id": "PH-{STREAM}-{N}",
-  "name": "Short human-readable phase name",
-  "description": "One paragraph describing this phase purpose",
-  "objectives": [
-    "Specific measurable objective 1",
-    "Specific measurable objective 2"
-  ],
-  "deliverables": [
-    "Concrete deliverable 1 (artifact or feature)",
-    "Concrete deliverable 2"
-  ],
-  "dependencies": [],
-  "status": "Draft"
-}
-
-Rules:
-- phase_id: PH-{STREAM}-{N} where STREAM is 2-6 uppercase letters from the topic area
-- objectives: 2-4 measurable outcomes, each independently verifiable
-- deliverables: concrete artifacts or features that can be checked into Git
-- dependencies: IDs of phases that must complete first, or empty array
-- status: always "Draft" (planner never activates a phase)
-- Do NOT produce sprint plans or implementation details -- that is the Sprint Controller job
-- Do NOT wrap output in markdown code fences`;
 
 export class PlannerScript implements Script<Record<string, unknown>, unknown> {
   public readonly descriptor = {
@@ -101,8 +68,9 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
       ? `Project context:\n${typed.project_context}\n\nDelivery request: ${description}`
       : `Delivery request: ${description}`;
 
+    const systemPrompt = await governanceService.getPrompt("planner");
     const plan = await azureOpenAiService.chatJson<PlannerPhasePlan>([
-      { role: "system", content: SYSTEM_PROMPT },
+      { role: "system", content: systemPrompt },
       { role: "user", content: userContent },
     ]);
 

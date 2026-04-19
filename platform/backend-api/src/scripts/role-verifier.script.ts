@@ -1,6 +1,7 @@
 import { Script, ScriptExecutionContext } from "./script.interface";
 import { azureOpenAiService } from "../services/azure-openai.service";
 import { artifactService } from "../services/artifact.service";
+import { governanceService } from "../services/governance.service";
 
 export interface VerifierInput {
   previous_artifacts?: string[];
@@ -37,45 +38,6 @@ export interface VerifierOutput {
   artifact_path: string;
   handoff?: HandoffContract;
 }
-
-const SYSTEM_PROMPT = `You are the Verifier AI in a governed software delivery pipeline.
-You act as a quality gate. You evaluate an implementation summary against the implementation brief's acceptance criteria.
-
-Required inputs you will receive:
-- AI_IMPLEMENTATION_BRIEF.md — the source of truth for what was required
-- current_task.json — task identity and deliverables
-- implementation_summary.md — what the Implementer produced
-
-Verification checklist (per AI_REVIEW.md):
-1. Confirm task_id in current_task.json matches the implementation summary
-2. Validate Deliverables Checklist — each file listed has an explicit Create or Modify action
-3. For each deliverable: Create → file exists in plan; Modify → file is changed for this task
-4. Confirm required tests exist and match brief expectations
-5. Confirm no unrelated scope expansion (≤5 files, ≤200 lines constraint)
-6. Confirm implementation traces to at least one acceptance criterion per file
-
-Output ONLY valid JSON — no markdown, no prose:
-{
-  "task_id": "string",
-  "result": "PASS|FAIL",
-  "summary": "one paragraph assessment",
-  "required_corrections": [],
-  "handoff": {
-    "changed_scope": ["file paths changed"],
-    "verification_state": "pass|fail",
-    "open_risks": [],
-    "next_role_action": "what the downstream role must do",
-    "evidence_refs": ["path/to/brief", "path/to/summary"]
-  }
-}
-
-Rules:
-- result is "PASS" only if ALL acceptance criteria are met
-- required_corrections: empty array on PASS; specific actionable items on FAIL
-- handoff.next_role_action on PASS: "Sprint Controller archives task and closes it."
-- handoff.next_role_action on FAIL: "Fixer addresses only the listed corrections and re-verifies."
-- Do NOT invent issues not evidenced in the artifacts
-- Do NOT wrap output in markdown code fences`;
 
 interface LlmResponse {
   task_id: string;
@@ -133,8 +95,9 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
       ? `${contextParts.join("\n\n---\n\n")}\n\nVerify the implementation against all acceptance criteria.`
       : "No artifacts available. Return FAIL with 'No implementation artifacts found' as the correction.";
 
+    const systemPrompt = await governanceService.getPrompt("verifier");
     const llm = await azureOpenAiService.chatJson<LlmResponse>([
-      { role: "system", content: SYSTEM_PROMPT },
+      { role: "system", content: systemPrompt },
       { role: "user", content: userContent },
     ]);
 

@@ -1,0 +1,22 @@
+{
+  "version": "2026.04.19",
+  "roles": {
+    "planner": { "prompt": "prompts/role-planner.md" },
+    "sprint-controller": { "prompt": "prompts/role-sprint-controller.md" },
+    "implementer": { "prompt": "prompts/role-implementer.md" },
+    "verifier": { "prompt": "prompts/role-verifier.md" },
+    "fixer": { "prompt": "prompts/role-fixer.md" }
+  },
+  "rules": {
+    "global": "rules/global_rules.md",
+    "runtime_loading": "rules/runtime_loading_rules.md",
+    "runtime_gates": "rules/runtime_gates.md",
+    "handoff_contract": "rules/handoff_contract.md",
+    "task_flags": "rules/task_flags_contract.md"
+  },
+  "schemas": {
+    "phase_plan": "schemas/phase_plan.schema.json",
+    "sprint_plan": "schemas/sprint_plan.schema.json",
+    "task": "schemas/task.schema.json"
+  }
+}
