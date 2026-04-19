@@ -22,16 +22,16 @@ export function listScripts(_req: Request, res: Response): void {
   res.status(200).json(scriptRegistry.list());
 }
 
-export function getExecutionRecord(req: Request, res: Response, next: NextFunction): void {
+export async function getExecutionRecord(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const record = executionService.getExecutionRecord(getSingleParam(req.params.executionId));
+    const record = await executionService.getExecutionRecord(getSingleParam(req.params.executionId));
     res.status(200).json(record);
   } catch (error) {
     next(error);
   }
 }
 
-export function queryExecutionRecords(req: Request, res: Response, next: NextFunction): void {
+export async function queryExecutionRecords(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const query: ExecutionQuery = {
       correlation_id: typeof req.query.correlation_id === "string" ? req.query.correlation_id : undefined,
@@ -43,7 +43,7 @@ export function queryExecutionRecords(req: Request, res: Response, next: NextFun
       limit: typeof req.query.limit === "string" ? Number(req.query.limit) : undefined
     };
 
-    const records = executionService.queryExecutions(query);
+    const records = await executionService.queryExecutions(query);
     res.status(200).json({ records });
   } catch (error) {
     next(error);

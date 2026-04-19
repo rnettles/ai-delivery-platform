@@ -61,7 +61,7 @@ export class ExecutionService {
 				git_sync: gitSync
 			};
 
-			executionRecordModel.save(record);
+			await executionRecordModel.save(record);
 			return response;
 		} catch (error) {
 			const completedAt = Date.now();
@@ -93,7 +93,7 @@ export class ExecutionService {
 				git_sync: gitSync
 			};
 
-			executionRecordModel.save(record);
+			await executionRecordModel.save(record);
 
 			return {
 				ok: false,
@@ -113,20 +113,20 @@ export class ExecutionService {
 		}
 	}
 
-	getExecutionRecord(executionId: string): ExecutionRecord {
-		const record = executionRecordModel.getById(executionId);
+	async getExecutionRecord(executionId: string): Promise<ExecutionRecord> {
+		const record = await executionRecordModel.getById(executionId);
 		if (!record) {
 			throw new HttpError(404, "EXECUTION_NOT_FOUND", `Execution record not found: ${executionId}`);
 		}
 		return record;
 	}
 
-	queryExecutions(query: ExecutionQuery): ExecutionRecord[] {
+	async queryExecutions(query: ExecutionQuery): Promise<ExecutionRecord[]> {
 		return executionRecordModel.query(query);
 	}
 
 	async replayExecution(executionId: string, requestId?: string): Promise<ExecutionResponseEnvelope> {
-		const record = this.getExecutionRecord(executionId);
+		const record = await this.getExecutionRecord(executionId);
 
 		const replayRequest: ExecutionRequestEnvelope = {
 			request_id: requestId,

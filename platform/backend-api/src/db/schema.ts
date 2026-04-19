@@ -53,6 +53,42 @@ export const stateHistory = pgTable(
   })
 );
 
+// Execution records — one row per governed script/role execution (ADR-019)
+export const executionRecords = pgTable(
+  "execution_records",
+  {
+    execution_id: uuid("execution_id").primaryKey().notNull(),
+    ok: boolean("ok").notNull(),
+    request_id: text("request_id"),
+    correlation_id: text("correlation_id"),
+    // Flattened target fields for indexed querying
+    target_type: text("target_type").notNull(),
+    target_name: text("target_name").notNull(),
+    target_version: text("target_version").notNull(),
+    // Execution payload
+    artifacts: jsonb("artifacts").notNull().$type<string[]>().default([]),
+    output: jsonb("output").$type<unknown>(),
+    errors: jsonb("errors").notNull().$type<object[]>().default([]),
+    // Status and timing
+    status: text("status").notNull(),
+    started_at: timestamp("started_at").notNull(),
+    completed_at: timestamp("completed_at").notNull(),
+    duration_ms: integer("duration_ms").notNull(),
+    // Input / metadata
+    input: jsonb("input").notNull().$type<Record<string, unknown>>().default({}),
+    metadata: jsonb("metadata").notNull().$type<Record<string, unknown>>().default({}),
+    // Replay linkage and git context
+    replay_of_execution_id: text("replay_of_execution_id"),
+    git_sync: jsonb("git_sync").notNull().$type<object>().default({}),
+  },
+  (table) => ({
+    correlationIdx: index("idx_execution_records_correlation").on(table.correlation_id),
+    targetNameIdx: index("idx_execution_records_target_name").on(table.target_name),
+    statusIdx: index("idx_execution_records_status").on(table.status),
+    startedAtIdx: index("idx_execution_records_started_at").on(table.started_at),
+  })
+);
+
 // Pipeline runs — one row per pipeline execution
 export const pipelineRuns = pgTable(
   "pipeline_runs",
