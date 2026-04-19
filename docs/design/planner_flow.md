@@ -5,21 +5,17 @@
 
 # 1. Purpose
 
-This document demonstrates a **complete end-to-end execution** of the Planner flow:
+This document demonstrates a complete planner flow:
 
-Slack input  
-→ n8n orchestration  
-→ Execution Service  
-→ Artifact creation  
-→ State update  
+Slack input -> n8n orchestration -> Execution Service -> Artifact creation -> Optional snapshot projection
 
-This example is **implementation-grade** and shows how all components interact.
+This example is implementation-grade.
 
 ---
 
 # 2. Scenario
 
-User submits a request in Slack:
+User submits:
 
 > "Plan Phase 1 for implementing the execution service"
 
@@ -27,11 +23,7 @@ User submits a request in Slack:
 
 # 3. Step-by-Step Flow
 
----
-
-## Step 1 — Slack Input
-
-### Input
+## Step 1 - Slack Input
 
 ```json
 {
@@ -41,9 +33,7 @@ User submits a request in Slack:
 
 ---
 
-## Step 2 — n8n Webhook Trigger
-
-n8n receives webhook event and constructs initial payload:
+## Step 2 - n8n Webhook Trigger
 
 ```json
 {
@@ -55,148 +45,75 @@ n8n receives webhook event and constructs initial payload:
 
 ---
 
-## Step 3 — n8n → Execution Service: load-project-config
+## Step 3 - n8n -> Execution Service (`POST /execute` planner)
 
 ### Request
 
 ```json
 {
-  "workflow_id": "wf-2026-001",
   "request_id": "req-001",
-  "project_config_path": "/mnt/repo/project_config.json",
-  "payload": {}
-}
-```
-
-### Response
-
-```json
-{
-  "ok": true,
-  "data": {
-    "resolved": {
-      "workspace_root": "/mnt/repo/project_workspace"
-    }
+  "correlation_id": "wf-2026-001",
+  "target": {
+    "type": "role",
+    "name": "planner",
+    "version": "2026.04.18"
+  },
+  "input": {
+    "text": "Plan Phase 1 for execution service"
+  },
+  "metadata": {
+    "workflow_id": "wf-2026-001",
+    "caller": "n8n"
   }
 }
 ```
-
----
-
-## Step 4 — n8n → Execution Service: resolve-paths
-
-### Request
-
-```json
-{
-  "workflow_id": "wf-2026-001",
-  "request_id": "req-002",
-  "project_config_path": "/mnt/repo/project_config.json",
-  "payload": {
-    "feature_id": "FEAT-001"
-  }
-}
-```
-
-### Response
-
-```json
-{
-  "ok": true,
-  "data": {
-    "paths": {
-      "phase_artifact": "/mnt/repo/project_workspace/artifacts/phases/PHASE-001.md"
-    }
-  }
-}
-```
-
----
-
-## Step 5 — n8n → Execution Service: build-execution-contract
 
 ### Response (simplified)
 
 ```json
 {
-  "data": {
-    "execution_contract": {
-      "prompt": "Generate a Phase Plan...",
-      "templates": ["phase_plan"]
-    }
+  "ok": true,
+  "execution_id": "exec-001",
+  "output": {
+    "prompt": "Generate a phase plan...",
+    "template": "phase_plan"
   }
 }
 ```
 
 ---
 
-## Step 6 — n8n → LLM
+## Step 4 - n8n -> LLM
 
-### Input
+Input prompt from execution output and receive structured JSON plan data.
 
-Prompt from execution contract:
+---
 
-```text
-Generate a Phase Plan for implementing the execution service.
-```
+## Step 5 - n8n -> Execution Service (`POST /execute` render)
 
-### Output
+### Response (simplified)
 
 ```json
 {
-  "phase_id": "PHASE-001",
-  "name": "Execution Service Implementation",
-  "objectives": [
-    "Deploy execution service",
-    "Integrate with n8n"
-  ],
-  "deliverables": [
-    "Execution service deployed",
-    "API endpoints working"
+  "ok": true,
+  "execution_id": "exec-002",
+  "artifacts": [
+    "/mnt/repo/project_workspace/artifacts/phases/PHASE-001.md"
   ]
 }
 ```
 
 ---
 
-## Step 7 — n8n → Execution Service: render-template
+## Step 6 - n8n -> Execution Service (`POST /execute` validate)
 
-### Request
-
-```json
-{
-  "workflow_id": "wf-2026-001",
-  "request_id": "req-004",
-  "project_config_path": "/mnt/repo/project_config.json",
-  "payload": {
-    "template": "phase_plan",
-    "output_path": "/mnt/repo/project_workspace/artifacts/phases/PHASE-001.md",
-    "data": {
-      "phase_id": "PHASE-001",
-      "name": "Execution Service Implementation"
-    }
-  }
-}
-```
-
-### Result
-
-Artifact created:
-
-```text
-/mnt/repo/project_workspace/artifacts/phases/PHASE-001.md
-```
-
----
-
-## Step 8 — n8n → Execution Service: validate-artifacts
-
-### Response
+### Response (simplified)
 
 ```json
 {
   "ok": true,
-  "data": {
+  "execution_id": "exec-003",
+  "output": {
     "valid": true
   }
 }
@@ -204,22 +121,17 @@ Artifact created:
 
 ---
 
-## Step 9 — State Update
+## Step 7 - Optional Derived Snapshot Projection
 
-Execution Service updates:
+A projection layer may emit convenience snapshot files from artifacts.
+
+Example (non-authoritative):
 
 ```text
 project_workspace/state/current_phase.json
 ```
 
-### Contents
-
-```json
-{
-  "phase_id": "PHASE-001",
-  "status": "planning"
-}
-```
+Snapshot files are derived views and must be reconstructable from artifacts.
 
 ---
 
@@ -228,15 +140,10 @@ project_workspace/state/current_phase.json
 ## Artifacts Created
 
 ```text
-project_workspace/
-└── artifacts/
-    └── phases/
-        └── PHASE-001.md
+project_workspace/artifacts/phases/PHASE-001.md
 ```
 
----
-
-## State Updated
+## Derived Views (Optional)
 
 ```text
 project_workspace/state/current_phase.json
@@ -249,14 +156,12 @@ project_workspace/state/current_phase.json
 The system has:
 
 - Accepted a Slack request
-- Generated a governed phase plan
-- Created a persistent artifact
-- Updated system state
+- Executed governed planner logic through one contract boundary
+- Created persistent artifacts as authoritative outputs
+- Optionally projected derived snapshot views
 
 ---
 
 # 6. Key Takeaway
 
-> This flow demonstrates the full governed loop:
->
-> Input → Orchestration → Execution → Artifact → State
+> Input -> Orchestration -> Canonical Execute -> Artifacts -> Optional Derived Views

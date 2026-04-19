@@ -5,22 +5,21 @@
 
 # 1. Purpose
 
-This document defines the **exact n8n workflow structure** for orchestrating the execution service.
+This document defines the n8n orchestration pattern for the Execution Service canonical interface.
 
 It includes:
 
 - Node-by-node flow
-- Inputs and outputs per node
-- Retry and error handling strategy
+- Contract-compliant request/response handling
+- Retry and error strategy
 
-This document is **implementation-grade** and should be used directly when building workflows.
+This document is implementation-grade.
 
 ---
 
 # 2. Core Principle
 
-> n8n orchestrates flow only.  
-> All logic lives in the execution service.
+> n8n orchestrates control flow only. All governed logic executes through `POST /execute`.
 
 ---
 
@@ -30,12 +29,11 @@ This document is **implementation-grade** and should be used directly when build
 
 ```
 Webhook (Slack/Event)
-→ HTTP: load-project-config
-→ HTTP: resolve-paths
-→ HTTP: build-execution-contract
-→ LLM Node
-→ HTTP: render-template
-→ HTTP: validate-artifacts
+→ Build /execute request (target: role@version)
+→ HTTP: POST /execute (planner)
+→ LLM node (if requested by contract output)
+→ HTTP: POST /execute (render)
+→ HTTP: POST /execute (validate)
 → End
 ```
 
@@ -43,15 +41,13 @@ Webhook (Slack/Event)
 
 # 4. Node-by-Node Definition
 
----
-
 ## Node 1 — Webhook
 
 ### Type
 Webhook
 
 ### Purpose
-Entry point from Slack or external trigger
+Entry point from Slack or external trigger.
 
 ### Output
 
@@ -65,54 +61,31 @@ Entry point from Slack or external trigger
 
 ---
 
-## Node 2 — Load Project Config
+## Node 2 — Execute Planner Contract
 
 ### Type
 HTTP Request
 
 ### Endpoint
-POST /load-project-config
+POST /execute
 
 ### Input
 
 ```json
 {
-  "workflow_id": "{{ $json.workflow_id }}",
   "request_id": "req-001",
-  "project_config_path": "/mnt/repo/project_config.json",
-  "payload": {}
-}
-```
-
-### Output
-
-```json
-{
-  "data": {
-    "resolved": { ... }
-  }
-}
-```
-
----
-
-## Node 3 — Resolve Paths
-
-### Type
-HTTP Request
-
-### Endpoint
-POST /resolve-paths
-
-### Input
-
-```json
-{
-  "workflow_id": "{{ $json.workflow_id }}",
-  "request_id": "req-002",
-  "project_config_path": "/mnt/repo/project_config.json",
-  "payload": {
-    "feature_id": "FEAT-001"
+  "correlation_id": "{{ $json.workflow_id }}",
+  "target": {
+    "type": "role",
+    "name": "planner",
+    "version": "2026.04.18"
+  },
+  "input": {
+    "text": "{{ $json.input_text }}"
+  },
+  "metadata": {
+    "workflow_id": "{{ $json.workflow_id }}",
+    "caller": "n8n"
   }
 }
 ```
@@ -121,51 +94,19 @@ POST /resolve-paths
 
 ```json
 {
-  "data": {
-    "paths": { ... }
+  "ok": true,
+  "execution_id": "exec-001",
+  "artifacts": [],
+  "output": {
+    "prompt": "...",
+    "template": "phase_plan"
   }
 }
 ```
 
 ---
 
-## Node 4 — Build Execution Contract
-
-### Type
-HTTP Request
-
-### Endpoint
-POST /build-execution-contract
-
-### Input
-
-```json
-{
-  "workflow_id": "{{ $json.workflow_id }}",
-  "request_id": "req-003",
-  "role": "planner",
-  "project_config_path": "/mnt/repo/project_config.json",
-  "payload": {}
-}
-```
-
-### Output
-
-```json
-{
-  "data": {
-    "execution_contract": {
-      "prompt": "...",
-      "rules": [],
-      "templates": []
-    }
-  }
-}
-```
-
----
-
-## Node 5 — LLM Execution
+## Node 3 — LLM Execution (If Required)
 
 ### Type
 OpenAI / Azure OpenAI Node
@@ -173,7 +114,7 @@ OpenAI / Azure OpenAI Node
 ### Input
 
 ```text
-{{ $json.data.execution_contract.prompt }}
+{{ $json.output.prompt }}
 ```
 
 ### Output
@@ -186,65 +127,63 @@ OpenAI / Azure OpenAI Node
 
 ---
 
-## Node 6 — Render Template
+## Node 4 — Execute Render Step
 
 ### Type
 HTTP Request
 
 ### Endpoint
-POST /render-template
+POST /execute
 
 ### Input
 
 ```json
 {
-  "workflow_id": "{{ $json.workflow_id }}",
-  "request_id": "req-004",
-  "project_config_path": "/mnt/repo/project_config.json",
-  "payload": {
+  "request_id": "req-002",
+  "correlation_id": "{{ $json.workflow_id }}",
+  "target": {
+    "type": "script",
+    "name": "render_template",
+    "version": "2026.04.18"
+  },
+  "input": {
     "template": "phase_plan",
     "data": "{{ $json.llm_output }}"
+  },
+  "metadata": {
+    "workflow_id": "{{ $json.workflow_id }}",
+    "caller": "n8n"
   }
-}
-```
-
-### Output
-
-```json
-{
-  "artifacts": [ ".../phase_plan.md" ]
 }
 ```
 
 ---
 
-## Node 7 — Validate Artifacts
+## Node 5 — Execute Validation Step
 
 ### Type
 HTTP Request
 
 ### Endpoint
-POST /validate-artifacts
+POST /execute
 
 ### Input
 
 ```json
 {
-  "workflow_id": "{{ $json.workflow_id }}",
-  "request_id": "req-005",
-  "project_config_path": "/mnt/repo/project_config.json",
-  "payload": {
-    "paths": "{{ $json.artifacts }}"
-  }
-}
-```
-
-### Output
-
-```json
-{
-  "data": {
-    "valid": true
+  "request_id": "req-003",
+  "correlation_id": "{{ $json.workflow_id }}",
+  "target": {
+    "type": "script",
+    "name": "validate_artifacts",
+    "version": "2026.04.18"
+  },
+  "input": {
+    "artifacts": "{{ $json.artifacts }}"
+  },
+  "metadata": {
+    "workflow_id": "{{ $json.workflow_id }}",
+    "caller": "n8n"
   }
 }
 ```
@@ -265,13 +204,13 @@ POST /validate-artifacts
 
 ## 5.2 Retry Conditions
 
-Retry ONLY when:
+Retry only when:
 
 - Network failure
 - 5xx server error
 - Timeout
 
-DO NOT retry when:
+Do not retry when:
 
 - Validation errors
 - Schema errors
@@ -286,11 +225,9 @@ DO NOT retry when:
 ```
 If Node Fails
 → Capture Error
-→ Log
+→ Log execution_id + request_id
 → Stop Execution
 ```
-
----
 
 ## 6.2 Standard Error Output
 
@@ -312,27 +249,17 @@ If Node Fails
 
 n8n must pass forward:
 
-- workflow_id
-- request_id
-- resolved paths
-- execution_contract
-- llm_output
-- artifacts
+- workflow_id / correlation_id
+- request_id per call
+- target name + explicit version
+- structured input payload
+- artifact references / execution_id
 
 ---
 
-# 8. Naming Conventions
+# 8. Prohibited Patterns
 
-| Element | Format |
-|--------|-------|
-| workflow_id | wf-<timestamp> |
-| request_id | req-<step> |
-| feature_id | FEAT-### |
-| phase_id | PHASE-### |
-
----
-
-# 9. Guiding Principle
-
-> n8n defines sequence, not logic.  
-> Every decision must come from execution service or governance.
+- Using specialized execution endpoints for governed behavior
+- Omitting explicit target version
+- Embedding business logic in n8n nodes
+- Treating transient workflow context as authoritative state

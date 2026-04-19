@@ -14,6 +14,8 @@ Proposed
 
 ## Context
 
+Note: this ADR file path includes legacy wording (`state-management`) for historical continuity. The architectural decision below is explicitly coordination/context-oriented and non-authoritative for system truth.
+
 The system supports:
 
 - Local human/AI-assisted development (VSCode, Copilot)
@@ -60,7 +62,7 @@ This layer SHALL NOT be treated as the source of truth for system state.
 
 ---
 
-## Coordination State Model
+## Coordination Context Model
 
 The system SHALL define three categories of runtime data:
 
@@ -79,7 +81,7 @@ Source of truth:
 
 ---
 
-### 2. Coordination State (Medium-Lived)
+### 2. Coordination Context (Medium-Lived)
 
 Used for:
 
@@ -111,20 +113,20 @@ Source of truth:
 
 ## Critical Constraint
 
-> Coordination state MUST NOT be treated as authoritative system state.
+> Coordination context MUST NOT be treated as authoritative system state.
 
 ---
 
 ## API Model
 
-The system SHALL expose an API for managing coordination state.
+The system SHALL expose an API for managing coordination context.
 
 ### Capabilities
 
 - Create coordination entries
 - Retrieve coordination context
-- Query coordination data
-- Update coordination data
+- Query coordination context data
+- Update coordination context data
 - Archive or expire entries
 
 ---
@@ -163,7 +165,7 @@ This storage MUST:
 
 ## Relationship to Artifact-Driven State (ADR-002)
 
-- Coordination state is NOT authoritative
+- Coordination context is NOT authoritative
 - Artifacts remain the source of truth
 - State derivation MUST ignore coordination data
 
@@ -218,7 +220,7 @@ n8n MUST NOT:
 
 ## Data Lifecycle
 
-Coordination state SHOULD:
+Coordination context SHOULD:
 
 - Be time-bound
 - Support expiration or archival
@@ -230,10 +232,10 @@ Coordination state SHOULD:
 
 The system MUST NOT:
 
-- Treat coordination state as source of truth
+- Treat coordination context as source of truth
 - Use coordination data as input to final state derivation
 - Allow direct database access from clients
-- Allow coordination state to bypass validation or approval
+- Allow coordination context to bypass validation or approval
 
 ---
 

@@ -5,53 +5,87 @@
 
 # 1. Purpose
 
-This document defines the strict API contract between:
+This document defines the canonical API contract between:
 
 - n8n (orchestration layer)
 - Execution Service (deterministic runtime engine)
+- External clients (UI/CLI/agents)
 
-This API is the only integration boundary for executing:
-
-- Governance-driven logic
-- Helper scripts
-- Artifact generation
-- State transitions
+This API is the only integration boundary for governed execution.
 
 ---
 
-# 2. Standard Request Envelope
+# 2. Core Principle
+
+> All governed execution flows through one contract boundary.
+
+---
+
+# 3. Canonical Endpoint
+
+## POST /execute
+
+This is the single endpoint for governed execution requests.
+
+The target behavior (script/role/capability) is selected by contract fields in the request body, not by endpoint proliferation.
+
+---
+
+# 4. Standard Request Envelope
 
 ```json
 {
-  "workflow_id": "string",
   "request_id": "string",
-  "role": "string",
-  "project_config_path": "string",
-  "payload": {}
+  "correlation_id": "string",
+  "target": {
+    "type": "script|role",
+    "name": "string",
+    "version": "string"
+  },
+  "input": {},
+  "metadata": {
+    "workflow_id": "string",
+    "caller": "n8n|ui|cli|agent"
+  }
 }
 ```
 
+## Request Requirements
+
+- `target.version` MUST be explicit and immutable
+- `input` MUST be structured JSON
+- Request MUST validate against the request schema
+
 ---
 
-# 3. Standard Response Envelope
+# 5. Standard Response Envelope
 
 ```json
 {
   "ok": true,
-  "script": "string",
-  "workflow_id": "string",
+  "execution_id": "string",
   "request_id": "string",
-  "state_hint": "string|null",
-  "governance_version": "string",
+  "correlation_id": "string",
+  "target": {
+    "type": "script|role",
+    "name": "string",
+    "version": "string"
+  },
   "artifacts": [],
-  "data": {},
+  "output": {},
   "errors": []
 }
 ```
 
+## Response Requirements
+
+- Exactly one of `output` or `errors` represents the terminal result
+- Errors MUST be structured and machine-readable
+- All responses MUST be traceable by `execution_id`
+
 ---
 
-# 4. Error Format
+# 6. Error Format
 
 ```json
 {
@@ -61,117 +95,53 @@ This API is the only integration boundary for executing:
 }
 ```
 
----
+## Standard Error Codes
 
-# 5. Endpoints
-
-## POST /load-project-config
-
-### Request
-```json
-{
-  "workflow_id": "wf-001",
-  "request_id": "req-001",
-  "project_config_path": "/mnt/repo/project_config.json",
-  "payload": {}
-}
-```
-
-### Response
-```json
-{
-  "ok": true,
-  "script": "load_project_config",
-  "workflow_id": "wf-001",
-  "request_id": "req-001",
-  "state_hint": null,
-  "governance_version": "a1b2c3d",
-  "artifacts": [],
-  "data": {
-    "resolved": {
-      "project_root": "/mnt/repo",
-      "workspace_root": "/mnt/repo/project_workspace",
-      "docs_root": "/mnt/repo/docs",
-      "governance_root": "/mnt/repo/ai_dev_stack/ai_guidance"
-    }
-  },
-  "errors": []
-}
-```
+- `VALIDATION_ERROR`
+- `SCRIPT_NOT_FOUND`
+- `VERSION_RESOLUTION_ERROR`
+- `EXECUTION_ERROR`
+- `UNAUTHORIZED`
 
 ---
 
-## POST /resolve-paths
+# 7. Contract Rules
 
-### Request
-```json
-{
-  "workflow_id": "wf-001",
-  "request_id": "req-002",
-  "project_config_path": "/mnt/repo/project_config.json",
-  "payload": {
-    "feature_id": "FEAT-001"
-  }
-}
-```
-
-### Response
-```json
-{
-  "ok": true,
-  "script": "resolve_paths",
-  "workflow_id": "wf-001",
-  "request_id": "req-002",
-  "state_hint": null,
-  "governance_version": "a1b2c3d",
-  "artifacts": [],
-  "data": {
-    "paths": {
-      "feature_intake": "/mnt/repo/project_workspace/intake/features/FEAT-001"
-    }
-  },
-  "errors": []
-}
-```
+- Execution Service owns request/output schema validation
+- Clients MUST NOT bypass this boundary
+- Specialized behavior endpoints for execution logic are prohibited
+- Floating version aliases (for example, `latest`) are prohibited for governed execution
 
 ---
 
-## POST /build-execution-contract
+# 8. Optional Supporting Endpoints
 
-### Request
-```json
-{
-  "workflow_id": "wf-001",
-  "request_id": "req-003",
-  "role": "planner",
-  "project_config_path": "/mnt/repo/project_config.json",
-  "payload": {}
-}
-```
+Supporting endpoints MAY exist (health/discovery/replay metadata), but:
 
-### Response
-```json
-{
-  "ok": true,
-  "script": "build_execution_contract",
-  "workflow_id": "wf-001",
-  "request_id": "req-003",
-  "state_hint": "planning",
-  "governance_version": "a1b2c3d",
-  "artifacts": [],
-  "data": {
-    "execution_contract": {
-      "prompt": "...",
-      "rules": [],
-      "templates": []
-    }
-  },
-  "errors": []
-}
-```
+- They MUST NOT execute governed logic directly
+- They MUST NOT bypass schema validation, observability, or policy checks
 
 ---
 
-# 6. Guiding Principle
+# 9. Observability Requirements
 
-> n8n orchestrates. Execution service executes. Governance defines behavior.
+Every `POST /execute` request MUST:
+
+- Create an ExecutionRecord
+- Capture target name + explicit version
+- Capture normalized input/output/error envelopes
+- Preserve replayability under the same contract
+
+---
+
+# 10. Artifact and State Alignment
+
+- Authoritative truth is in artifacts (ADR-002)
+- API responses may include artifact references
+- Any state snapshots are derived projections and non-authoritative
+
+---
+
+# 11. Guiding Principle
+
+> n8n orchestrates. Execution Service executes. Artifacts define truth.

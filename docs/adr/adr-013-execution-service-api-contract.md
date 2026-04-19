@@ -125,22 +125,26 @@ The API MUST:
 - Serve as the single entry point for execution logic
 - Prevent bypass of validation and observability layers
 
+The canonical execution boundary SHOULD be represented as a unified execution endpoint (for example, `POST /execute`) with structured request envelopes that identify target + version.
+
 The exact API structure (e.g., endpoints, payload formats) SHALL be defined in a **separate API specification**, not in this ADR.
 
 ---
 
 ## Endpoint Design Principles
 
-The API SHOULD:
+The API SHALL:
 
-- Prefer a unified execution endpoint (e.g., a single execution entry point)
-- Minimize proliferation of specialized endpoints
-- Support composability through structured input
+- Use a unified execution endpoint for governed execution
+- Minimize proliferation of specialized behavior endpoints
+- Support composability through structured input payloads
 
-Supporting endpoints MAY exist (e.g., discovery, validation, replay), but MUST:
+Supporting endpoints MAY exist (e.g., discovery, health, replay metadata), but MUST:
 
 - Adhere to the same contract principles
-- Not bypass the execution model
+- Never bypass the canonical execution model
+
+The system MUST NOT define competing execution endpoints such as action-specific workflow APIs that fragment contract ownership.
 
 ---
 

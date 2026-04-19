@@ -133,34 +133,14 @@ The Script Registry SHALL:
 
 ### REQUIRED
 
-Execution MUST specify a version OR be resolved deterministically.
-
----
-
-### Allowed Modes
-
-#### 1. Explicit Version (Preferred)
-
-```
-script + version → deterministic resolution
-```
-
-#### 2. Version Alias (Controlled)
-
-Examples:
-- `latest`
-- `stable`
-- `v1`
-
-Aliases MUST:
-- Resolve to a fixed version at execution time
-- Be recorded in ExecutionRecord
+Execution MUST specify an explicit immutable version at request time.
 
 ---
 
 ### PROHIBITED
 
-- Implicit “latest” without traceability
+- Implicit or explicit floating aliases (for example: `latest`, `stable`, unpinned major tags)
+- Any runtime behavior that does not bind to an immutable resolved version
 
 ---
 
@@ -188,6 +168,8 @@ The Execution Service SHALL:
 - Reject invalid execution
 
 Scripts MUST NOT perform validation internally.
+
+Any script-local checks are advisory only and MUST NOT replace or redefine contract/schema validation owned by the Execution Service.
 
 ---
 

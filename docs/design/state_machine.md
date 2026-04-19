@@ -1,60 +1,57 @@
-# State Machine Specification
+# Lifecycle Model Specification
 ## Governed AI Software Development Orchestration System
 
 ---
 
 # 1. Purpose
 
-This document defines the **authoritative state machine** for the system.
+This document defines the lifecycle progression model used by orchestration and execution.
 
 It governs:
 
-- Allowed states
-- Valid transitions
+- Allowed lifecycle stages
+- Valid stage transitions
 - Transition triggers
 - Failure handling
 
-This prevents:
-- Drift
-- Invalid execution paths
-- Inconsistent state
+This prevents invalid execution paths and ambiguity in derived status views.
 
 ---
 
 # 2. Core Principle
 
-> State is controlled, not inferred.
+> Lifecycle status is derived from authoritative artifacts and execution records.
 
 ---
 
-# 3. States
+# 3. Lifecycle Stages
 
 ```text
-intake → planning → staging → active → validation → completed
+intake -> planning -> staging -> active -> validation -> completed
 ```
 
 ---
 
-# 4. State Definitions
+# 4. Stage Definitions
 
 ## intake
 - Feature/request captured
-- No planning performed
+- No planning artifacts finalized
 
 ## planning
 - Planner generating phase/sprint artifacts
 
 ## staging
-- Artifacts created but not yet executed
+- Artifacts exist and are ready for execution
 
 ## active
 - Tasks are being executed
 
 ## validation
-- Artifacts and outputs being validated
+- Outputs and artifacts are under validation
 
 ## completed
-- Work finished and validated
+- Work is finished and validated
 
 ---
 
@@ -62,11 +59,11 @@ intake → planning → staging → active → validation → completed
 
 | From | To | Allowed |
 |------|----|--------|
-| intake | planning | ✅ |
-| planning | staging | ✅ |
-| staging | active | ✅ |
-| active | validation | ✅ |
-| validation | completed | ✅ |
+| intake | planning | Yes |
+| planning | staging | Yes |
+| staging | active | Yes |
+| active | validation | Yes |
+| validation | completed | Yes |
 
 ---
 
@@ -85,25 +82,21 @@ intake → planning → staging → active → validation → completed
 
 | Transition | Trigger |
 |-----------|--------|
-| intake → planning | Planner invoked |
-| planning → staging | Artifacts generated |
-| staging → active | Sprint execution starts |
-| active → validation | Execution completes |
-| validation → completed | Validation passes |
+| intake -> planning | Planner execution accepted |
+| planning -> staging | Required planning artifacts validated |
+| staging -> active | Sprint/task execution starts |
+| active -> validation | Execution completes |
+| validation -> completed | Validation passes |
 
 ---
 
 # 8. Failure Handling
 
-## Rule
+Rule:
 
-Failures do NOT advance state.
+Failures do not advance lifecycle stage.
 
----
-
-## Failure Paths
-
-| State | Failure Action |
+| Stage | Failure Action |
 |------|--------------|
 | planning | stay in planning |
 | staging | stay in staging |
@@ -112,31 +105,28 @@ Failures do NOT advance state.
 
 ---
 
-# 9. State Storage
+# 9. Derivation Sources
 
-State is stored in:
+Lifecycle stage must be derived from:
 
-```text
-project_workspace/state/
-```
+- Artifact set and validation status
+- ExecutionRecords and terminal outcomes
 
-Files:
-
-```text
-current_state.json
-current_phase.json
-current_sprint.json
-```
+Non-authoritative snapshot files may exist for convenience, but they must be reconstructable from authoritative sources.
 
 ---
 
-# 10. Example State File
+# 10. Example Derived Snapshot (Optional)
 
 ```json
 {
-  "state": "planning",
+  "stage": "planning",
   "phase_id": "PHASE-001",
-  "updated_at": "2026-01-01T00:00:00Z"
+  "updated_at": "2026-01-01T00:00:00Z",
+  "derived_from": {
+    "artifacts": ["/project_workspace/artifacts/phases/PHASE-001.md"],
+    "execution_ids": ["exec-001"]
+  }
 }
 ```
 
@@ -144,12 +134,12 @@ current_sprint.json
 
 # 11. Enforcement Rules
 
-- Execution Service MUST validate transitions
-- Invalid transitions MUST return error
-- State changes MUST be atomic
+- Execution Service must validate transition eligibility before finalizing stage-changing artifacts
+- Invalid transitions must return structured errors
+- Derived lifecycle projections must be reproducible from artifacts and records
 
 ---
 
 # 12. Guiding Principle
 
-> If the state machine is violated, the system is broken.
+> If lifecycle progression cannot be reproduced from artifacts and records, the system is invalid.

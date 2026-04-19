@@ -1,4 +1,4 @@
-# ADR-012: File-Based Artifacts with Derived State Snapshots
+# ADR-012: Artifact-Derived Snapshot Views in Workspace
 
 ## Status
 Accepted
@@ -13,6 +13,8 @@ Accepted
 ---
 
 ## Context
+
+Note: the filename is retained for historical link compatibility. The decision text in this ADR is authoritative.
 
 The system must represent:
 
@@ -149,7 +151,8 @@ The system MUST NOT:
 
 - Artifacts are stored in the workspace
 - State snapshots are stored in the workspace
-- Workspace is the working memory, not the source of truth
+- Artifact files are authoritative for derivation
+- Snapshot files are convenience projections only
 
 ---
 
