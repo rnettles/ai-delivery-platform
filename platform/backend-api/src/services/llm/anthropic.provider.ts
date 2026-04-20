@@ -24,6 +24,12 @@ interface AnthropicContentBlock {
 interface AnthropicResponse {
   content: AnthropicContentBlock[];
   stop_reason: "end_turn" | "tool_use" | "max_tokens" | string;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+  };
 }
 
 interface AnthropicMessage {
@@ -40,6 +46,9 @@ export class AnthropicProvider implements LlmProvider {
   private readonly apiKey: string;
   private readonly model: string;
   private readonly apiVersion = "2023-06-01";
+  private readonly telemetryEnabled = (process.env.LLM_TELEMETRY_ENABLED ?? "true") !== "false";
+  private readonly traceEnabled = (process.env.LLM_TRACE_ENABLED ?? "false") === "true";
+  private readonly traceMaxChars = Number(process.env.LLM_TRACE_MAX_CHARS ?? 6000);
 
   constructor(apiKey: string, model: string) {
     this.apiKey = apiKey;
@@ -50,6 +59,7 @@ export class AnthropicProvider implements LlmProvider {
     const { system, anthropicMessages } = this.convertMessages(messages);
     const body = this.buildBody(anthropicMessages, { system, options });
     const data = await this.post(body);
+    this.logTelemetry("chat", body, data);
     const textBlock = data.content.find((b) => b.type === "text");
     const content = textBlock?.text ?? "";
     if (!content) throw new Error("Anthropic provider returned an empty response");
@@ -94,6 +104,7 @@ export class AnthropicProvider implements LlmProvider {
 
       const body = this.buildBody(history, { system, options, tools: anthropicTools });
       const data = await this.post(body);
+      this.logTelemetry("chatWithTools", body, data);
 
       // Collect tool-use blocks and text blocks
       const toolUseBlocks = data.content.filter((b) => b.type === "tool_use");
@@ -218,5 +229,40 @@ export class AnthropicProvider implements LlmProvider {
     }
 
     throw new Error(`Anthropic retry loop exhausted for model ${this.model}`);
+  }
+
+  private logTelemetry(kind: "chat" | "chatWithTools", requestBody: Record<string, unknown>, responseBody: AnthropicResponse): void {
+    if (!this.telemetryEnabled) return;
+
+    const usage = responseBody.usage;
+    logger.info("LLM usage", {
+      provider: "anthropic",
+      model: this.model,
+      kind,
+      input_tokens: usage?.input_tokens,
+      output_tokens: usage?.output_tokens,
+      total_tokens:
+        (usage?.input_tokens ?? 0) +
+        (usage?.output_tokens ?? 0) +
+        (usage?.cache_creation_input_tokens ?? 0) +
+        (usage?.cache_read_input_tokens ?? 0),
+      cache_creation_input_tokens: usage?.cache_creation_input_tokens,
+      cache_read_input_tokens: usage?.cache_read_input_tokens,
+    });
+
+    if (!this.traceEnabled) return;
+
+    logger.info("LLM trace", {
+      provider: "anthropic",
+      model: this.model,
+      kind,
+      request_preview: this.truncate(JSON.stringify(requestBody)),
+      response_preview: this.truncate(JSON.stringify(responseBody)),
+    });
+  }
+
+  private truncate(value: string): string {
+    if (value.length <= this.traceMaxChars) return value;
+    return `${value.slice(0, this.traceMaxChars)}...[truncated]`;
   }
 }

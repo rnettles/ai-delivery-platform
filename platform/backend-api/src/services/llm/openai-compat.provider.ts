@@ -11,6 +11,11 @@ import {
 } from "./llm-provider.interface";
 
 interface OpenAiCompletionResponse {
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  };
   choices: Array<{
     message: {
       content: string | null;
@@ -34,6 +39,9 @@ export class OpenAiCompatProvider implements LlmProvider {
   private readonly endpoint: string;
   private readonly apiKey: string;
   private readonly deployment: string;
+  private readonly telemetryEnabled = (process.env.LLM_TELEMETRY_ENABLED ?? "true") !== "false";
+  private readonly traceEnabled = (process.env.LLM_TRACE_ENABLED ?? "false") === "true";
+  private readonly traceMaxChars = Number(process.env.LLM_TRACE_MAX_CHARS ?? 6000);
 
   constructor(endpoint: string, apiKey: string, deployment: string) {
     this.endpoint = endpoint.replace(/\/$/, "");
@@ -48,6 +56,7 @@ export class OpenAiCompatProvider implements LlmProvider {
       max_tokens: options.max_tokens ?? 4096,
     };
     const data = await this.post(body);
+    this.logTelemetry("chat", body, data);
     const content = data.choices?.[0]?.message?.content;
     if (!content) throw new Error("OpenAI-compat provider returned an empty response");
     logger.info("LLM chat complete", { provider: "openai-compat", deployment: this.deployment, messages_count: messages.length });
@@ -62,6 +71,7 @@ export class OpenAiCompatProvider implements LlmProvider {
       response_format: { type: "json_object" },
     };
     const data = await this.post(body);
+    this.logTelemetry("chatJson", body, data);
     const content = data.choices?.[0]?.message?.content;
     if (!content) throw new Error("OpenAI-compat provider returned an empty response");
     logger.info("LLM chatJson complete", { provider: "openai-compat", deployment: this.deployment });
@@ -94,6 +104,7 @@ export class OpenAiCompatProvider implements LlmProvider {
       };
 
       const data = await this.post(body);
+      this.logTelemetry("chatWithTools", body, data);
       const choice = data.choices?.[0];
       if (!choice) throw new Error("OpenAI-compat provider returned no choices");
 
@@ -159,5 +170,34 @@ export class OpenAiCompatProvider implements LlmProvider {
     }
 
     return response.json() as Promise<OpenAiCompletionResponse>;
+  }
+
+  private logTelemetry(kind: "chat" | "chatJson" | "chatWithTools", requestBody: Record<string, unknown>, responseBody: OpenAiCompletionResponse): void {
+    if (!this.telemetryEnabled) return;
+
+    const usage = responseBody.usage;
+    logger.info("LLM usage", {
+      provider: "openai-compat",
+      deployment: this.deployment,
+      kind,
+      input_tokens: usage?.prompt_tokens,
+      output_tokens: usage?.completion_tokens,
+      total_tokens: usage?.total_tokens,
+    });
+
+    if (!this.traceEnabled) return;
+
+    logger.info("LLM trace", {
+      provider: "openai-compat",
+      deployment: this.deployment,
+      kind,
+      request_preview: this.truncate(JSON.stringify(requestBody)),
+      response_preview: this.truncate(JSON.stringify(responseBody)),
+    });
+  }
+
+  private truncate(value: string): string {
+    if (value.length <= this.traceMaxChars) return value;
+    return `${value.slice(0, this.traceMaxChars)}...[truncated]`;
   }
 }

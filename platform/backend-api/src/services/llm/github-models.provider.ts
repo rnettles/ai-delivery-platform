@@ -11,6 +11,11 @@ import {
 } from "./llm-provider.interface";
 
 interface OpenAiCompletionResponse {
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  };
   choices: Array<{
     message: {
       content: string | null;
@@ -41,6 +46,9 @@ export class GitHubModelsProvider implements LlmProvider {
   private readonly apiKey: string;
   private readonly model: string;
   private readonly endpoint = "https://models.inference.ai.azure.com/chat/completions";
+  private readonly telemetryEnabled = (process.env.LLM_TELEMETRY_ENABLED ?? "true") !== "false";
+  private readonly traceEnabled = (process.env.LLM_TRACE_ENABLED ?? "false") === "true";
+  private readonly traceMaxChars = Number(process.env.LLM_TRACE_MAX_CHARS ?? 6000);
 
   constructor(apiKey: string, model: string) {
     this.apiKey = apiKey;
@@ -50,6 +58,7 @@ export class GitHubModelsProvider implements LlmProvider {
   async chat(messages: ChatMessage[], options: ChatOptions = {}): Promise<string> {
     const body = this.buildBody(messages, { options });
     const data = await this.post(body);
+    this.logTelemetry("chat", body, data);
     const content = data.choices?.[0]?.message?.content;
     if (!content) throw new Error("GitHub Models provider returned an empty response");
     logger.info("LLM chat complete", { provider: "github-models", model: this.model, messages_count: messages.length });
@@ -59,6 +68,7 @@ export class GitHubModelsProvider implements LlmProvider {
   async chatJson<T = Record<string, unknown>>(messages: ChatMessage[], options: ChatOptions = {}): Promise<T> {
     const body = this.buildBody(messages, { options, responseFormat: "json_object" });
     const data = await this.post(body);
+    this.logTelemetry("chatJson", body, data);
     const content = data.choices?.[0]?.message?.content;
     if (!content) throw new Error("GitHub Models provider returned an empty response");
     logger.info("LLM chatJson complete", { provider: "github-models", model: this.model });
@@ -88,6 +98,7 @@ export class GitHubModelsProvider implements LlmProvider {
       });
 
       const data = await this.post(body);
+      this.logTelemetry("chatWithTools", body, data);
       const choice = data.choices?.[0];
       if (!choice) throw new Error("GitHub Models provider returned no choices");
 
@@ -175,5 +186,34 @@ export class GitHubModelsProvider implements LlmProvider {
     }
 
     return response.json() as Promise<OpenAiCompletionResponse>;
+  }
+
+  private logTelemetry(kind: "chat" | "chatJson" | "chatWithTools", requestBody: Record<string, unknown>, responseBody: OpenAiCompletionResponse): void {
+    if (!this.telemetryEnabled) return;
+
+    const usage = responseBody.usage;
+    logger.info("LLM usage", {
+      provider: "github-models",
+      model: this.model,
+      kind,
+      input_tokens: usage?.prompt_tokens,
+      output_tokens: usage?.completion_tokens,
+      total_tokens: usage?.total_tokens,
+    });
+
+    if (!this.traceEnabled) return;
+
+    logger.info("LLM trace", {
+      provider: "github-models",
+      model: this.model,
+      kind,
+      request_preview: this.truncate(JSON.stringify(requestBody)),
+      response_preview: this.truncate(JSON.stringify(responseBody)),
+    });
+  }
+
+  private truncate(value: string): string {
+    if (value.length <= this.traceMaxChars) return value;
+    return `${value.slice(0, this.traceMaxChars)}...[truncated]`;
   }
 }

@@ -269,6 +269,9 @@ This transitions from Phase 1 (bundled governance) to Phase 2 (Azure Files runti
 | `GIT_CLONE_PATH` | No | Defaults to `/mnt/repo` |
 | `DATABASE_URL` | Yes | Postgres connection string |
 | `N8N_CALLBACK_URL` | Yes | n8n webhook URL for pipeline notifications |
+| `LLM_TELEMETRY_ENABLED` | No | Defaults to `true`. Emits structured `LLM usage` logs with token counters when provider returns usage fields |
+| `LLM_TRACE_ENABLED` | No | Defaults to `false`. When `true`, emits `LLM trace` logs with request/response previews |
+| `LLM_TRACE_MAX_CHARS` | No | Defaults to `6000`. Max characters logged per request/response preview |
 
 ### n8n Environment Variables
 
@@ -334,6 +337,64 @@ If manifest import is unavailable, create from scratch and configure the same va
 - Slash command URL: `https://<n8n-host>/webhook/slack-events`
 - Interactivity URL: `https://<n8n-host>/webhook/slack-actions`
 - Scopes: `commands`, `chat:write`
+
+---
+
+## LLM Token And Payload Inspection
+
+Use this section when token usage spikes or role execution appears stalled.
+
+### 1. Enable Telemetry and Trace
+
+Set these env vars on the execution-service container app:
+
+- `LLM_TELEMETRY_ENABLED=true`
+- `LLM_TRACE_ENABLED=true` (temporary for investigation)
+- `LLM_TRACE_MAX_CHARS=12000` (reduce if logs become too noisy)
+
+Keep `LLM_TRACE_ENABLED=false` during normal operation to limit log volume and avoid long-lived prompt/response traces.
+
+### 2. Identify The Pipeline
+
+Capture the pipeline id from Slack (`/adp-status`) or API.
+Use this value as `correlation_id` when querying execution records.
+
+### 3. Stream LLM Usage And Trace Logs
+
+```powershell
+az containerapp logs show --name isdev-ai-orch-dev-execution --resource-group isdev_rg --follow 2>&1 |
+	Select-String -Pattern 'LLM usage|LLM trace|rate limited'
+```
+
+Expected events:
+
+- `LLM usage`: `provider`, `model` or `deployment`, `kind`, `input_tokens`, `output_tokens`, `total_tokens`
+- `LLM trace`: `request_preview` and `response_preview` (truncated)
+- `rate limited`: provider throttling/backoff details
+
+### 4. Pull Execution Records For The Same Pipeline
+
+```powershell
+$base = "https://<execution-service-fqdn>"
+$headers = @{"x-api-key"="<API_KEY>"}
+$pipelineId = "pipe-2026-04-20-xxxxxxxx"
+
+Invoke-RestMethod -Uri "$base/executions?correlation_id=$pipelineId&limit=50" -Headers $headers |
+	ConvertTo-Json -Depth 8
+```
+
+Each execution record contains role-level `input`, `output`, `errors`, and `duration_ms`.
+Correlate these records with `LLM usage` logs to identify which role/model consumed most tokens.
+
+### 5. Quick Triage Pattern
+
+- High `input_tokens` plus repeated `chatWithTools`: prompt/context growth
+- Repeated `rate limited`: provider throttling, not necessarily service failure
+- High `total_tokens` isolated to Implementer: reduce tool-loop scope, tighten max iterations, and cut tool output size
+
+### 6. Disable Trace After Incident
+
+Set `LLM_TRACE_ENABLED=false` and redeploy/restart the execution-service.
 
 ---
 
