@@ -365,6 +365,115 @@ describe("PipelineService", () => {
       expect(run.status).toBe("running");
     });
 
+    it("mode=full-sprint, entry=sprint-controller: verifier PASS routes to sprint-controller (not complete)", async () => {
+      const verifierRow = makeRow({
+        entry_point: "sprint-controller",
+        current_step: "verifier",
+        status: "running",
+        metadata: { source: "slack", execution_mode: "full-sprint" },
+        steps: [
+          { role: "planner", status: "not_applicable", gate_outcome: null, artifact_paths: [], actor: "system", started_at: "2026-04-19T00:00:00.000Z" },
+          { role: "sprint-controller", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T00:00:00.000Z", completed_at: "2026-04-19T01:00:00.000Z" },
+          { role: "implementer", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T01:00:00.000Z", completed_at: "2026-04-19T02:00:00.000Z" },
+          { role: "verifier", status: "running", gate_outcome: null, artifact_paths: [], actor: "system", started_at: "2026-04-19T02:00:00.000Z" },
+        ],
+      });
+
+      mocks.selectWhere.mockResolvedValueOnce([verifierRow]);
+      const savedRow = makeRow({ current_step: "sprint-controller", status: "running" });
+      mocks.updateReturning.mockResolvedValueOnce([savedRow]);
+
+      const run = await service.completeStep(
+        "pipe-2026-04-19-test1234",
+        "verifier",
+        "exec-007",
+        ["artifacts/verification_result.json"],
+        false,
+        true // verificationPassed
+      );
+
+      // full-sprint: routes back to sprint-controller for close-out (not complete)
+      expect(run.current_step).toBe("sprint-controller");
+      expect(run.status).toBe("running");
+    });
+
+    it("mode=full-sprint, entry=planner: verifier PASS routes to sprint-controller (not complete)", async () => {
+      const verifierRow = makeRow({
+        entry_point: "planner",
+        current_step: "verifier",
+        status: "running",
+        metadata: { source: "slack", execution_mode: "full-sprint" },
+        steps: [
+          { role: "planner", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T00:00:00.000Z", completed_at: "2026-04-19T01:00:00.000Z" },
+          { role: "sprint-controller", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T01:00:00.000Z", completed_at: "2026-04-19T02:00:00.000Z" },
+          { role: "implementer", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T02:00:00.000Z", completed_at: "2026-04-19T03:00:00.000Z" },
+          { role: "verifier", status: "running", gate_outcome: null, artifact_paths: [], actor: "system", started_at: "2026-04-19T03:00:00.000Z" },
+        ],
+      });
+
+      mocks.selectWhere.mockResolvedValueOnce([verifierRow]);
+      const savedRow = makeRow({ current_step: "sprint-controller", status: "running" });
+      mocks.updateReturning.mockResolvedValueOnce([savedRow]);
+
+      const run = await service.completeStep(
+        "pipe-2026-04-19-test1234",
+        "verifier",
+        "exec-008",
+        ["artifacts/verification_result.json"],
+        false,
+        true // verificationPassed
+      );
+
+      expect(run.current_step).toBe("sprint-controller");
+      expect(run.status).toBe("running");
+    });
+
+    it("mode=full-sprint: sprint-controller close-out transitions to awaiting_pr_review", async () => {
+      const sprintControllerRow = makeRow({
+        entry_point: "sprint-controller",
+        current_step: "sprint-controller",
+        status: "running",
+        metadata: { source: "slack", execution_mode: "full-sprint" },
+        steps: [
+          { role: "planner", status: "not_applicable", gate_outcome: null, artifact_paths: [], actor: "system", started_at: "2026-04-19T00:00:00.000Z" },
+          { role: "sprint-controller", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T00:00:00.000Z", completed_at: "2026-04-19T01:00:00.000Z" },
+          { role: "implementer", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T01:00:00.000Z", completed_at: "2026-04-19T02:00:00.000Z" },
+          { role: "verifier", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T02:00:00.000Z", completed_at: "2026-04-19T03:00:00.000Z" },
+          { role: "sprint-controller", status: "running", gate_outcome: null, artifact_paths: [], actor: "system", started_at: "2026-04-19T03:00:00.000Z" },
+        ],
+      });
+
+      mocks.selectWhere.mockResolvedValueOnce([sprintControllerRow]);
+      const savedRow = makeRow({ current_step: "complete", status: "awaiting_pr_review" });
+      mocks.updateReturning.mockResolvedValueOnce([savedRow]);
+
+      const run = await service.completeStep(
+        "pipe-2026-04-19-test1234",
+        "sprint-controller",
+        "exec-009",
+        ["artifacts/sprint_closeout.json"],
+        false
+      );
+
+      // Sprint close-out: verifier was previously complete → open PR and await review
+      expect(run.status).toBe("awaiting_pr_review");
+    });
+
+    it("creates pipeline with caller_context_stack initialized to entry_point", async () => {
+      const row = makeRow();
+      mocks.insertReturning.mockResolvedValueOnce([row]);
+
+      await service.create({
+        entry_point: "planner",
+        input: {},
+        metadata: { source: "slack" },
+      });
+
+      const insertCall = mocks.db.insert.mock.results[0]?.value as { values: ReturnType<typeof vi.fn> };
+      const valuesCall = insertCall?.values?.mock?.calls?.[0]?.[0] as Record<string, unknown> | undefined;
+      expect((valuesCall?.metadata as Record<string, unknown>)?.caller_context_stack).toEqual(["planner"]);
+    });
+
     it("throws 409 if step is not in running status", async () => {
       mocks.selectWhere.mockResolvedValueOnce([
         makeRow({

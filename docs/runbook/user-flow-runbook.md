@@ -42,7 +42,7 @@ n8n Action Handler  →  POST /pipeline/:id/{approve|takeover|skip}  →  Execut
 `mode` values:
 - `next` (default): run only the entry role, then stop
 - `next-flow`: continue downstream flow; non-planner entry points stop on Verifier PASS
-- `full-sprint`: full sprint flow (currently same downstream behavior as `next-flow`)
+- `full-sprint`: full sprint flow — chains all the way through Verifier PASS to Sprint Controller close-out (PR), regardless of entry point
 
 > **Pipeline IDs** are shown in every notification message, e.g. `pipe-2026-04-19-abc12345`.
 
@@ -221,3 +221,58 @@ The Execution Service may not have the correct `N8N_CALLBACK_URL`. Verify the `N
 | Check code against requirements | `/verify [mode] [task-id]` | `verifier` |
 
 Each entry point picks up from its position in the pipeline. Agents downstream of the entry point run in sequence; agents upstream are skipped.
+
+---
+
+## Role Command Mode Matrix
+
+The execution mode controls how far downstream a pipeline propagates after the entry role completes.
+
+| Entry point | `next` | `next-flow` | `full-sprint` |
+|---|---|---|---|
+| `planner` | Planner only → stop | Planner → Sprint Controller → Implementer → Verifier → stop | Planner → Sprint Controller → Implementer → Verifier → Sprint close-out (PR) |
+| `sprint-controller` | Sprint Controller only → stop | Sprint Controller → Implementer → Verifier → stop | Sprint Controller → Implementer → Verifier → Sprint close-out (PR) |
+| `implementer` | Implementer only → stop | Implementer → Verifier → stop | Implementer → Verifier → Sprint close-out (PR) |
+| `verifier` | Verifier only → stop | Verifier → stop on PASS | Verifier → Sprint close-out (PR) on PASS |
+
+**Verifier FAIL** always routes back to Implementer for a retry, regardless of mode, up to 3 total attempts before cancellation.
+
+**Sprint close-out** = Sprint Controller opens a PR on the feature branch and transitions the pipeline to `awaiting_pr_review`.
+
+---
+
+## Reporting Lifecycle
+
+Every pipeline run uses a **hybrid async reporting model**: immediate acknowledgement, rolling progress updates, and a single terminal summary.
+
+```
+1. Immediate ACK (synchronous, < 1s)
+   ─────────────────────────────────
+   POST /pipeline → 202 Accepted  (pipeline_id + status: running)
+   Slack n8n ingress relays this back to the user before any agent work begins.
+
+2. Progress Updates (asynchronous, during execution)
+   ─────────────────────────────────────────────────
+   Each agent role may emit progress events via context.notify().
+   These POST to /webhook/pipeline-notify in n8n, which posts context blocks
+   to the Slack thread (no buttons).
+
+   Examples:
+   ⚙️ Breaking phase plan into sprint tasks...
+   🎯 First task identified: TASK-AUTH-001 — Add JWT refresh token support
+   🌿 Branch feature/task-auth-001-sprint-s01 created and ready
+   📝 Writing src/auth/refresh.service.ts
+
+3. Terminal Summary (on pipeline reaching a terminal state)
+   ─────────────────────────────────────────────────────────
+   Triggered when pipeline status becomes:
+     complete, awaiting_approval, awaiting_pr_review, failed, cancelled
+
+   The summary includes:
+   - Status icon and human-readable status
+   - Current step and artifact list (where applicable)
+   - Action buttons (Approve, Take Over, Skip) for interactive states
+   - Sprint PR link for awaiting_pr_review
+```
+
+**Thread continuity**: all notifications post to `slack_thread_ts` captured from the originating command. This ensures all progress for a pipeline appears as a single collapsible thread, not a flood of top-level messages.

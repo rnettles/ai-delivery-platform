@@ -195,10 +195,13 @@ export class PipelineService {
       ...req.metadata,
     };
 
-    // Persist execution mode so completeStep can read it for downstream chaining decisions.
+    // Persist execution mode and caller-context stack so completeStep can make deterministic
+    // downstream chaining decisions (ADR-022).
     if (req.execution_mode) {
       metadata.execution_mode = req.execution_mode;
     }
+    // Caller-context stack: tracks the originating entry_point for nested flow return semantics.
+    metadata.caller_context_stack = [req.entry_point];
 
     // Resolve project from Slack channel or fall back to default (ADR-027).
     // Keep create() resilient when project tables are unavailable (e.g., unit-test mocks).
@@ -365,13 +368,13 @@ export class PipelineService {
       return this.save(run, { current_step: "implementer", status: "running", steps, implementer_attempts: attempts });
     }
 
-    // ── Execution mode: "next-flow" / "full-sprint" (non-planner entry) ────────
-    // Verifier PASS is the terminal success state for these modes.
-    // Sprint close-out (PR creation) is reserved for planner-initiated full pipelines.
+    // ── Execution mode: "next-flow" (non-planner entry) ─────────────────────────
+    // Verifier PASS is the terminal success state for next-flow with a non-planner entry.
+    // Sprint close-out (PR creation) is reserved for planner or full-sprint initiated flows.
     if (
       role === "verifier" &&
       verificationPassed !== false &&
-      (executionMode === "next-flow" || executionMode === "full-sprint") &&
+      executionMode === "next-flow" &&
       run.entry_point !== "planner"
     ) {
       logger.info("Pipeline stopping after verifier PASS (mode=next-flow, non-planner entry)", {
@@ -380,6 +383,22 @@ export class PipelineService {
         execution_mode: executionMode,
       });
       return this.save(run, { current_step: "complete", status: "complete", steps });
+    }
+
+    // ── Execution mode: "full-sprint" ──────────────────────────────────────────
+    // After verifier PASS, route back to sprint-controller for close-out (PR creation).
+    // This applies regardless of entry_point — full-sprint always completes the sprint.
+    if (
+      role === "verifier" &&
+      verificationPassed !== false &&
+      executionMode === "full-sprint"
+    ) {
+      logger.info("Verifier PASS in full-sprint mode — routing to sprint-controller close-out", {
+        pipeline_id: run.pipeline_id,
+        entry_point: run.entry_point,
+      });
+      steps.push(this.newRunningStep("sprint-controller", now));
+      return this.save(run, { current_step: "sprint-controller", status: "running", steps });
     }
 
     // Sprint Controller close-out: verifier already passed → open PR, await review (ADR-030)

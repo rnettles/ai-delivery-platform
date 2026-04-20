@@ -89,6 +89,49 @@ describe("Pipeline HTTP routes", () => {
       const res = await request(app).post("/pipeline").send({});
       expect(res.status).toBe(400);
     });
+
+    it("returns 202 immediately (async ACK) without waiting for execution to finish", async () => {
+      vi.mocked(pipelineService.create).mockResolvedValueOnce(mockRun as never);
+      // Execution runs async — simulate a slow execution that should NOT block the 202
+      const { executionService } = await import("../services/execution.service");
+      vi.mocked(executionService.execute).mockImplementation(
+        () => new Promise((resolve) => setTimeout(() => resolve({ execution_id: "exec-slow" } as never), 5000))
+      );
+
+      const start = Date.now();
+      const res = await request(app)
+        .post("/pipeline")
+        .send({ entry_point: "planner", input: { description: "Build a widget" } });
+      const elapsed = Date.now() - start;
+
+      expect(res.status).toBe(202);
+      // Response should arrive well before the slow execution resolves
+      expect(elapsed).toBeLessThan(3000);
+    });
+
+    it("forwards execution_mode to pipelineService.create", async () => {
+      vi.mocked(pipelineService.create).mockResolvedValueOnce(mockRun as never);
+
+      await request(app)
+        .post("/pipeline")
+        .send({ entry_point: "implementer", execution_mode: "next-flow", input: {} });
+
+      expect(pipelineService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ entry_point: "implementer", execution_mode: "next-flow" })
+      );
+    });
+
+    it("forwards full-sprint mode to pipelineService.create", async () => {
+      vi.mocked(pipelineService.create).mockResolvedValueOnce(mockRun as never);
+
+      await request(app)
+        .post("/pipeline")
+        .send({ entry_point: "sprint-controller", execution_mode: "full-sprint", input: {} });
+
+      expect(pipelineService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ entry_point: "sprint-controller", execution_mode: "full-sprint" })
+      );
+    });
   });
 
   // ── GET /pipeline/:pipelineId ──────────────────────────────────────────────
