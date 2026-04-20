@@ -171,6 +171,10 @@ class ProjectGitService {
       ...process.env,
       GIT_TERMINAL_PROMPT: "0",
       GIT_ASKPASS: "echo",
+      GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME ?? "AI Delivery Agent",
+      GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL ?? "ai-agent@ai-delivery-platform.com",
+      GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME ?? "AI Delivery Agent",
+      GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL ?? "ai-agent@ai-delivery-platform.com",
     };
   }
 }

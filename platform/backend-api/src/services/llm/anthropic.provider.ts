@@ -196,9 +196,13 @@ export class AnthropicProvider implements LlmProvider {
       const text = await response.text();
       if (response.status === 429 && attempt < maxAttempts) {
         const retryAfterSeconds = Number(response.headers.get("retry-after") ?? "0");
-        const inputReset = Number(response.headers.get("anthropic-ratelimit-input-tokens-reset") ?? "0");
-        const outputReset = Number(response.headers.get("anthropic-ratelimit-output-tokens-reset") ?? "0");
-        const resetMs = Math.max(retryAfterSeconds * 1000, inputReset * 1000, outputReset * 1000, 5000);
+        // Reset headers are ISO 8601 timestamps, not seconds — parse as Date
+        const now = Date.now();
+        const inputResetHeader = response.headers.get("anthropic-ratelimit-input-tokens-reset");
+        const outputResetHeader = response.headers.get("anthropic-ratelimit-output-tokens-reset");
+        const inputResetMs = inputResetHeader ? Math.max(0, new Date(inputResetHeader).getTime() - now) : 0;
+        const outputResetMs = outputResetHeader ? Math.max(0, new Date(outputResetHeader).getTime() - now) : 0;
+        const resetMs = Math.max(retryAfterSeconds * 1000, inputResetMs, outputResetMs, 5_000);
 
         logger.info("Anthropic rate limited, retrying", {
           model: this.model,
