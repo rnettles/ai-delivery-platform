@@ -66,6 +66,12 @@ export class ExecutionService {
 			const completedAt = Date.now();
 			const message = error instanceof Error ? error.message : String(error);
 			const code = error instanceof HttpError ? error.code : "EXECUTION_ERROR";
+			logger.error("execution failed", {
+				execution_id: executionId,
+				script: `${resolvedTarget.name}@${resolvedTarget.version}`,
+				error: message,
+				stack: error instanceof Error ? error.stack : undefined,
+			});
 			const details = error instanceof HttpError ? error.details : undefined;
 
 			const record: ExecutionRecord = {
