@@ -59,6 +59,26 @@ export async function getPipeline(req: Request, res: Response, next: NextFunctio
   }
 }
 
+export async function getPipelineStatusSummary(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const pipelineId = String(req.params.pipelineId);
+    const summary = await pipelineService.getStatusSummary(pipelineId);
+    res.status(200).json(summary);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function getCurrentPipelineStatusSummary(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const channelId = typeof req.query.channel_id === "string" ? req.query.channel_id : undefined;
+    const summary = await pipelineService.getCurrentStatusSummary(channelId);
+    res.status(200).json(summary);
+  } catch (error) {
+    next(error);
+  }
+}
+
 export async function approvePipeline(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const pipelineId = String(req.params.pipelineId);

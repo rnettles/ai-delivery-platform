@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { eq } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { pipelineRuns } from "../db/schema";
 import {
@@ -17,6 +17,30 @@ import {
 import { HttpError } from "../utils/http-error";
 import { logger } from "./logger.service";
 import { projectService } from "./project.service";
+import { executionRecordModel } from "../domain/execution.model";
+
+export interface PipelineStatusSummary extends PipelineRun {
+  repo_url?: string;
+  last_error?: { code: string; message: string; details?: unknown };
+  prior_step_detail?: PipelineStepRecord;
+  current_step_detail?: PipelineStepRecord;
+}
+
+export interface PipelineStatusChoice {
+  pipeline_id: string;
+  status: PipelineStatus;
+  current_step: PipelineRole | "complete";
+  current_actor?: string;
+  project_id?: string;
+  repo_url?: string;
+  sprint_branch?: string;
+  updated_at: string;
+}
+
+export type CurrentPipelineStatusResult =
+  | { kind: "none"; message: string }
+  | { kind: "single"; run: PipelineStatusSummary }
+  | { kind: "multiple"; runs: PipelineStatusChoice[] };
 
 // Ordered pipeline role sequence
 const ROLE_SEQUENCE: PipelineRole[] = [
@@ -446,6 +470,133 @@ export class PipelineService {
     });
 
     return rowToRun(row);
+  }
+
+  // ─── STATUS SUMMARY ───────────────────────────────────────────────────────
+
+  async getStatusSummary(pipelineId: string): Promise<PipelineStatusSummary> {
+    const run = await this.get(pipelineId);
+    const summary: PipelineStatusSummary = { ...run };
+
+    // Enrich with repo URL from linked project
+    if (run.project_id) {
+      try {
+        const project = await projectService.getById(run.project_id);
+        if (project) {
+          summary.repo_url = project.repo_url;
+        }
+      } catch {
+        // non-fatal — project may be unavailable
+      }
+    }
+
+    // Identify current and prior step records (use last occurrence of each role)
+    const activeSteps = run.steps.filter((s) => s.status !== "not_applicable");
+    const currentStepRecord = activeSteps
+      .slice()
+      .reverse()
+      .find((s) => s.role === run.current_step || s.status === "running" || s.status === "failed");
+    const priorStepRecord = activeSteps
+      .slice()
+      .reverse()
+      .find((s) => s !== currentStepRecord && (s.status === "complete" || s.status === "failed"));
+
+    if (currentStepRecord) summary.current_step_detail = currentStepRecord;
+    if (priorStepRecord) summary.prior_step_detail = priorStepRecord;
+
+    // Extract last error from most recent failed step's execution record
+    const failedStep = run.steps
+      .slice()
+      .reverse()
+      .find((s) => s.status === "failed" && s.execution_id);
+
+    if (failedStep?.execution_id) {
+      try {
+        const record = await executionRecordModel.getById(failedStep.execution_id);
+        if (record && record.errors && record.errors.length > 0) {
+          const { code, message, details } = record.errors[0];
+          summary.last_error = { code, message, details };
+        }
+      } catch {
+        // non-fatal
+      }
+    }
+
+    return summary;
+  }
+
+  async getCurrentStatusSummary(channelId?: string): Promise<CurrentPipelineStatusResult> {
+    const activeStatuses: PipelineStatus[] = [
+      "running",
+      "awaiting_approval",
+      "awaiting_pr_review",
+      "paused_takeover",
+    ];
+
+    const whereClause = channelId
+      ? and(
+          inArray(pipelineRuns.status, activeStatuses),
+          sql`${pipelineRuns.metadata} ->> 'slack_channel' = ${channelId}`
+        )
+      : inArray(pipelineRuns.status, activeStatuses);
+
+    const rows = await db
+      .select()
+      .from(pipelineRuns)
+      .where(whereClause)
+      .orderBy(desc(pipelineRuns.updated_at));
+
+    if (rows.length === 0) {
+      return {
+        kind: "none",
+        message: channelId
+          ? "No active pipelines found for this Slack channel."
+          : "No active pipelines found.",
+      };
+    }
+
+    if (rows.length === 1) {
+      return {
+        kind: "single",
+        run: await this.getStatusSummary(rows[0].pipeline_id),
+      };
+    }
+
+    const runs: PipelineStatusChoice[] = await Promise.all(
+      rows.map(async (row) => {
+        const run = rowToRun(row);
+
+        let repoUrl: string | undefined;
+        if (run.project_id) {
+          try {
+            const project = await projectService.getById(run.project_id);
+            repoUrl = project?.repo_url;
+          } catch {
+            // non-fatal
+          }
+        }
+
+        const currentStepDetail = run.steps
+          .slice()
+          .reverse()
+          .find((s) =>
+            s.role === run.current_step || s.status === "running" || s.status === "failed"
+          );
+
+        return {
+          pipeline_id: run.pipeline_id,
+          status: run.status,
+          current_step: run.current_step,
+          current_actor: currentStepDetail?.actor,
+          project_id: run.project_id,
+          repo_url: repoUrl,
+          sprint_branch: run.sprint_branch,
+          updated_at: run.updated_at,
+        };
+      })
+    );
+
+    return { kind: "multiple", runs };
   }
 }
 
