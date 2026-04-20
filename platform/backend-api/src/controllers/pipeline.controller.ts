@@ -20,7 +20,7 @@ export async function createPipeline(req: Request, res: Response, next: NextFunc
   try {
     const body = req.body as Partial<CreatePipelineRequest>;
 
-    const validRoles: PipelineRole[] = ["planner", "sprint-controller", "implementer", "verifier", "fixer"];
+    const validRoles: PipelineRole[] = ["planner", "sprint-controller", "implementer", "verifier"];
     const entryPoint = body.entry_point;
 
     if (!entryPoint || !validRoles.includes(entryPoint)) {

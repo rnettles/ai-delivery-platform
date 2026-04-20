@@ -89,6 +89,36 @@ export const executionRecords = pgTable(
   })
 );
 
+// Projects — one row per managed codebase (ADR-027)
+export const projects = pgTable(
+  "projects",
+  {
+    project_id: uuid("project_id").primaryKey().notNull(),
+    name: text("name").notNull().unique(),
+    repo_url: text("repo_url").notNull(),
+    default_branch: text("default_branch").notNull().default("main"),
+    clone_path: text("clone_path").notNull(), // e.g. /mnt/repo/{name}/
+    created_at: timestamp("created_at").defaultNow().notNull(),
+    updated_at: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    nameIdx: index("idx_projects_name").on(table.name),
+  })
+);
+
+// Project channel mappings — associates a Slack channel with a project (ADR-027)
+export const projectChannels = pgTable(
+  "project_channels",
+  {
+    channel_id: text("channel_id").primaryKey().notNull(), // Slack channel ID (1:1 with project)
+    project_id: uuid("project_id").notNull().references(() => projects.project_id),
+    created_at: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    projectIdx: index("idx_project_channels_project").on(table.project_id),
+  })
+);
+
 // Pipeline runs — one row per pipeline execution
 export const pipelineRuns = pgTable(
   "pipeline_runs",
@@ -96,7 +126,16 @@ export const pipelineRuns = pgTable(
     pipeline_id: text("pipeline_id").primaryKey().notNull(),
     entry_point: text("entry_point").notNull(),
     current_step: text("current_step").notNull(),
-    status: text("status").notNull(),
+    status: text("status").notNull(), // includes: awaiting_pr_review
+    // project linkage (ADR-027) — null for legacy/default-project runs
+    project_id: uuid("project_id").references(() => projects.project_id),
+    // sprint branch created by Sprint Controller (ADR-030)
+    sprint_branch: text("sprint_branch"),
+    // GitHub PR tracking (ADR-030)
+    pr_number: integer("pr_number"),
+    pr_url: text("pr_url"),
+    // implementer retry count (ADR-030) — max 3 attempts
+    implementer_attempts: integer("implementer_attempts").notNull().default(0),
     // steps: full ordered history of step records (jsonb array)
     steps: jsonb("steps").notNull().$type<object[]>().default([]),
     // metadata: slack_channel, slack_user, slack_thread_ts, source, etc.
@@ -109,5 +148,6 @@ export const pipelineRuns = pgTable(
   (table) => ({
     statusIdx: index("idx_pipeline_runs_status").on(table.status),
     channelIdx: index("idx_pipeline_runs_channel").on(table.metadata),
+    projectIdx: index("idx_pipeline_runs_project").on(table.project_id),
   })
 );

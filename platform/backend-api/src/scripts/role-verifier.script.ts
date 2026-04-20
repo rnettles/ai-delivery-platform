@@ -1,5 +1,5 @@
 import { Script, ScriptExecutionContext } from "./script.interface";
-import { azureOpenAiService } from "../services/azure-openai.service";
+import { llmFactory } from "../services/llm/llm-factory.service";
 import { artifactService } from "../services/artifact.service";
 import { governanceService } from "../services/governance.service";
 
@@ -96,7 +96,8 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
       : "No artifacts available. Return FAIL with 'No implementation artifacts found' as the correction.";
 
     const systemPrompt = await governanceService.getPrompt("verifier");
-    const llm = await azureOpenAiService.chatJson<LlmResponse>([
+    const provider = await llmFactory.forRole("verifier");
+    const llm = await provider.chatJson<LlmResponse>([
       { role: "system", content: systemPrompt },
       { role: "user", content: userContent },
     ]);

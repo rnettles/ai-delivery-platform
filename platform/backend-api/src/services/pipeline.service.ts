@@ -23,18 +23,13 @@ const ROLE_SEQUENCE: PipelineRole[] = [
   "sprint-controller",
   "implementer",
   "verifier",
-  "fixer",
 ];
 
-// Roles that require a human gate before advancing
-const GATED_ROLES = new Set<PipelineRole>([
-  "planner",
-  "sprint-controller",
-  "implementer",
-]);
+// Roles that require a human gate before advancing (ADR-030: gates removed for autonomous sprint)
+const GATED_ROLES = new Set<PipelineRole>([]);
 
-// Maximum number of completed fixer attempts before the pipeline is cancelled
-const MAX_FIXER_ATTEMPTS = 3;
+// Maximum number of Implementer attempts (initial + retries) before escalation (ADR-030)
+const MAX_IMPLEMENTER_ATTEMPTS = 3;
 
 // Roles that have a "next" in the default happy path
 const NEXT_ROLE: Partial<Record<PipelineRole, PipelineRole>> = {
@@ -42,7 +37,6 @@ const NEXT_ROLE: Partial<Record<PipelineRole, PipelineRole>> = {
   "sprint-controller": "implementer",
   implementer: "verifier",
   verifier: "sprint-controller", // close-out pass
-  fixer: "verifier",             // fixer always re-verifies
 };
 
 function nextRoleAfter(role: PipelineRole): PipelineRole | "complete" {
@@ -57,6 +51,11 @@ function rowToRun(row: typeof pipelineRuns.$inferSelect): PipelineRun {
     status: row.status as PipelineStatus,
     steps: (row.steps as PipelineStepRecord[]) ?? [],
     metadata: (row.metadata as PipelineRun["metadata"]) ?? { source: "api" },
+    project_id: row.project_id ?? undefined,
+    sprint_branch: row.sprint_branch ?? undefined,
+    pr_number: row.pr_number ?? undefined,
+    pr_url: row.pr_url ?? undefined,
+    implementer_attempts: row.implementer_attempts ?? 0,
     created_at: row.created_at.toISOString(),
     updated_at: row.updated_at.toISOString(),
   };
@@ -106,6 +105,7 @@ export class PipelineService {
         steps: steps as object[],
         metadata: metadata as Record<string, unknown>,
         input: (req.input ?? {}) as Record<string, unknown>,
+        implementer_attempts: 0,
         created_at: new Date(),
         updated_at: new Date(),
       })
@@ -192,18 +192,18 @@ export class PipelineService {
       });
     }
 
-    // Verifier FAIL: route to fixer with circuit-breaker
+    // Verifier FAIL: route back to Implementer with retry context (ADR-030)
     if (role === "verifier" && verificationPassed === false) {
-      const fixerAttempts = steps.filter((s) => s.role === "fixer" && s.status === "complete").length;
-      if (fixerAttempts >= MAX_FIXER_ATTEMPTS) {
-        logger.warn("Fixer loop limit reached — cancelling pipeline", {
+      const attempts = (run.implementer_attempts ?? 0) + 1;
+      if (attempts >= MAX_IMPLEMENTER_ATTEMPTS) {
+        logger.info("Implementer retry limit reached — cancelling pipeline", {
           pipeline_id: run.pipeline_id,
-          fixer_attempts: fixerAttempts,
+          implementer_attempts: attempts,
         });
         return this.save(run, { current_step: role, status: "cancelled", steps });
       }
-      steps.push(this.newRunningStep("fixer", now));
-      return this.save(run, { current_step: "fixer", status: "running", steps });
+      steps.push(this.newRunningStep("implementer", now));
+      return this.save(run, { current_step: "implementer", status: "running", steps, implementer_attempts: attempts });
     }
 
     // Auto-advance
@@ -354,7 +354,7 @@ export class PipelineService {
 
   private async save(
     run: PipelineRun,
-    patch: Partial<Pick<PipelineRun, "current_step" | "status" | "steps">>
+    patch: Partial<Pick<PipelineRun, "current_step" | "status" | "steps" | "sprint_branch" | "pr_number" | "pr_url" | "implementer_attempts">>
   ): Promise<PipelineRun> {
     const [row] = await db
       .update(pipelineRuns)
@@ -362,6 +362,10 @@ export class PipelineService {
         current_step: patch.current_step ?? run.current_step,
         status: patch.status ?? run.status,
         steps: (patch.steps ?? run.steps) as object[],
+        ...(patch.sprint_branch !== undefined ? { sprint_branch: patch.sprint_branch } : {}),
+        ...(patch.pr_number !== undefined ? { pr_number: patch.pr_number } : {}),
+        ...(patch.pr_url !== undefined ? { pr_url: patch.pr_url } : {}),
+        ...(patch.implementer_attempts !== undefined ? { implementer_attempts: patch.implementer_attempts } : {}),
         updated_at: new Date(),
       })
       .where(eq(pipelineRuns.pipeline_id, run.pipeline_id))

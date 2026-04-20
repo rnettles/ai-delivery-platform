@@ -22,4 +22,10 @@ export const config = {
   gitClonePath: process.env.GIT_CLONE_PATH ?? "/mnt/repo",
   // API authentication — required in all non-development environments
   apiKey: process.env.API_KEY ?? "",
+  // LLM providers (ADR-029) — OpenAI-compatible (Azure OpenAI, OpenAI, GitHub Models)
+  llmOpenAiCompatEndpoint: process.env.LLM_OPENAI_COMPAT_ENDPOINT ?? process.env.AZURE_OPENAI_ENDPOINT ?? "",
+  llmOpenAiCompatApiKey: process.env.LLM_OPENAI_COMPAT_API_KEY ?? process.env.AZURE_OPENAI_API_KEY ?? "",
+  llmOpenAiCompatDeployment: process.env.LLM_OPENAI_COMPAT_DEPLOYMENT ?? process.env.AZURE_OPENAI_DEPLOYMENT ?? "gpt-4.1",
+  // LLM providers — Anthropic (Claude)
+  llmAnthropicApiKey: process.env.LLM_ANTHROPIC_API_KEY ?? "",
 };

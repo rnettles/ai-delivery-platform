@@ -1,5 +1,5 @@
 import { Script, ScriptExecutionContext } from "./script.interface";
-import { azureOpenAiService } from "../services/azure-openai.service";
+import { llmFactory } from "../services/llm/llm-factory.service";
 import { artifactService } from "../services/artifact.service";
 import { governanceService } from "../services/governance.service";
 
@@ -69,7 +69,8 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
       : `Delivery request: ${description}`;
 
     const systemPrompt = await governanceService.getPrompt("planner");
-    const plan = await azureOpenAiService.chatJson<PlannerPhasePlan>([
+    const provider = await llmFactory.forRole("planner");
+    const plan = await provider.chatJson<PlannerPhasePlan>([
       { role: "system", content: systemPrompt },
       { role: "user", content: userContent },
     ]);

@@ -1,5 +1,5 @@
 import { Script, ScriptExecutionContext } from "./script.interface";
-import { azureOpenAiService } from "../services/azure-openai.service";
+import { llmFactory } from "../services/llm/llm-factory.service";
 import { artifactService } from "../services/artifact.service";
 import { governanceService } from "../services/governance.service";
 
@@ -74,7 +74,8 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       : "No implementation brief found. Produce a generic 2-file implementation summary for a data model task.";
 
     const systemPrompt = await governanceService.getPrompt("implementer");
-    const impl = await azureOpenAiService.chatJson<ImplementerOutput>([
+    const provider = await llmFactory.forRole("implementer");
+    const impl = await provider.chatJson<ImplementerOutput>([
       { role: "system", content: systemPrompt },
       { role: "user", content: userContent },
     ]);

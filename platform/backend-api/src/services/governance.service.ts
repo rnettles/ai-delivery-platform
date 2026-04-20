@@ -61,6 +61,14 @@ class GovernanceService {
     const manifest = await this.loadManifest();
     return manifest.version;
   }
+
+  /**
+   * Returns the raw parsed manifest object.
+   * Used by the LLM factory to read llm_roles configuration.
+   */
+  async getManifest(): Promise<GovernanceManifest & Record<string, unknown>> {
+    return this.loadManifest() as Promise<GovernanceManifest & Record<string, unknown>>;
+  }
 }
 
 export const governanceService = new GovernanceService();

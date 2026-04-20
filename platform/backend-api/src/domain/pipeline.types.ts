@@ -2,12 +2,12 @@ export type PipelineRole =
   | "planner"
   | "sprint-controller"
   | "implementer"
-  | "verifier"
-  | "fixer";
+  | "verifier";
 
 export type PipelineStatus =
   | "running"
   | "awaiting_approval"
+  | "awaiting_pr_review"
   | "paused_takeover"
   | "failed"
   | "complete"
@@ -52,6 +52,13 @@ export interface PipelineRun {
   status: PipelineStatus;
   steps: PipelineStepRecord[];
   metadata: PipelineSlackMetadata & Record<string, unknown>;
+  // project linkage (ADR-027)
+  project_id?: string;
+  // sprint execution fields (ADR-030)
+  sprint_branch?: string;
+  pr_number?: number;
+  pr_url?: string;
+  implementer_attempts: number;
   created_at: string;
   updated_at: string;
 }

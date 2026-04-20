@@ -1,5 +1,5 @@
 import { Script, ScriptExecutionContext } from "./script.interface";
-import { azureOpenAiService } from "../services/azure-openai.service";
+import { llmFactory } from "../services/llm/llm-factory.service";
 import { artifactService } from "../services/artifact.service";
 import { governanceService } from "../services/governance.service";
 
@@ -80,7 +80,8 @@ export class FixerScript implements Script<Record<string, unknown>, unknown> {
       : "No verification result found. Return a fix plan noting that context was unavailable.";
 
     const systemPrompt = await governanceService.getPrompt("fixer");
-    const llm = await azureOpenAiService.chatJson<FixerOutput>([
+    const provider = await llmFactory.forRole("fixer");
+    const llm = await provider.chatJson<FixerOutput>([
       { role: "system", content: systemPrompt },
       { role: "user", content: userContent },
     ]);

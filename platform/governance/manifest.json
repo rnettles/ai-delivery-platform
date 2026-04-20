@@ -1,11 +1,16 @@
 {
   "version": "2026.04.19",
+  "llm_roles": {
+    "planner":           { "provider": "openai-compat", "model": "gpt-4.1",         "temperature": 0.3 },
+    "sprint-controller": { "provider": "openai-compat", "model": "gpt-4.1",         "temperature": 0.1 },
+    "implementer":       { "provider": "claude-code",   "model": "claude-opus-4-5", "temperature": 0.2 },
+    "verifier":          { "provider": "openai-compat", "model": "gpt-4.1",         "temperature": 0.0 }
+  },
   "roles": {
     "planner": { "prompt": "prompts/role-planner.md" },
     "sprint-controller": { "prompt": "prompts/role-sprint-controller.md" },
     "implementer": { "prompt": "prompts/role-implementer.md" },
-    "verifier": { "prompt": "prompts/role-verifier.md" },
-    "fixer": { "prompt": "prompts/role-fixer.md" }
+    "verifier": { "prompt": "prompts/role-verifier.md" }
   },
   "rules": {
     "global": "rules/global_rules.md",

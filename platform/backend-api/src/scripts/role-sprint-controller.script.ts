@@ -1,5 +1,5 @@
 import { Script, ScriptExecutionContext } from "./script.interface";
-import { azureOpenAiService } from "../services/azure-openai.service";
+import { llmFactory } from "../services/llm/llm-factory.service";
 import { artifactService } from "../services/artifact.service";
 import { governanceService } from "../services/governance.service";
 
@@ -98,7 +98,8 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       : "No phase plan found. Produce a generic 2-task Sprint 1 with a foundational first task.";
 
     const systemPrompt = await governanceService.getPrompt("sprint-controller");
-    const llm = await azureOpenAiService.chatJson<LlmResponse>([
+    const provider = await llmFactory.forRole("sprint-controller");
+    const llm = await provider.chatJson<LlmResponse>([
       { role: "system", content: systemPrompt },
       { role: "user", content: userContent },
     ]);
