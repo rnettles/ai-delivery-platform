@@ -98,6 +98,17 @@ export async function approvePipeline(req: Request, res: Response, next: NextFun
   }
 }
 
+export async function cancelPipeline(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const pipelineId = String(req.params.pipelineId);
+    const actor = getSlackActor(req);
+    const run = await pipelineService.cancel(pipelineId, actor);
+    res.status(200).json(run);
+  } catch (error) {
+    next(error);
+  }
+}
+
 export async function takeoverPipeline(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const pipelineId = String(req.params.pipelineId);

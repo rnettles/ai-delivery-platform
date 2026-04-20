@@ -340,6 +340,52 @@ If manifest import is unavailable, create from scratch and configure the same va
 
 ---
 
+## Emergency: Stop a Running Agent
+
+Use this when an agent is burning through tokens, looping, or needs to be halted immediately.
+
+### Option A — Cancel via Slack (preferred, non-destructive)
+
+```
+/adp-cancel pipe-2026-04-20-xxxxxxxx
+```
+
+Sets pipeline status to `cancelled`. Does not restart the container or affect other pipelines.  
+The in-flight LLM request may complete before the agent checks state, but no further role steps will execute.
+
+### Option B — Force-stop all agents (restart container)
+
+This immediately kills all in-flight agent processes. Use when the pipeline ID is unknown or cancel is insufficient.
+
+```powershell
+# Get active revision name
+az containerapp revision list `
+  --name isdev-ai-orch-dev-execution `
+  --resource-group isdev_rg `
+  --query "[?properties.active].name" -o tsv
+
+# Restart that revision
+az containerapp revision restart `
+  --name isdev-ai-orch-dev-execution `
+  --resource-group isdev_rg `
+  --revision <revision-name>
+```
+
+The container restarts in seconds. Any pipelines that were `running` will remain in that status in the DB — update them manually if needed (see Option C).
+
+### Option C — Force cancel via API (if Slack is unavailable)
+
+```powershell
+$base = "https://isdev-ai-orch-dev-execution.delightfulpebble-d0e68b9c.centralus.azurecontainerapps.io"
+$headers = @{"x-api-key"="<API_KEY>"; "Content-Type"="application/json"}
+$pipelineId = "pipe-2026-04-20-xxxxxxxx"
+
+Invoke-RestMethod -Method POST -Uri "$base/pipeline/$pipelineId/cancel" `
+  -Headers $headers -Body '{"actor":"operator"}'
+```
+
+---
+
 ## LLM Token And Payload Inspection
 
 Use this section when token usage spikes or role execution appears stalled.

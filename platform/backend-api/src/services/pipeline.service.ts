@@ -427,6 +427,17 @@ export class PipelineService {
 
   // ─── TAKEOVER ─────────────────────────────────────────────────────────────
 
+  async cancel(pipelineId: string, actor: string): Promise<PipelineRun> {
+    const run = await this.get(pipelineId);
+    this.assertStatus(run, ["running", "awaiting_approval", "paused_takeover"]);
+
+    const steps = [...run.steps];
+    const stepIdx = this.currentStepIdx(steps, run.current_step as PipelineRole);
+    steps[stepIdx] = { ...steps[stepIdx], actor, status: "complete", completed_at: new Date().toISOString() };
+
+    return this.save(run, { status: "cancelled", steps });
+  }
+
   async takeover(pipelineId: string, actor: string): Promise<PipelineRun> {
     const run = await this.get(pipelineId);
     this.assertStatus(run, ["awaiting_approval", "running"]);
