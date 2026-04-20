@@ -12,18 +12,24 @@
       "name": "Webhook – Slack Events",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [0, 0],
+      "position": [
+        0,
+        0
+      ],
       "webhookId": "slack-events"
     },
     {
       "parameters": {
-        "jsCode": "const input = $input.first().json;\n\nfunction isRecord(value) {\n  return typeof value === 'object' && value !== null && !Array.isArray(value);\n}\n\nfunction parseUrlEncodedBody(body) {\n  const params = new URLSearchParams(body);\n  return Object.fromEntries(params.entries());\n}\n\nfunction normalizeSlackPayload(source) {\n  const nestedBody = source.body;\n\n  if (isRecord(nestedBody)) {\n    return nestedBody;\n  }\n\n  if (typeof nestedBody === 'string' && nestedBody.trim()) {\n    const trimmed = nestedBody.trim();\n\n    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {\n      try {\n        const parsed = JSON.parse(trimmed);\n        if (isRecord(parsed)) {\n          return parsed;\n        }\n      } catch {\n        // Fall through to urlencoded parsing.\n      }\n    }\n\n    return parseUrlEncodedBody(trimmed);\n  }\n\n  return source;\n}\n\nconst body = normalizeSlackPayload(input);\n\n// ── URL verification challenge (Slack Event API setup) ────────────────────\nif (body.type === 'url_verification') {\n  return [{ json: { type: 'challenge', challenge: body.challenge } }];\n}\n\n// ── Slash command (application/x-www-form-urlencoded parsed by n8n) ──────\nconst command = (body.command || '').toLowerCase().trim();\nconst rawText = (body.text || '').trim();\nconst channelId = body.channel_id || '';\nconst userId = body.user_id || '';\nconst userName = body.user_name || '';\nconst responseUrl = body.response_url || '';\n\n// Commands that create a new pipeline run\nconst CREATE_MAP = {\n  '/plan': 'planner',\n  '/adp-plan': 'planner',\n  '/sprint': 'sprint-controller',\n  '/adp-sprint': 'sprint-controller',\n  '/implement': 'implementer',\n  '/adp-implement': 'implementer',\n  '/verify': 'verifier',\n  '/adp-verify': 'verifier',\n};\n\n// Commands that operate on an existing pipeline run\n// Text format: /approve <pipeline-id>\n// /handoff <pipeline-id> [artifact-path]\nconst ACTION_MAP = {\n  '/approve': 'approve',\n  '/adp-approve': 'approve',\n  '/takeover': 'takeover',\n  '/adp-takeover': 'takeover',\n  '/handoff': 'handoff',\n  '/adp-handoff': 'handoff',\n  '/status': 'status',\n  '/adp-status': 'status',\n};\n\nif (CREATE_MAP[command]) {\n  return [{\n    json: {\n      type: 'create_pipeline',\n      entry_point: CREATE_MAP[command],\n      description: rawText,\n      channel_id: channelId,\n      user_id: userId,\n      user_name: userName,\n      response_url: responseUrl,\n    }\n  }];\n}\n\nif (ACTION_MAP[command]) {\n  const parts = rawText.split(' ').filter(Boolean);\n  const pipeline_id = parts[0] || '';\n  const artifact_path = parts[1] || '';\n  return [{\n    json: {\n      type: 'pipeline_action',\n      action: ACTION_MAP[command],\n      pipeline_id,\n      artifact_path,\n      channel_id: channelId,\n      user_id: userId,\n      user_name: userName,\n      response_url: responseUrl,\n    }\n  }];\n}\n\n// Unknown command\nreturn [{\n  json: {\n    type: 'unknown',\n    command,\n    response_url: responseUrl,\n  }\n}];\n"
+        "jsCode": "const input = $input.first().json;\n\nfunction isRecord(value) {\n  return typeof value === 'object' && value !== null && !Array.isArray(value);\n}\n\nfunction parseUrlEncodedBody(body) {\n  const params = new URLSearchParams(body);\n  return Object.fromEntries(params.entries());\n}\n\nfunction normalizeSlackPayload(source) {\n  const nestedBody = source.body;\n\n  if (isRecord(nestedBody)) {\n    return nestedBody;\n  }\n\n  if (typeof nestedBody === 'string' && nestedBody.trim()) {\n    const trimmed = nestedBody.trim();\n\n    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {\n      try {\n        const parsed = JSON.parse(trimmed);\n        if (isRecord(parsed)) {\n          return parsed;\n        }\n      } catch {\n        // Fall through to urlencoded parsing.\n      }\n    }\n\n    return parseUrlEncodedBody(trimmed);\n  }\n\n  return source;\n}\n\nconst body = normalizeSlackPayload(input);\n\n// ── URL verification challenge (Slack Event API setup) ────────────────────\nif (body.type === 'url_verification') {\n  return [{ json: { type: 'challenge', challenge: body.challenge } }];\n}\n\n// ── Slash command (application/x-www-form-urlencoded parsed by n8n) ──────\nconst command = (body.command || '').toLowerCase().trim();\nconst rawText = (body.text || '').trim();\nconst channelId = body.channel_id || '';\nconst userId = body.user_id || '';\nconst userName = body.user_name || '';\nconst responseUrl = body.response_url || '';\n\n// Commands that create a new pipeline run\nconst CREATE_MAP = {\n  '/plan': 'planner',\n  '/adp-plan': 'planner',\n  '/sprint': 'sprint-controller',\n  '/adp-sprint': 'sprint-controller',\n  '/implement': 'implementer',\n  '/adp-implement': 'implementer',\n  '/verify': 'verifier',\n  '/adp-verify': 'verifier',\n};\n\n// Commands that operate on an existing pipeline run\n// Text format: /approve <pipeline-id>\n// /handoff <pipeline-id> [artifact-path]\nconst ACTION_MAP = {\n  '/approve': 'approve',\n  '/adp-approve': 'approve',\n  '/takeover': 'takeover',\n  '/adp-takeover': 'takeover',\n  '/handoff': 'handoff',\n  '/adp-handoff': 'handoff',\n  '/status': 'status',\n  '/adp-status': 'status',\n};\n\nif (CREATE_MAP[command]) {\n  const parts = rawText.split(/\\s+/).filter(Boolean);\n  const VALID_MODES = new Set(['next', 'next-flow', 'full-sprint']);\n  let executionMode = 'next';\n  let description = rawText;\n\n  if (parts.length > 0 && VALID_MODES.has(parts[0])) {\n    executionMode = parts[0];\n    description = parts.slice(1).join(' ');\n  }\n\n  return [{\n    json: {\n      type: 'create_pipeline',\n      entry_point: CREATE_MAP[command],\n      execution_mode: executionMode,\n      description,\n      channel_id: channelId,\n      user_id: userId,\n      user_name: userName,\n      response_url: responseUrl,\n    }\n  }];\n}\n\nif (ACTION_MAP[command]) {\n  const parts = rawText.split(' ').filter(Boolean);\n  const pipeline_id = parts[0] || '';\n  const artifact_path = parts[1] || '';\n  return [{\n    json: {\n      type: 'pipeline_action',\n      action: ACTION_MAP[command],\n      pipeline_id,\n      artifact_path,\n      channel_id: channelId,\n      user_id: userId,\n      user_name: userName,\n      response_url: responseUrl,\n    }\n  }];\n}\n\n// Unknown command\nreturn [{\n  json: {\n    type: 'unknown',\n    command,\n    response_url: responseUrl,\n  }\n}];"
       },
       "id": "si-0002",
       "name": "Guard & Parse",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [300, 0]
+      "position": [
+        300,
+        0
+      ]
     },
     {
       "parameters": {
@@ -36,11 +42,19 @@
                     "id": "si-sw-challenge",
                     "leftValue": "={{ $json.type }}",
                     "rightValue": "challenge",
-                    "operator": { "type": "string", "operation": "equals", "name": "filter.operator.equals" }
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
                   }
                 ],
                 "combinator": "and",
-                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" }
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                }
               },
               "renameOutput": false
             },
@@ -51,11 +65,19 @@
                     "id": "si-sw-create",
                     "leftValue": "={{ $json.type }}",
                     "rightValue": "create_pipeline",
-                    "operator": { "type": "string", "operation": "equals", "name": "filter.operator.equals" }
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
                   }
                 ],
                 "combinator": "and",
-                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" }
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                }
               },
               "renameOutput": false
             },
@@ -66,11 +88,19 @@
                     "id": "si-sw-action",
                     "leftValue": "={{ $json.type }}",
                     "rightValue": "pipeline_action",
-                    "operator": { "type": "string", "operation": "equals", "name": "filter.operator.equals" }
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
                   }
                 ],
                 "combinator": "and",
-                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" }
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                }
               },
               "renameOutput": false
             }
@@ -83,9 +113,11 @@
       "name": "Route by Type",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3,
-      "position": [600, 0]
+      "position": [
+        600,
+        0
+      ]
     },
-
     {
       "parameters": {
         "respondWith": "json",
@@ -96,9 +128,11 @@
       "name": "Respond – Challenge",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [900, -360]
+      "position": [
+        900,
+        -360
+      ]
     },
-
     {
       "parameters": {
         "method": "POST",
@@ -114,14 +148,17 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ entry_point: $json.entry_point, input: { description: $json.description }, metadata: { source: 'slack', slack_channel: $json.channel_id, slack_user: $json.user_id, slack_user_name: $json.user_name } }) }}",
+        "jsonBody": "={{ JSON.stringify({ entry_point: $json.entry_point, execution_mode: $json.execution_mode, input: { description: $json.description }, metadata: { source: 'slack', slack_channel: $json.channel_id, slack_user: $json.user_id, slack_user_name: $json.user_name } }) }}",
         "options": {}
       },
       "id": "si-0005",
       "name": "POST /pipeline",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [900, -120]
+      "position": [
+        900,
+        -120
+      ]
     },
     {
       "parameters": {
@@ -131,7 +168,10 @@
       "name": "Build Create Ack",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1200, -120]
+      "position": [
+        1200,
+        -120
+      ]
     },
     {
       "parameters": {
@@ -143,9 +183,11 @@
       "name": "Respond – Create Ack",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [1500, -120]
+      "position": [
+        1500,
+        -120
+      ]
     },
-
     {
       "parameters": {
         "jsCode": "const data = $input.first().json;\nconst { action, pipeline_id, artifact_path, user_name, user_id, channel_id } = data;\nconst actor = user_name || user_id || 'unknown';\nconst base = $env.EXECUTION_API_BASE_URL;\n\nif (!pipeline_id && action !== 'status') {\n  return [{\n    json: {\n      ...data,\n      actor,\n      skip_http: true,\n      // Keep downstream HTTP node valid; Build Action Ack will emit response_body directly.\n      http_method: 'GET',\n      http_url: `${base}/health`,\n      http_body: null,\n      response_body: JSON.stringify({\n        response_type: 'ephemeral',\n        text: `\\u274C Please provide a pipeline ID: \\`/${action} <pipeline-id>\\``\n      })\n    }\n  }];\n}\n\nlet method = 'POST';\nlet url;\nlet body;\n\nif (action === 'approve') {\n  url = `${base}/pipeline/${pipeline_id}/approve`;\n  body = JSON.stringify({ actor });\n} else if (action === 'takeover') {\n  url = `${base}/pipeline/${pipeline_id}/takeover`;\n  body = JSON.stringify({ actor });\n} else if (action === 'handoff') {\n  url = `${base}/pipeline/${pipeline_id}/handoff`;\n  body = JSON.stringify({ actor, artifact_path: artifact_path || undefined });\n} else if (action === 'status') {\n  method = 'GET';\n  url = pipeline_id\n    ? `${base}/pipeline/${pipeline_id}/status-summary`\n    : `${base}/pipeline/status-summary/current?channel_id=${encodeURIComponent(channel_id || '')}`;\n  body = null;\n}\n\nreturn [{ json: { ...data, actor, skip_http: false, http_method: method, http_url: url, http_body: body } }];\n"
@@ -154,7 +196,10 @@
       "name": "Build Action Request",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [900, 120]
+      "position": [
+        900,
+        120
+      ]
     },
     {
       "parameters": {
@@ -178,7 +223,10 @@
       "name": "Call Action Endpoint",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1200, 120]
+      "position": [
+        1200,
+        120
+      ]
     },
     {
       "parameters": {
@@ -188,7 +236,10 @@
       "name": "Build Action Ack",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1500, 120]
+      "position": [
+        1500,
+        120
+      ]
     },
     {
       "parameters": {
@@ -200,9 +251,11 @@
       "name": "Respond – Action Ack",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [1800, 120]
+      "position": [
+        1800,
+        120
+      ]
     },
-
     {
       "parameters": {
         "respondWith": "json",
@@ -213,43 +266,134 @@
       "name": "Respond – Help",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [900, 360]
+      "position": [
+        900,
+        360
+      ]
     }
   ],
   "connections": {
     "Webhook – Slack Events": {
-      "main": [[{ "node": "Guard & Parse", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Guard & Parse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Guard & Parse": {
-      "main": [[{ "node": "Route by Type", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Route by Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Route by Type": {
       "main": [
-        [{ "node": "Respond – Challenge",    "type": "main", "index": 0 }],
-        [{ "node": "POST /pipeline",          "type": "main", "index": 0 }],
-        [{ "node": "Build Action Request",    "type": "main", "index": 0 }],
-        [{ "node": "Respond – Help",          "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Respond – Challenge",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "POST /pipeline",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Action Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond – Help",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "POST /pipeline": {
-      "main": [[{ "node": "Build Create Ack", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Build Create Ack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Build Create Ack": {
-      "main": [[{ "node": "Respond – Create Ack", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Respond – Create Ack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Build Action Request": {
-      "main": [[{ "node": "Call Action Endpoint", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Call Action Endpoint",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Call Action Endpoint": {
-      "main": [[{ "node": "Build Action Ack", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Build Action Ack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Build Action Ack": {
-      "main": [[{ "node": "Respond – Action Ack", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Respond – Action Ack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": false,
-  "settings": { "executionOrder": "v1" },
+  "settings": {
+    "executionOrder": "v1"
+  },
   "id": "slack-ingress",
-  "meta": { "templateCredsSetupCompleted": true },
-  "tags": [{ "name": "phase-2" }]
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": [
+    {
+      "name": "phase-2"
+    }
+  ]
 }
