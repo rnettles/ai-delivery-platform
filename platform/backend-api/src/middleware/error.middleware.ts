@@ -22,9 +22,18 @@ export function errorMiddleware(err: unknown, req: Request, res: Response, _next
     return;
   }
 
+  const errorObj = err instanceof Error ? err : undefined;
+  const causeObj = errorObj?.cause instanceof Error ? errorObj.cause : undefined;
+
   logger.error("Unhandled error", {
     request_id: req.requestId,
-    error: err instanceof Error ? err.message : String(err)
+    error: errorObj?.message ?? String(err),
+    error_name: errorObj?.name,
+    error_stack: errorObj?.stack,
+    cause: causeObj?.message,
+    cause_name: causeObj?.name,
+    cause_stack: causeObj?.stack,
+    cause_raw: errorObj?.cause
   });
 
   res.status(500).json({
