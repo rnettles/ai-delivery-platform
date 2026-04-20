@@ -137,19 +137,30 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
         ? await projectService.getById(run.project_id)
         : await projectService.getByName("default");
 
-      if (project) {
-        clonePath = project.clone_path;
-        await projectGitService.ensureReady(project);
-        if (sprintBranch) {
-          // Ensure we're on the sprint branch before writing files
-          await projectGitService.createBranch(project, sprintBranch);
-        }
-        context.log("Implementer: repo ready", { clone_path: clonePath, sprint_branch: sprintBranch });
+      if (!project) {
+        throw new Error("Implementer requires a project mapping so work can be committed and pushed");
       }
+
+      clonePath = project.clone_path;
+      await projectGitService.ensureReady(project);
+
+      if (!sprintBranch) {
+        const safePipelineId = String(pipelineId).replace(/[^a-zA-Z0-9._/-]/g, "-");
+        sprintBranch = `feature/${safePipelineId}`;
+        context.log("Implementer: no sprint branch on run, using fallback branch", {
+          pipeline_id: pipelineId,
+          sprint_branch: sprintBranch,
+        });
+      }
+
+      // Ensure we're on a branch before writing files so all work can be pushed remotely.
+      await projectGitService.createBranch(project, sprintBranch);
+      context.log("Implementer: repo ready", { clone_path: clonePath, sprint_branch: sprintBranch });
     } catch (err) {
-      context.log("Implementer: project/git resolution failed, running without git commit", {
+      context.log("Implementer: project/git resolution failed", {
         error: String(err),
       });
+      throw new Error(`Implementer cannot proceed without git persistence: ${String(err)}`);
     }
 
     // Build the user prompt with all available context
@@ -282,19 +293,21 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       };
     }
 
-    // Commit if we have a project + sprint branch
+    // Commit + push are mandatory for durable implementer work.
     let commitSha: string | undefined;
-    if (project && sprintBranch) {
-      try {
-        const message = `feat(${finishPayload.task_id}): implement task\n\n${finishPayload.summary}`;
-        commitSha = await projectGitService.commitAll(project, sprintBranch, message);
-        await projectGitService.push(project, sprintBranch);
-        context.log("Implementer: committed", { commit_sha: commitSha, sprint_branch: sprintBranch });
-        context.log("Implementer: pushed", { commit_sha: commitSha, sprint_branch: sprintBranch });
-        context.notify(`💾 Committed ${finishPayload!.files_changed.length} file(s) to \`${sprintBranch}\` (${commitSha?.slice(0, 7)})`);
-      } catch (err) {
-        context.log("Implementer: git commit failed", { error: String(err) });
-      }
+    try {
+      const message = `feat(${finishPayload.task_id}): implement task\n\n${finishPayload.summary}`;
+      commitSha = await projectGitService.commitAll(project, sprintBranch, message);
+      await projectGitService.push(project, sprintBranch);
+      context.log("Implementer: committed", { commit_sha: commitSha, sprint_branch: sprintBranch });
+      context.log("Implementer: pushed", { commit_sha: commitSha, sprint_branch: sprintBranch });
+      context.notify(`💾 Committed ${finishPayload!.files_changed.length} file(s) to \`${sprintBranch}\` (${commitSha?.slice(0, 7)})`);
+    } catch (err) {
+      context.log("Implementer: git commit/push failed", {
+        error: String(err),
+        sprint_branch: sprintBranch,
+      });
+      throw new Error(`Implementer failed to persist work to remote branch: ${String(err)}`);
     }
 
     // Write evidence artifact
