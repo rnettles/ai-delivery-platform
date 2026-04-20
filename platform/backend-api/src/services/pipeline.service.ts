@@ -16,6 +16,7 @@ import {
 } from "../domain/pipeline.types";
 import { HttpError } from "../utils/http-error";
 import { logger } from "./logger.service";
+import { projectService } from "./project.service";
 
 // Ordered pipeline role sequence
 const ROLE_SEQUENCE: PipelineRole[] = [
@@ -73,6 +74,18 @@ export class PipelineService {
       ...req.metadata,
     };
 
+    // Resolve project from Slack channel or fall back to default (ADR-027)
+    let projectId: string | undefined;
+    const slackChannel = metadata.slack_channel as string | undefined;
+    if (slackChannel) {
+      const project = await projectService.getByChannel(slackChannel);
+      projectId = project?.project_id;
+    }
+    if (!projectId) {
+      const defaultProject = await projectService.getByName("default");
+      projectId = defaultProject?.project_id;
+    }
+
     // Build step history: mark all roles before entry_point as not_applicable
     const entryIdx = ROLE_SEQUENCE.indexOf(req.entry_point);
     const steps: PipelineStepRecord[] = ROLE_SEQUENCE.slice(0, entryIdx).map((role) => ({
@@ -106,6 +119,7 @@ export class PipelineService {
         metadata: metadata as Record<string, unknown>,
         input: (req.input ?? {}) as Record<string, unknown>,
         implementer_attempts: 0,
+        project_id: projectId ?? null,
         created_at: new Date(),
         updated_at: new Date(),
       })
@@ -206,6 +220,18 @@ export class PipelineService {
       return this.save(run, { current_step: "implementer", status: "running", steps, implementer_attempts: attempts });
     }
 
+    // Sprint Controller close-out: verifier already passed → open PR, await review (ADR-030)
+    // Detected by presence of a completed verifier step in the history.
+    if (role === "sprint-controller") {
+      const verifierPassed = steps.some((s) => s.role === "verifier" && s.status === "complete");
+      if (verifierPassed) {
+        logger.info("Sprint Controller close-out: transitioning to awaiting_pr_review", {
+          pipeline_id: run.pipeline_id,
+        });
+        return this.save(run, { current_step: "complete", status: "awaiting_pr_review", steps });
+      }
+    }
+
     // Auto-advance
     if (nextStep === "complete") {
       return this.save(run, { current_step: "complete", status: "complete", steps });
@@ -279,6 +305,30 @@ export class PipelineService {
 
     steps.push(this.newRunningStep(next, now));
     return this.save(run, { current_step: next, status: "running", steps });
+  }
+
+  // ─── PR MANAGEMENT (ADR-030) ──────────────────────────────────────────────
+
+  /**
+   * Record PR details after Sprint Controller (close-out) creates the PR.
+   * Called by the Sprint Controller script once the GitHub PR is opened.
+   */
+  async setPrDetails(pipelineId: string, prNumber: number, prUrl: string, sprintBranch: string): Promise<PipelineRun> {
+    const run = await this.get(pipelineId);
+    this.assertStatus(run, ["awaiting_pr_review"]);
+    logger.info("Pipeline PR details set", { pipeline_id: pipelineId, pr_number: prNumber, pr_url: prUrl });
+    return this.save(run, { pr_number: prNumber, pr_url: prUrl, sprint_branch: sprintBranch });
+  }
+
+  /**
+   * Mark the pipeline complete when the PR is merged.
+   * Called by webhook handler or polling job.
+   */
+  async markPrMerged(pipelineId: string): Promise<PipelineRun> {
+    const run = await this.get(pipelineId);
+    this.assertStatus(run, ["awaiting_pr_review"]);
+    logger.info("Pipeline PR merged — marking complete", { pipeline_id: pipelineId, pr_number: run.pr_number });
+    return this.save(run, { status: "complete" });
   }
 
   // ─── SKIP ─────────────────────────────────────────────────────────────────
