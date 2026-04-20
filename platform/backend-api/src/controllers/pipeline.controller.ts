@@ -201,6 +201,20 @@ async function executeCurrentStep(
       previous_artifacts: previousArtifacts,
     };
 
+    // Build a notify function that fires progress messages to Slack — best-effort, never throws.
+    const notifyProgress = (message: string): void => {
+      pipelineNotifierService.notify({
+        pipeline_id: pipelineId,
+        step: role,
+        status: "running",
+        gate_required: false,
+        artifact_paths: [],
+        metadata: currentRun.metadata,
+        event: "progress",
+        message,
+      }).catch(() => { /* best-effort */ });
+    };
+
     const result = await executionService.execute(
       {
         correlation_id: pipelineId,
@@ -208,7 +222,9 @@ async function executeCurrentStep(
         input: enrichedInput,
         metadata: { pipeline_id: pipelineId },
       },
-      requestId
+      requestId,
+      undefined,
+      notifyProgress
     );
 
     const artifactPaths: string[] = [];

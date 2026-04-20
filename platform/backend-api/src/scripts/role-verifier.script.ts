@@ -88,6 +88,7 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
     const pipelineId = typed.pipeline_id ?? context.correlation_id ?? context.execution_id;
 
     context.log("Verifier running", { pipeline_id: pipelineId });
+    context.notify("🔍 Verifier starting — reviewing implementation against acceptance criteria...");
 
     const previousArtifacts = typed.previous_artifacts ?? [];
 
@@ -110,8 +111,10 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
       config.gitClonePath;
 
     const commands = this.resolveCommands(input);
+    context.notify(`🧪 Running verification: ${commands.map((c) => `\`${c}\``).join(", ")}`);
     const commandResults = await this.runCommands(commands, repoPath, context);
     const passed = commandResults.every((r) => r.ok);
+    context.notify(passed ? "✅ All verification checks passed" : `❌ ${commandResults.filter((r) => !r.ok).length} check(s) failed — analyzing failures...`);
 
     let summary = passed
       ? "All verifier commands completed successfully."

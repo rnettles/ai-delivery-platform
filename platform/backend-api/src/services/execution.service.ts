@@ -10,7 +10,8 @@ export class ExecutionService {
 	async execute(
 		payload: ExecutionRequestEnvelope,
 		requestId?: string,
-		replayOfExecutionId?: string
+		replayOfExecutionId?: string,
+		notify?: (message: string) => void
 	): Promise<ExecutionResponseEnvelope> {
 		const executionId = randomUUID();
 		const startedAt = Date.now();
@@ -29,7 +30,8 @@ export class ExecutionService {
 						script: `${resolvedTarget.name}@${resolvedTarget.version}`,
 						...context
 					});
-				}
+				},
+				notify: notify ?? (() => { /* no-op when not wired */ }),
 			});
 
 			resolvedTarget = runResult.resolvedTarget;

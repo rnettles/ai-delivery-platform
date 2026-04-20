@@ -128,6 +128,8 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
     previousArtifacts: string[],
     context: ScriptExecutionContext
   ): Promise<SprintControllerOutput> {
+    context.notify("🗂️ Breaking phase plan into sprint tasks and drafting implementation brief...");
+
     const phasePlanArtifact = await artifactService.findFirst(
       previousArtifacts.filter((p) => p.includes("phase_plan")).concat(previousArtifacts)
     );
@@ -146,6 +148,7 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
     if (!llm.sprint_plan?.sprint_id || !llm.first_task?.task_id) {
       throw new Error("Sprint Controller LLM response missing required fields");
     }
+    context.notify(`🎯 First task identified: *${llm.first_task.task_id}* — ${llm.first_task.title}\n> Effort: ${llm.first_task.estimated_effort} | ${llm.first_task.files_likely_affected.length} file(s) likely affected`);
 
     // Write sprint_plan.md — matches naming convention:
     // ai_dev_stack/ai_project_tasks/active/sprint_plan_<SPRINT_ID>.md
@@ -190,6 +193,7 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       await projectGitService.ensureReady(project);
       await projectGitService.createBranch(project, sprintBranch);
       await pipelineService.setSprintBranch(pipelineId, sprintBranch);
+      context.notify(`🌿 Branch \`${sprintBranch}\` created and ready`);
     }
 
     context.log("Sprint Controller setup complete", {
@@ -224,6 +228,7 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
     if (verification.result !== "PASS") {
       throw new Error("Sprint Controller close-out called before verifier PASS");
     }
+    context.notify("🏁 Verification passed — pushing branch and opening pull request...");
 
     const run = await pipelineService.get(pipelineId);
     const project = run.project_id
@@ -263,6 +268,7 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
     });
 
     await pipelineService.setPrDetails(pipelineId, pr.number, pr.html_url, sprintBranch);
+    context.notify(`🔗 PR #${pr.number} opened: <${pr.html_url}|View Pull Request>`);
 
     const closeOutPath = await artifactService.write(
       pipelineId,

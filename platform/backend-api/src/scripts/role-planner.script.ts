@@ -63,6 +63,7 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
     const pipelineId = typed.pipeline_id ?? context.correlation_id ?? context.execution_id;
 
     context.log("Planner running", { description_length: description.length });
+    context.notify(`📋 Planning delivery phase...\n> _${description.slice(0, 120)}${description.length > 120 ? "…" : ""}_`);
 
     const userContent = typed.project_context
       ? `Project context:\n${typed.project_context}\n\nDelivery request: ${description}`
@@ -78,6 +79,7 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
     if (!plan.phase_id || !Array.isArray(plan.objectives) || !Array.isArray(plan.deliverables)) {
       throw new Error("Planner LLM response missing required fields (phase_id, objectives, deliverables)");
     }
+    context.notify(`📝 Phase plan drafted: *${plan.name}* (\`${plan.phase_id}\`)\n> ${plan.objectives.length} objective${plan.objectives.length !== 1 ? "s" : ""}, ${plan.deliverables.length} deliverable${plan.deliverables.length !== 1 ? "s" : ""}`);
 
     // Artifact path follows ai_dev_stack governance naming convention:
     // phase_plan_<descriptor>.md

@@ -98,6 +98,8 @@ export interface PipelineSkipRequest {
   justification: string;
 }
 
+export type PipelineNotificationEvent = "step_start" | "progress" | "step_complete" | "gate";
+
 export interface PipelineNotification {
   pipeline_id: string;
   step: PipelineRole | "complete";
@@ -105,4 +107,8 @@ export interface PipelineNotification {
   gate_required: boolean;
   artifact_paths: string[];
   metadata: PipelineRun["metadata"];
+  /** Notification event kind — defaults to gate/complete rendering when absent */
+  event?: PipelineNotificationEvent;
+  /** Human-readable progress message for event === 'progress' */
+  message?: string;
 }

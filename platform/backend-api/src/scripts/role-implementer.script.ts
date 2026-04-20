@@ -110,6 +110,7 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
     const pipelineId = typed.pipeline_id ?? context.correlation_id ?? context.execution_id;
 
     context.log("Implementer running", { pipeline_id: pipelineId });
+    context.notify("⚙️ Starting implementation — reading task brief and exploring codebase...");
 
     const previousArtifacts = typed.previous_artifacts ?? [];
 
@@ -209,6 +210,7 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
         await fs.mkdir(path.dirname(safeAbs), { recursive: true });
         await fs.writeFile(safeAbs, content, "utf-8");
         writtenFiles.push({ path: relPath, action: exists ? "Modify" : "Create" });
+        context.notify(`${exists ? "✏️ Modifying" : "📄 Creating"} \`${relPath}\``);
         return `OK: wrote ${relPath}`;
       }
 
@@ -289,6 +291,7 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
         await projectGitService.push(project, sprintBranch);
         context.log("Implementer: committed", { commit_sha: commitSha, sprint_branch: sprintBranch });
         context.log("Implementer: pushed", { commit_sha: commitSha, sprint_branch: sprintBranch });
+        context.notify(`💾 Committed ${finishPayload!.files_changed.length} file(s) to \`${sprintBranch}\` (${commitSha?.slice(0, 7)})`);
       } catch (err) {
         context.log("Implementer: git commit failed", { error: String(err) });
       }
