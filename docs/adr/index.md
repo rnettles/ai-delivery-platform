@@ -31,3 +31,7 @@ This directory contains all architectural decisions for the system.
 - ADR-024: Pipeline Human Override and Takeover Model
 - ADR-025: Two-Tier Governance Composition Model
 - ADR-026: Platform-Owned AI Governance Content
+- ADR-027: Multi-Project Support
+- ADR-028: Project-Scoped Git Repository Lifecycle
+- ADR-029: LLM Provider Abstraction
+- ADR-030: Autonomous Sprint Execution with PR-Gated Human Review
