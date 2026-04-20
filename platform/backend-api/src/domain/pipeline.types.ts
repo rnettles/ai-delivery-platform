@@ -4,6 +4,15 @@ export type PipelineRole =
   | "implementer"
   | "verifier";
 
+/**
+ * Controls how far downstream a pipeline run propagates after the entry role completes.
+ *
+ * - "next"        — run only the entry role, then stop.
+ * - "next-flow"   — chain into role-specific downstream (varies by entry_point).
+ * - "full-sprint" — sprint-controller iterates all pending sprint tasks end-to-end.
+ */
+export type PipelineMode = "next" | "next-flow" | "full-sprint";
+
 export type PipelineStatus =
   | "running"
   | "awaiting_approval"
@@ -65,6 +74,8 @@ export interface PipelineRun {
 
 export interface CreatePipelineRequest {
   entry_point: PipelineRole;
+  /** Controls downstream chaining after the entry role finishes. Defaults to full-pipeline when omitted. */
+  execution_mode?: PipelineMode;
   input?: Record<string, unknown>;
   metadata?: Partial<PipelineSlackMetadata> & Record<string, unknown>;
 }

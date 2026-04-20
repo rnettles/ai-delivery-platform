@@ -98,6 +98,11 @@ export class PipelineService {
       ...req.metadata,
     };
 
+    // Persist execution mode so completeStep can read it for downstream chaining decisions.
+    if (req.execution_mode) {
+      metadata.execution_mode = req.execution_mode;
+    }
+
     // Resolve project from Slack channel or fall back to default (ADR-027).
     // Keep create() resilient when project tables are unavailable (e.g., unit-test mocks).
     let projectId: string | undefined;
@@ -238,6 +243,17 @@ export class PipelineService {
       });
     }
 
+    // ── Execution mode: "next" ────────────────────────────────────────────────
+    // Stop immediately after the entry role completes — do not advance downstream.
+    const executionMode = run.metadata.execution_mode as string | undefined;
+    if (executionMode === "next" && role === run.entry_point) {
+      logger.info("Pipeline stopping after entry role (mode=next)", {
+        pipeline_id: run.pipeline_id,
+        role,
+      });
+      return this.save(run, { current_step: "complete", status: "complete", steps });
+    }
+
     // Verifier FAIL: route back to Implementer with retry context (ADR-030)
     if (role === "verifier" && verificationPassed === false) {
       const attempts = (run.implementer_attempts ?? 0) + 1;
@@ -250,6 +266,23 @@ export class PipelineService {
       }
       steps.push(this.newRunningStep("implementer", now));
       return this.save(run, { current_step: "implementer", status: "running", steps, implementer_attempts: attempts });
+    }
+
+    // ── Execution mode: "next-flow" / "full-sprint" (non-planner entry) ────────
+    // Verifier PASS is the terminal success state for these modes.
+    // Sprint close-out (PR creation) is reserved for planner-initiated full pipelines.
+    if (
+      role === "verifier" &&
+      verificationPassed !== false &&
+      (executionMode === "next-flow" || executionMode === "full-sprint") &&
+      run.entry_point !== "planner"
+    ) {
+      logger.info("Pipeline stopping after verifier PASS (mode=next-flow, non-planner entry)", {
+        pipeline_id: run.pipeline_id,
+        entry_point: run.entry_point,
+        execution_mode: executionMode,
+      });
+      return this.save(run, { current_step: "complete", status: "complete", steps });
     }
 
     // Sprint Controller close-out: verifier already passed → open PR, await review (ADR-030)

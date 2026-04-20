@@ -6,11 +6,19 @@
  * vice-versa — the test suite covers this logic.
  */
 
+/**
+ * Canonical mirror of PipelineMode from pipeline.types.ts.
+ * Defined inline because n8n Code nodes cannot import external modules.
+ */
+export type PipelineMode = "next" | "next-flow" | "full-sprint";
+
 export type SlackCommandResult =
   | { type: "challenge"; challenge: string }
   | {
       type: "create_pipeline";
       entry_point: "planner" | "sprint-controller" | "implementer" | "verifier";
+      /** Execution mode parsed from command text. Defaults to "next" when no mode keyword is given. */
+      execution_mode: PipelineMode;
       description: string;
       channel_id: string;
       user_id: string;
@@ -103,10 +111,21 @@ export function parseSlackCommand(body: Record<string, unknown>): SlackCommandRe
   const responseUrl = String(payload["response_url"] ?? "");
 
   if (CREATE_MAP[command]) {
+    const parts = rawText.split(/\s+/).filter(Boolean);
+    const VALID_MODES = new Set<string>(["next", "next-flow", "full-sprint"]);
+    let executionMode: PipelineMode = "next";
+    let description = rawText;
+
+    if (parts.length > 0 && VALID_MODES.has(parts[0])) {
+      executionMode = parts[0] as PipelineMode;
+      description = parts.slice(1).join(" ");
+    }
+
     return {
       type: "create_pipeline",
       entry_point: CREATE_MAP[command],
-      description: rawText,
+      execution_mode: executionMode,
+      description,
       channel_id: channelId,
       user_id: userId,
       user_name: userName,

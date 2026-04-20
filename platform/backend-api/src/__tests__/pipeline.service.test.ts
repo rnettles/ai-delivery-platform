@@ -194,20 +194,20 @@ describe("PipelineService", () => {
       expect(run.current_step).toBe("sprint-controller");
     });
 
-    it("routes to fixer when verifier fails (verificationPassed=false)", async () => {
+    it("routes to implementer when verifier fails (verificationPassed=false)", async () => {
       const verifierRow = makeRow({
         current_step: "verifier",
         status: "running",
         steps: [
-          { role: "planner", status: "complete", gate_outcome: "approved", artifact_paths: [], actor: "user-1", started_at: "2026-04-19T00:00:00.000Z", completed_at: "2026-04-19T01:00:00.000Z" },
-          { role: "sprint-controller", status: "complete", gate_outcome: "approved", artifact_paths: [], actor: "user-1", started_at: "2026-04-19T01:00:00.000Z", completed_at: "2026-04-19T02:00:00.000Z" },
-          { role: "implementer", status: "complete", gate_outcome: "approved", artifact_paths: [], actor: "user-1", started_at: "2026-04-19T02:00:00.000Z", completed_at: "2026-04-19T03:00:00.000Z" },
+          { role: "planner", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T00:00:00.000Z", completed_at: "2026-04-19T01:00:00.000Z" },
+          { role: "sprint-controller", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T01:00:00.000Z", completed_at: "2026-04-19T02:00:00.000Z" },
+          { role: "implementer", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T02:00:00.000Z", completed_at: "2026-04-19T03:00:00.000Z" },
           { role: "verifier", status: "running", gate_outcome: null, artifact_paths: [], actor: "system", started_at: "2026-04-19T03:00:00.000Z" },
         ],
       });
 
       mocks.selectWhere.mockResolvedValueOnce([verifierRow]);
-      const savedRow = makeRow({ current_step: "fixer", status: "running" });
+      const savedRow = makeRow({ current_step: "implementer", status: "running" });
       mocks.updateReturning.mockResolvedValueOnce([savedRow]);
 
       const run = await service.completeStep(
@@ -219,25 +219,20 @@ describe("PipelineService", () => {
         false // verificationPassed
       );
 
-      expect(run.current_step).toBe("fixer");
+      expect(run.current_step).toBe("implementer");
       expect(run.status).toBe("running");
     });
 
-    it("cancels pipeline when fixer loop limit is reached", async () => {
+    it("cancels pipeline when implementer retry limit is reached", async () => {
       const verifierRow = makeRow({
         current_step: "verifier",
         status: "running",
+        implementer_attempts: 3, // already at MAX_IMPLEMENTER_ATTEMPTS
         steps: [
-          { role: "planner", status: "complete", gate_outcome: "approved", artifact_paths: [], actor: "user-1", started_at: "2026-04-19T00:00:00.000Z", completed_at: "2026-04-19T01:00:00.000Z" },
-          { role: "sprint-controller", status: "complete", gate_outcome: "approved", artifact_paths: [], actor: "user-1", started_at: "2026-04-19T01:00:00.000Z", completed_at: "2026-04-19T02:00:00.000Z" },
-          { role: "implementer", status: "complete", gate_outcome: "approved", artifact_paths: [], actor: "user-1", started_at: "2026-04-19T02:00:00.000Z", completed_at: "2026-04-19T03:00:00.000Z" },
-          { role: "verifier", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T03:00:00.000Z", completed_at: "2026-04-19T03:30:00.000Z" },
-          { role: "fixer", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T03:30:00.000Z", completed_at: "2026-04-19T04:00:00.000Z" },
-          { role: "verifier", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T04:00:00.000Z", completed_at: "2026-04-19T04:30:00.000Z" },
-          { role: "fixer", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T04:30:00.000Z", completed_at: "2026-04-19T05:00:00.000Z" },
-          { role: "verifier", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T05:00:00.000Z", completed_at: "2026-04-19T05:30:00.000Z" },
-          { role: "fixer", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T05:30:00.000Z", completed_at: "2026-04-19T06:00:00.000Z" },
-          { role: "verifier", status: "running", gate_outcome: null, artifact_paths: [], actor: "system", started_at: "2026-04-19T06:00:00.000Z" },
+          { role: "planner", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T00:00:00.000Z", completed_at: "2026-04-19T01:00:00.000Z" },
+          { role: "sprint-controller", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T01:00:00.000Z", completed_at: "2026-04-19T02:00:00.000Z" },
+          { role: "implementer", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T02:00:00.000Z", completed_at: "2026-04-19T03:00:00.000Z" },
+          { role: "verifier", status: "running", gate_outcome: null, artifact_paths: [], actor: "system", started_at: "2026-04-19T03:00:00.000Z" },
         ],
       });
 
@@ -251,10 +246,123 @@ describe("PipelineService", () => {
         "exec-010",
         ["artifacts/verification_result.json"],
         false,
-        false // verificationPassed — but 3 fixer attempts already exhausted
+        false // verificationPassed — implementer_attempts already at limit
       );
 
       expect(run.status).toBe("cancelled");
+    });
+
+    // ── Execution mode tests ─────────────────────────────────────────────────
+
+    it("mode=next: marks pipeline complete after entry role without advancing", async () => {
+      const row = makeRow({
+        entry_point: "implementer",
+        current_step: "implementer",
+        status: "running",
+        metadata: { source: "slack", execution_mode: "next" },
+        steps: [
+          { role: "planner", status: "not_applicable", gate_outcome: null, artifact_paths: [], actor: "system", started_at: "2026-04-19T00:00:00.000Z" },
+          { role: "sprint-controller", status: "not_applicable", gate_outcome: null, artifact_paths: [], actor: "system", started_at: "2026-04-19T00:00:00.000Z" },
+          { role: "implementer", status: "running", gate_outcome: null, artifact_paths: [], actor: "system", started_at: "2026-04-19T00:00:00.000Z" },
+        ],
+      });
+
+      mocks.selectWhere.mockResolvedValueOnce([row]);
+      const savedRow = makeRow({ current_step: "complete", status: "complete" });
+      mocks.updateReturning.mockResolvedValueOnce([savedRow]);
+
+      const run = await service.completeStep(
+        "pipe-2026-04-19-test1234",
+        "implementer",
+        "exec-003",
+        ["artifacts/implementation_summary.md"],
+        false
+      );
+
+      expect(run.status).toBe("complete");
+      expect(run.current_step).toBe("complete");
+    });
+
+    it("mode=next: planner stops without advancing to sprint-controller", async () => {
+      const row = makeRow({ metadata: { source: "slack", execution_mode: "next" } });
+
+      mocks.selectWhere.mockResolvedValueOnce([row]);
+      const savedRow = makeRow({ current_step: "complete", status: "complete" });
+      mocks.updateReturning.mockResolvedValueOnce([savedRow]);
+
+      const run = await service.completeStep(
+        "pipe-2026-04-19-test1234",
+        "planner",
+        "exec-004",
+        ["artifacts/phase_plan.md"],
+        false
+      );
+
+      expect(run.status).toBe("complete");
+      expect(run.current_step).toBe("complete");
+    });
+
+    it("mode=next-flow, entry=implementer: stops on verifier PASS (no sprint close-out)", async () => {
+      const verifierRow = makeRow({
+        entry_point: "implementer",
+        current_step: "verifier",
+        status: "running",
+        metadata: { source: "slack", execution_mode: "next-flow" },
+        steps: [
+          { role: "planner", status: "not_applicable", gate_outcome: null, artifact_paths: [], actor: "system", started_at: "2026-04-19T00:00:00.000Z" },
+          { role: "sprint-controller", status: "not_applicable", gate_outcome: null, artifact_paths: [], actor: "system", started_at: "2026-04-19T00:00:00.000Z" },
+          { role: "implementer", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T00:00:00.000Z", completed_at: "2026-04-19T01:00:00.000Z" },
+          { role: "verifier", status: "running", gate_outcome: null, artifact_paths: [], actor: "system", started_at: "2026-04-19T01:00:00.000Z" },
+        ],
+      });
+
+      mocks.selectWhere.mockResolvedValueOnce([verifierRow]);
+      const savedRow = makeRow({ current_step: "complete", status: "complete" });
+      mocks.updateReturning.mockResolvedValueOnce([savedRow]);
+
+      const run = await service.completeStep(
+        "pipe-2026-04-19-test1234",
+        "verifier",
+        "exec-005",
+        ["artifacts/verification_result.json"],
+        false,
+        true // verificationPassed
+      );
+
+      expect(run.status).toBe("complete");
+      expect(run.current_step).toBe("complete");
+    });
+
+    it("mode=next-flow, entry=planner: advances to sprint-controller after verifier PASS", async () => {
+      const verifierRow = makeRow({
+        entry_point: "planner",
+        current_step: "verifier",
+        status: "running",
+        metadata: { source: "slack", execution_mode: "next-flow" },
+        steps: [
+          { role: "planner", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T00:00:00.000Z", completed_at: "2026-04-19T01:00:00.000Z" },
+          { role: "sprint-controller", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T01:00:00.000Z", completed_at: "2026-04-19T02:00:00.000Z" },
+          { role: "implementer", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T02:00:00.000Z", completed_at: "2026-04-19T03:00:00.000Z" },
+          { role: "verifier", status: "running", gate_outcome: null, artifact_paths: [], actor: "system", started_at: "2026-04-19T03:00:00.000Z" },
+        ],
+      });
+
+      mocks.selectWhere.mockResolvedValueOnce([verifierRow]);
+      const savedRow = makeRow({ current_step: "sprint-controller", status: "running" });
+      mocks.updateReturning.mockResolvedValueOnce([savedRow]);
+
+      const run = await service.completeStep(
+        "pipe-2026-04-19-test1234",
+        "verifier",
+        "exec-006",
+        ["artifacts/verification_result.json"],
+        false,
+        true // verificationPassed
+      );
+
+      // planner entry → full pipeline → proceed to sprint close-out
+      expect(run.current_step).toBe("sprint-controller");
+      expect(run.status).toBe("running");
     });
 
     it("throws 409 if step is not in running status", async () => {

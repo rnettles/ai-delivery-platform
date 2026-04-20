@@ -19,14 +19,14 @@ The platform currently supports individual governed executions via the canonical
 However, software delivery is not a single execution. It is a sequenced pipeline of specialized roles:
 
 ```
-Planner → Sprint Controller → Implementer → Verifier → Fixer → Sprint Controller (close)
+Planner → Sprint Controller → Implementer → Verifier → Sprint Controller (close)
 ```
 
 Each role:
 - Consumes artifacts produced by the prior role
 - Produces artifacts consumed by the next role
 - May require human approval before the next role begins
-- May fail, requiring re-execution or escalation to a repair role (Fixer)
+- May fail, requiring re-execution (Verifier routes back to Implementer retry loop)
 
 Without a first-class pipeline model, this sequencing would need to be managed entirely in n8n — embedding execution logic in the orchestration layer in violation of ADR-007. State would live only in n8n workflow variables, which are transient, not auditable, and not replayable.
 
@@ -61,8 +61,7 @@ Roles (in default order):
   2. sprint-controller (setup)
   3. implementer
   4. verifier
-  5. fixer              (conditional — triggered by verifier FAIL only)
-  6. sprint-controller  (close-out)
+  5. sprint-controller  (close-out)
 ```
 
 The sequence is governed by role definitions in the registry. A role definition specifies:
@@ -74,9 +73,19 @@ The sequence is governed by role definitions in the registry. A role definition 
 
 Any role may be the starting point of a pipeline run. The `entry_point` field in `POST /pipeline` specifies which role begins execution.
 
-Valid entry points: `planner`, `sprint-controller`, `implementer`, `verifier`, `fixer`
+Valid entry points: `planner`, `sprint-controller`, `implementer`, `verifier`
 
-When `entry_point` is `implementer`, the pipeline begins at step 3 and flows forward through `verifier` and `fixer` as normal.
+When `entry_point` is `implementer`, the pipeline begins at step 3 and flows forward through `verifier`, then either closes (mode-driven) or proceeds to close-out.
+
+### Execution Modes
+
+Create-pipeline requests may include `execution_mode` to control how far downstream execution propagates:
+
+- `next`: run only the entry role, then mark pipeline complete
+- `next-flow`: chain through downstream flow from the entry role; for non-planner entries, stop on Verifier PASS
+- `full-sprint`: full end-to-end sprint behavior (currently same downstream behavior as `next-flow`, with planner entry continuing to close-out)
+
+If `execution_mode` is omitted, legacy full-pipeline behavior remains the default.
 
 ### Pipeline Run States
 
@@ -86,6 +95,7 @@ When `entry_point` is `implementer`, the pipeline begins at step 3 and flows for
 | `awaiting_approval` | Step completed; waiting for human gate decision |
 | `paused_takeover` | Human has claimed the current step |
 | `failed` | Step execution failed; awaiting intervention |
+| `awaiting_pr_review` | Sprint close-out opened a PR and is waiting for merge/review |
 | `complete` | All steps completed successfully |
 | `cancelled` | Pipeline terminated by human action |
 

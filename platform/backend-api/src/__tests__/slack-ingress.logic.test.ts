@@ -14,7 +14,7 @@ describe("parseSlackCommand (slack-ingress Guard & Parse node)", () => {
   // ── Create pipeline commands ─────────────────────────────────────────────
 
   describe("/plan", () => {
-    it("maps /plan to planner entry_point", () => {
+    it("maps /plan to planner entry_point with default mode 'next'", () => {
       const result = parseSlackCommand({
         command: "/plan",
         text: "Build the authentication module",
@@ -26,6 +26,7 @@ describe("parseSlackCommand (slack-ingress Guard & Parse node)", () => {
       expect(result).toMatchObject({
         type: "create_pipeline",
         entry_point: "planner",
+        execution_mode: "next",
         description: "Build the authentication module",
         channel_id: "C123",
         user_id: "U456",
@@ -36,7 +37,7 @@ describe("parseSlackCommand (slack-ingress Guard & Parse node)", () => {
 
     it("handles /plan with no description (empty text)", () => {
       const result = parseSlackCommand({ command: "/plan", text: "" });
-      expect(result).toMatchObject({ type: "create_pipeline", entry_point: "planner", description: "" });
+      expect(result).toMatchObject({ type: "create_pipeline", entry_point: "planner", execution_mode: "next", description: "" });
     });
 
     it("maps /adp-plan to planner entry_point", () => {
@@ -74,26 +75,73 @@ describe("parseSlackCommand (slack-ingress Guard & Parse node)", () => {
         channel_id: "C123",
       });
     });
+
+    // ── Execution mode parsing ─────────────────────────────────────────
+
+    it("defaults execution_mode to 'next' when no mode keyword is given", () => {
+      const result = parseSlackCommand({ command: "/plan", text: "Build auth" });
+      expect(result).toMatchObject({ execution_mode: "next", description: "Build auth" });
+    });
+
+    it("parses bare 'next' keyword", () => {
+      const result = parseSlackCommand({ command: "/plan", text: "next" });
+      expect(result).toMatchObject({ execution_mode: "next", description: "" });
+    });
+
+    it("parses 'next-flow' keyword and strips it from description", () => {
+      const result = parseSlackCommand({ command: "/plan", text: "next-flow Build auth module" });
+      expect(result).toMatchObject({ execution_mode: "next-flow", description: "Build auth module" });
+    });
+
+    it("/plan next-flow with no trailing description gives empty description", () => {
+      const result = parseSlackCommand({ command: "/plan", text: "next-flow" });
+      expect(result).toMatchObject({ execution_mode: "next-flow", description: "" });
+    });
+
+    it("non-mode first word is treated as part of description", () => {
+      const result = parseSlackCommand({ command: "/plan", text: "Build the feature" });
+      expect(result).toMatchObject({ execution_mode: "next", description: "Build the feature" });
+    });
   });
 
   describe("/sprint", () => {
-    it("maps /sprint to sprint-controller", () => {
+    it("maps /sprint to sprint-controller with default mode 'next'", () => {
       const result = parseSlackCommand({ command: "/sprint", text: "PH-AUTH-1" });
-      expect(result).toMatchObject({ type: "create_pipeline", entry_point: "sprint-controller", description: "PH-AUTH-1" });
+      expect(result).toMatchObject({ type: "create_pipeline", entry_point: "sprint-controller", execution_mode: "next", description: "PH-AUTH-1" });
+    });
+
+    it("parses 'next-flow' mode for /sprint", () => {
+      const result = parseSlackCommand({ command: "/sprint", text: "next-flow" });
+      expect(result).toMatchObject({ type: "create_pipeline", entry_point: "sprint-controller", execution_mode: "next-flow", description: "" });
+    });
+
+    it("parses 'full-sprint' mode for /sprint", () => {
+      const result = parseSlackCommand({ command: "/sprint", text: "full-sprint" });
+      expect(result).toMatchObject({ type: "create_pipeline", entry_point: "sprint-controller", execution_mode: "full-sprint", description: "" });
     });
   });
 
   describe("/implement", () => {
-    it("maps /implement to implementer", () => {
+    it("maps /implement to implementer with default mode 'next'", () => {
       const result = parseSlackCommand({ command: "/implement", text: "TASK-001" });
-      expect(result).toMatchObject({ type: "create_pipeline", entry_point: "implementer" });
+      expect(result).toMatchObject({ type: "create_pipeline", entry_point: "implementer", execution_mode: "next", description: "TASK-001" });
+    });
+
+    it("parses 'next-flow' mode for /implement", () => {
+      const result = parseSlackCommand({ command: "/implement", text: "next-flow" });
+      expect(result).toMatchObject({ execution_mode: "next-flow", description: "" });
     });
   });
 
   describe("/verify", () => {
-    it("maps /verify to verifier", () => {
+    it("maps /verify to verifier with default mode 'next'", () => {
       const result = parseSlackCommand({ command: "/verify", text: "TASK-001" });
-      expect(result).toMatchObject({ type: "create_pipeline", entry_point: "verifier" });
+      expect(result).toMatchObject({ type: "create_pipeline", entry_point: "verifier", execution_mode: "next", description: "TASK-001" });
+    });
+
+    it("parses 'next-flow' mode for /verify", () => {
+      const result = parseSlackCommand({ command: "/verify", text: "next-flow" });
+      expect(result).toMatchObject({ execution_mode: "next-flow", description: "" });
     });
   });
 

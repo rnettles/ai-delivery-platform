@@ -2,13 +2,13 @@
 ## AI Delivery Platform — Slack-Driven Pipeline
 
 **Audience:** Developers and team leads using the platform day-to-day  
-**Last updated:** 2026-04-19
+**Last updated:** 2026-04-20
 
 ---
 
 ## Overview
 
-The platform is operated entirely through Slack slash commands. A human types a command, the AI pipeline runs one or more agent roles (Planner → Sprint Controller → Implementer → Verifier → Fixer), and at each governance gate the human is presented with interactive buttons to approve, take over, or skip. All notifications arrive in the thread where the pipeline was started.
+The platform is operated through Slack slash commands. A human types a command, the AI pipeline runs one or more agent roles (Planner → Sprint Controller → Implementer → Verifier), and posts progress to the originating thread.
 
 ```
 Human (Slack)
@@ -30,14 +30,19 @@ n8n Action Handler  →  POST /pipeline/:id/{approve|takeover|skip}  →  Execut
 
 | Command | Arguments | What it does |
 |---|---|---|
-| `/plan [description]` | Free text description | Creates a pipeline starting at **Planner** |
-| `/sprint [phase-id]` | Phase ID or description | Creates a pipeline starting at **Sprint Controller** |
-| `/implement [task-id]` | Task ID or description | Creates a pipeline starting at **Implementer** |
-| `/verify [task-id]` | Task ID or description | Creates a pipeline starting at **Verifier** |
+| `/plan [mode] [description]` | Optional mode + free text description | Creates a pipeline starting at **Planner** |
+| `/sprint [mode] [phase-id]` | Optional mode + phase ID or description | Creates a pipeline starting at **Sprint Controller** |
+| `/implement [mode] [task-id]` | Optional mode + task ID or description | Creates a pipeline starting at **Implementer** |
+| `/verify [mode] [task-id]` | Optional mode + task ID or description | Creates a pipeline starting at **Verifier** |
 | `/approve [pipeline-id]` | Pipeline ID | Approves the current gate — advances the pipeline |
 | `/takeover [pipeline-id]` | Pipeline ID | Pauses the pipeline — you own the current step |
 | `/handoff [pipeline-id] [artifact-path]` | Pipeline ID + optional artifact | Marks your human step complete — resumes the pipeline |
 | `/status [pipeline-id]` | Pipeline ID | Returns current state of the pipeline run |
+
+`mode` values:
+- `next` (default): run only the entry role, then stop
+- `next-flow`: continue downstream flow; non-planner entry points stop on Verifier PASS
+- `full-sprint`: full sprint flow (currently same downstream behavior as `next-flow`)
 
 > **Pipeline IDs** are shown in every notification message, e.g. `pipe-2026-04-19-abc12345`.
 
@@ -50,47 +55,40 @@ n8n Action Handler  →  POST /pipeline/:id/{approve|takeover|skip}  →  Execut
 **Scenario:** You want the AI to plan, sprint, implement, and verify a new feature.
 
 ```
-1. /plan Build JWT authentication with refresh token support
+1. /plan next-flow Build JWT authentication with refresh token support
 ```
 
 The platform:
-- Creates a pipeline run (entry point: `planner`)
-- Runs the Planner agent → produces `phase_plan.md`
-- Posts in the thread:
+- Creates a pipeline run (entry point: `planner`, mode: `next-flow`)
+- Runs Planner → Sprint Controller → Implementer → Verifier
+- Posts progress in the thread as each step starts/completes
+
+If you omit mode (`/plan ...`), mode defaults to `next` and only Planner runs.
 
 ```
-🤖 Planner completed — ready for review
+🤖 Planner completed
 Artifact: artifacts/phase_plan.md
-
-[ ✅ Approve → Continue ]  [ ✋ Take Over ]
 ```
-
-**Happy path:** Click **Approve → Continue**  
-→ Sprint Controller runs → gate message posted  
-→ Click **Approve → Continue**  
-→ Implementer runs → gate message posted  
-→ Click **Approve → Continue**  
-→ Verifier runs → completion or failure message posted
 
 ---
 
 ### Flow 2 — Start from Sprint Controller (plan already exists)
 
 ```
-2. /sprint PH-AUTH-1
+2. /sprint next-flow PH-AUTH-1
 ```
 
-Skips Planner. Entry point: `sprint-controller`. Gate flow is identical from that point.
+Skips Planner. Entry point: `sprint-controller`. Continues through downstream flow and stops on Verifier PASS.
 
 ---
 
 ### Flow 3 — Single task implementation
 
 ```
-3. /implement TASK-AUTH-001
+3. /implement next-flow TASK-AUTH-001
 ```
 
-Runs Implementer for one task. Entry point: `implementer`. Gate → Verifier → done.
+Runs Implementer for one task. Entry point: `implementer`. Continues to Verifier and stops on PASS.
 
 ---
 
@@ -149,6 +147,8 @@ Use this when the failure is a known fluke and does not block delivery.
 
 Returns the current status (`running`, `awaiting_approval`, `failed`, `complete`, `paused_takeover`) and the active step.
 
+For sprint close-out flows, status may also be `awaiting_pr_review`.
+
 ---
 
 ## Notification Reference
@@ -161,6 +161,7 @@ Every notification is posted to the thread that started the pipeline.
 | `awaiting_approval` | 🤖 | `{Step} completed — ready for review` | Approve, Take Over |
 | `failed` | ⚠️ | `{Step} failed — needs attention` | Take Over Fix, Skip Step |
 | `paused_takeover` | ✋ | `Takeover active — use /handoff when complete` | None |
+| `awaiting_pr_review` | 🔎 | `Sprint PR opened — waiting for review/merge` | None |
 | `complete` | ✅ | `Pipeline complete` with artifact list | None |
 
 ---
@@ -204,9 +205,9 @@ The Execution Service may not have the correct `N8N_CALLBACK_URL`. Verify the `N
 
 | You want the AI to... | Command | Entry point |
 |---|---|---|
-| Create a delivery plan | `/plan [description]` | `planner` |
-| Break a plan into sprint tasks | `/sprint [phase-id]` | `sprint-controller` |
-| Write code for a task | `/implement [task-id]` | `implementer` |
-| Check code against requirements | `/verify [task-id]` | `verifier` |
+| Create a delivery plan | `/plan [mode] [description]` | `planner` |
+| Break a plan into sprint tasks | `/sprint [mode] [phase-id]` | `sprint-controller` |
+| Write code for a task | `/implement [mode] [task-id]` | `implementer` |
+| Check code against requirements | `/verify [mode] [task-id]` | `verifier` |
 
 Each entry point picks up from its position in the pipeline. Agents downstream of the entry point run in sequence; agents upstream are skipped.

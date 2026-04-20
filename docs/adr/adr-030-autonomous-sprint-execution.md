@@ -65,7 +65,7 @@ The Verifier role SHALL execute real verification rather than reasoning about a 
 The Verifier SHALL:
 - Run the project's test suite, lint, and type-check commands as defined in the project's governance configuration
 - Parse exit codes and structured output (JSON test reporters where available) to determine pass/fail
-- Use the LLM only for **failure triage** — when tests fail, the LLM analyzes the output and produces structured `required_corrections` for the Fixer
+- Use the LLM only for **failure triage** — when tests fail, the LLM analyzes the output and produces structured `required_corrections` for Implementer retry context
 - If all checks pass, record `passed: true` and advance the pipeline without LLM involvement
 
 This aligns with ADR-003 (Deterministic Over LLM): verification is a deterministic process; LLM is invoked only when determinism is insufficient.
@@ -143,7 +143,7 @@ The maximum number of Implementer attempts (initial + retries) is 3. After 3 con
 
 Certain conditions SHALL trigger mandatory human escalation regardless of the autonomous execution model:
 
-- Fixer cycle limit exceeded
+- Implementer retry limit exceeded
 - Implementer attempts to modify files outside the declared scope
 - Verifier detects changes to files not listed in the implementation brief (scope drift)
 - Any role produces output that fails schema validation after the configured retry limit

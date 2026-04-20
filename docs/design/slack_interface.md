@@ -65,10 +65,10 @@ Slash commands are the primary human entry points. They are registered in the Sl
 
 | Command | Description | Pipeline Entry Point |
 |---|---|---|
-| `/plan [description]` | Start a full pipeline run from the Planner | `planner` |
-| `/sprint [phase-id]` | Start pipeline from Sprint Controller for a known phase | `sprint-controller` |
-| `/implement [task-id]` | Execute a single task at Implementer | `implementer` |
-| `/verify [task-id]` | Run Verifier against existing implementation | `verifier` |
+| `/plan [mode] [description]` | Start from Planner. Mode defaults to `next` when omitted. | `planner` |
+| `/sprint [mode] [phase-id]` | Start from Sprint Controller for a known phase. | `sprint-controller` |
+| `/implement [mode] [task-id]` | Execute from Implementer. | `implementer` |
+| `/verify [mode] [task-id]` | Run Verifier against existing implementation. | `verifier` |
 | `/status` | Show current pipeline run state for this channel | — |
 | `/approve` | Approve the current gate — advance pipeline | — |
 | `/takeover` | Pause pipeline — human takes current step | — |
@@ -81,6 +81,7 @@ Each command that creates a pipeline run maps to a `POST /pipeline` request:
 ```json
 {
   "entry_point": "planner",
+  "execution_mode": "next",
   "input": {
     "description": "Build the authentication module"
   },
@@ -92,6 +93,8 @@ Each command that creates a pipeline run maps to a `POST /pipeline` request:
   }
 }
 ```
+
+The first token in command text may be `next`, `next-flow`, or `full-sprint`. It is parsed into `execution_mode`; the remaining text becomes `input.description`.
 
 The `slack_channel` and `slack_thread_ts` in `metadata` are stored on the pipeline run so n8n can post all subsequent notifications to the correct thread.
 
@@ -126,7 +129,7 @@ When Verifier produces a FAIL result:
 Findings: 3 issues  |  Pipeline: pipe-2026-0419-001
 Artifact: ai_dev_stack/ai_project_tasks/active/verification_result.json
 
-[ 📄 View Findings ]  [ 🔧 Auto-Fix (Fixer) ]  [ ✋ Take Over Fix ]  [ ⏭ Skip to Close ]
+[ 📄 View Findings ]  [ ✋ Take Over Fix ]  [ ⏭ Skip to Close ]
 ```
 
 ### 5.3 Completion Message Format
@@ -166,7 +169,7 @@ Parse Command (Code Node)
     │
     ▼
 HTTP Request → POST /pipeline
-    - Body: { entry_point, input, metadata: { slack_channel, slack_user, slack_thread_ts } }
+  - Body: { entry_point, execution_mode, input, metadata: { slack_channel, slack_user, slack_thread_ts } }
     │
     ▼
 Slack: Post acknowledgement to thread
@@ -234,7 +237,8 @@ Create a new pipeline run.
 **Request:**
 ```json
 {
-  "entry_point": "planner | sprint-controller | implementer | verifier | fixer",
+  "entry_point": "planner | sprint-controller | implementer | verifier",
+  "execution_mode": "next | next-flow | full-sprint",
   "input": { ... },
   "metadata": {
     "slack_channel": "C0ATR1V0HHP",
