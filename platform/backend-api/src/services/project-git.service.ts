@@ -113,7 +113,7 @@ class ProjectGitService {
         }
       } else {
         logger.info("git: cloning", { project: project.name, clonePath });
-        this.git(".", ["clone", repoUrl, clonePath]);
+        this.git(".", ["clone", "--depth", "1", repoUrl, clonePath]);
         state.lastSyncAt = Date.now();
       }
 
@@ -145,11 +145,13 @@ class ProjectGitService {
   }
 
   private git(cwd: string, args: string[]): string {
+    const GIT_TIMEOUT_MS = Number(process.env.GIT_TIMEOUT_MS ?? 120_000);
     return execFileSync("git", args, {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
       env: this.gitEnv(),
+      timeout: GIT_TIMEOUT_MS,
     });
   }
 

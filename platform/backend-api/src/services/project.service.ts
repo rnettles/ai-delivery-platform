@@ -119,7 +119,7 @@ class ProjectService {
     if (existing) return existing;
 
     logger.info("Bootstrapping default project from GIT_REPO_URL");
-    return this.create({ name: "default", repoUrl, defaultBranch: "main" });
+    return this.create({ name: "default", repoUrl, defaultBranch: "master" });
   }
 }
 
