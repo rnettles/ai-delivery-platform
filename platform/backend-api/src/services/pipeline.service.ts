@@ -758,6 +758,59 @@ export class PipelineService {
 
     return { kind: "multiple", runs };
   }
+
+  /**
+   * On startup: find any pipelines still marked `running` (orphaned by a prior container
+   * restart mid-execution) and flip them to `cancelled` so they don't pollute /adp-status.
+   * Logs a summary and is always non-throwing.
+   */
+  async reconcileOrphanedRuns(): Promise<void> {
+    try {
+      const rows = await db
+        .select({ pipeline_id: pipelineRuns.pipeline_id, steps: pipelineRuns.steps })
+        .from(pipelineRuns)
+        .where(eq(pipelineRuns.status, "running"));
+
+      if (rows.length === 0) {
+        logger.info("Startup reconciliation: no orphaned pipelines found");
+        return;
+      }
+
+      logger.info("Startup reconciliation: cancelling orphaned running pipelines", {
+        count: rows.length,
+        pipeline_ids: rows.map((r) => r.pipeline_id),
+      });
+
+      const now = new Date().toISOString();
+
+      for (const row of rows) {
+        try {
+          const steps = (row.steps as PipelineStepRecord[]).map((s) =>
+            s.status === "running"
+              ? { ...s, status: "complete" as const, actor: "system", completed_at: now }
+              : s
+          );
+          await db
+            .update(pipelineRuns)
+            .set({
+              status: "cancelled",
+              steps: steps as typeof pipelineRuns.$inferInsert["steps"],
+              updated_at: new Date(),
+            })
+            .where(eq(pipelineRuns.pipeline_id, row.pipeline_id));
+        } catch (rowErr) {
+          logger.error("Startup reconciliation: failed to cancel pipeline", {
+            pipeline_id: row.pipeline_id,
+            error: String(rowErr),
+          });
+        }
+      }
+
+      logger.info("Startup reconciliation complete", { cancelled: rows.length });
+    } catch (err) {
+      logger.error("Startup reconciliation failed", { error: String(err) });
+    }
+  }
 }
 
 export const pipelineService = new PipelineService();

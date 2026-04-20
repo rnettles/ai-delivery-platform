@@ -142,6 +142,40 @@ describe("buildSlackMessage (pipeline-notifier Build Slack Message node)", () =>
     });
   });
 
+  // ── event: progress ───────────────────────────────────────────────────────
+
+  describe("event: progress", () => {
+    it("posts the custom message as a context block", () => {
+      const result = buildSlackMessage({
+        ...base,
+        status: "running",
+        event: "progress",
+        message: "⚙️ Implementing task-001",
+      });
+      expect(result.channel).toBe("C123ABC");
+      expect(result.slack_payload?.text).toBe("⚙️ Implementing task-001");
+      const blocks = result.slack_payload?.blocks as Array<Record<string, unknown>>;
+      expect(blocks[0]["type"]).toBe("context");
+      const elements = (blocks[0]["elements"] as Array<Record<string, unknown>>);
+      expect((elements[0]["text"] as string)).toBe("⚙️ Implementing task-001");
+    });
+
+    it("falls back to generic running message when message is absent", () => {
+      const result = buildSlackMessage({ ...base, status: "running", event: "progress" });
+      expect(result.slack_payload?.text).toContain("running");
+    });
+
+    it("includes thread_ts when present", () => {
+      const result = buildSlackMessage({
+        ...base,
+        status: "running",
+        event: "progress",
+        message: "📝 Writing src/foo.ts",
+      });
+      expect(result.slack_payload?.thread_ts).toBe("1776378304.943649");
+    });
+  });
+
   // ── thread_ts ─────────────────────────────────────────────────────────────
 
   it("omits thread_ts when not in metadata", () => {

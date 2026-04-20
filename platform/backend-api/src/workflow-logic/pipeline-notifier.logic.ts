@@ -13,6 +13,8 @@ export interface PipelineNotification {
   gate_required: boolean;
   artifact_paths?: string[];
   metadata?: Record<string, unknown>;
+  event?: "step_start" | "progress" | "step_complete" | "gate";
+  message?: string;
 }
 
 export interface SlackMessage {
@@ -27,7 +29,7 @@ function stepLabel(step: string): string {
 }
 
 export function buildSlackMessage(n: PipelineNotification): { channel: string | null; slack_payload?: SlackMessage } {
-  const { pipeline_id, step, status, artifact_paths = [], metadata = {} } = n;
+  const { pipeline_id, step, status, artifact_paths = [], metadata = {}, event, message } = n;
   const channel = (metadata["slack_channel"] as string | undefined) ?? null;
   const thread_ts = metadata["slack_thread_ts"] as string | undefined;
 
@@ -41,7 +43,16 @@ export function buildSlackMessage(n: PipelineNotification): { channel: string | 
   let text: string;
   let blocks: unknown[];
 
-  if (status === "awaiting_approval") {
+  if (event === "progress" && message) {
+    // Lightweight progress update — thread message only, no buttons
+    text = message;
+    blocks = [
+      {
+        type: "context",
+        elements: [{ type: "mrkdwn", text: message }],
+      },
+    ];
+  } else if (status === "awaiting_approval") {
     text = `🤖 ${label} completed — ready for review`;
     blocks = [
       {
