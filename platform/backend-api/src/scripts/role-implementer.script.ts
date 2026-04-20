@@ -2,6 +2,12 @@ import { Script, ScriptExecutionContext } from "./script.interface";
 import { llmFactory } from "../services/llm/llm-factory.service";
 import { artifactService } from "../services/artifact.service";
 import { governanceService } from "../services/governance.service";
+import { pipelineService } from "../services/pipeline.service";
+import { projectService } from "../services/project.service";
+import { projectGitService } from "../services/project-git.service";
+import { ToolDefinition, ToolCall } from "../services/llm/llm-provider.interface";
+import fs from "fs/promises";
+import path from "path";
 
 export interface ImplementerInput {
   previous_artifacts?: string[];
@@ -19,15 +25,71 @@ export interface ImplementerOutput {
   sprint_id: string;
   summary: string;
   files_changed: FileChange[];
-  test_approach: string;
+  commit_sha?: string;
   artifact_path: string;
 }
+
+// ─── Filesystem tools exposed to the LLM ─────────────────────────────────────
+
+const FILESYSTEM_TOOLS: ToolDefinition[] = [
+  {
+    name: "read_file",
+    description: "Read the contents of a file in the repository. Path must be relative to the repo root.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Relative path from repo root, e.g. src/server.ts" },
+      },
+      required: ["path"],
+    },
+  },
+  {
+    name: "write_file",
+    description: "Write (create or overwrite) a file in the repository. Path must be relative to the repo root.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Relative path from repo root, e.g. src/models/user.ts" },
+        content: { type: "string", description: "Full file content to write" },
+      },
+      required: ["path", "content"],
+    },
+  },
+  {
+    name: "list_directory",
+    description: "List files and subdirectories at a path within the repository.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Relative path from repo root. Use '.' for the root." },
+      },
+      required: ["path"],
+    },
+  },
+  {
+    name: "finish",
+    description: "Signal that implementation is complete. Provide a summary and list of files changed.",
+    parameters: {
+      type: "object",
+      properties: {
+        task_id: { type: "string", description: "The task_id from current_task.json" },
+        sprint_id: { type: "string", description: "The sprint_id from the sprint plan" },
+        summary: { type: "string", description: "A concise description of what was implemented" },
+        files_changed: {
+          type: "string",
+          description: "JSON array of {path, action, description} objects (action: Create|Modify)",
+        },
+      },
+      required: ["task_id", "sprint_id", "summary", "files_changed"],
+    },
+  },
+];
 
 export class ImplementerScript implements Script<Record<string, unknown>, unknown> {
   public readonly descriptor = {
     name: "role.implementer",
     version: "2026.04.19",
-    description: "Produces an implementation summary from AI_IMPLEMENTATION_BRIEF.md. Describes exact code changes needed (≤5 files, ≤200 lines).",
+    description: "Autonomously implements a task from AI_IMPLEMENTATION_BRIEF.md using a tool-calling loop. Reads/writes files in the repo, then commits the result.",
     input_schema: {
       type: "object",
       properties: {
@@ -38,7 +100,7 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
     },
     output_schema: {
       type: "object",
-      required: ["task_id", "sprint_id", "summary", "files_changed", "test_approach", "artifact_path"],
+      required: ["task_id", "sprint_id", "summary", "files_changed", "artifact_path"],
     },
     tags: ["role", "implementer"],
   };
@@ -51,44 +113,187 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
 
     const previousArtifacts = typed.previous_artifacts ?? [];
 
-    // Primary source: AI_IMPLEMENTATION_BRIEF.md (Sprint Controller's output)
-    // Stage A loads per AI_RUNTIME_LOADING_RULES.md
+    // Load context artifacts
     const briefArtifact = await artifactService.findFirst(
       previousArtifacts.filter((p) => p.includes("AI_IMPLEMENTATION_BRIEF"))
     );
     const taskArtifact = await artifactService.findFirst(
       previousArtifacts.filter((p) => p.includes("current_task"))
     );
-    // Stage B conditional: sprint plan for broader context
     const sprintArtifact = await artifactService.findFirst(
       previousArtifacts.filter((p) => p.includes("sprint_plan"))
     );
 
+    // Resolve project + sprint branch for git operations
+    let clonePath: string | null = null;
+    let sprintBranch: string | null = null;
+    let project = null;
+
+    try {
+      const run = await pipelineService.get(pipelineId);
+      sprintBranch = run.sprint_branch ?? null;
+      project = run.project_id
+        ? await projectService.getById(run.project_id)
+        : await projectService.getByName("default");
+
+      if (project) {
+        clonePath = project.clone_path;
+        await projectGitService.ensureReady(project);
+        if (sprintBranch) {
+          // Ensure we're on the sprint branch before writing files
+          await projectGitService.createBranch(project, sprintBranch);
+        }
+        context.log("Implementer: repo ready", { clone_path: clonePath, sprint_branch: sprintBranch });
+      }
+    } catch (err) {
+      context.log("Implementer: project/git resolution failed, running without git commit", {
+        error: String(err),
+      });
+    }
+
+    // Build the user prompt with all available context
     const contextParts: string[] = [];
     if (briefArtifact) contextParts.push(`# AI_IMPLEMENTATION_BRIEF.md\n\n${briefArtifact.content}`);
     if (taskArtifact) contextParts.push(`# current_task.json\n\n${taskArtifact.content}`);
     if (sprintArtifact) contextParts.push(`# Sprint Plan (context)\n\n${sprintArtifact.content}`);
 
-    const userContent = contextParts.length > 0
-      ? `${contextParts.join("\n\n---\n\n")}\n\nProduce the implementation summary for the active task.`
-      : "No implementation brief found. Produce a generic 2-file implementation summary for a data model task.";
+    const repoNote = clonePath
+      ? `\n\nThe repository is available for you to read and write. Use the provided tools to explore the codebase and implement the task. When you are done, call the \`finish\` tool.`
+      : `\n\nNo repository is available. Describe what you would implement in the finish tool's summary.`;
+
+    const userContent =
+      contextParts.length > 0
+        ? `${contextParts.join("\n\n---\n\n")}${repoNote}`
+        : `No implementation brief found.${repoNote}`;
 
     const systemPrompt = await governanceService.getPrompt("implementer");
     const provider = await llmFactory.forRole("implementer");
-    const impl = await provider.chatJson<ImplementerOutput>([
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userContent },
-    ]);
 
-    if (!impl.task_id || !Array.isArray(impl.files_changed)) {
-      throw new Error("Implementer LLM response missing required fields");
+    // ─── Tool execution state ────────────────────────────────────────────────
+
+    const writtenFiles: { path: string; action: "Create" | "Modify" }[] = [];
+    let finishPayload: {
+      task_id: string;
+      sprint_id: string;
+      summary: string;
+      files_changed: FileChange[];
+    } | null = null;
+
+    const toolExecutor = async (toolCall: ToolCall): Promise<string> => {
+      const { name, arguments: args } = toolCall;
+
+      if (name === "read_file") {
+        const relPath = String(args["path"] ?? "");
+        if (!clonePath) return "Error: no repository available";
+        const safeAbs = this.safeResolve(clonePath, relPath);
+        if (!safeAbs) return `Error: path '${relPath}' is outside the repository root`;
+        try {
+          const content = await fs.readFile(safeAbs, "utf-8");
+          return content;
+        } catch {
+          return `Error: file not found at ${relPath}`;
+        }
+      }
+
+      if (name === "write_file") {
+        const relPath = String(args["path"] ?? "");
+        const content = String(args["content"] ?? "");
+        if (!clonePath) return "Error: no repository available";
+        const safeAbs = this.safeResolve(clonePath, relPath);
+        if (!safeAbs) return `Error: path '${relPath}' is outside the repository root`;
+        let exists = false;
+        try {
+          await fs.access(safeAbs);
+          exists = true;
+        } catch { /* does not exist */ }
+        await fs.mkdir(path.dirname(safeAbs), { recursive: true });
+        await fs.writeFile(safeAbs, content, "utf-8");
+        writtenFiles.push({ path: relPath, action: exists ? "Modify" : "Create" });
+        return `OK: wrote ${relPath}`;
+      }
+
+      if (name === "list_directory") {
+        const relPath = String(args["path"] ?? ".");
+        if (!clonePath) return "Error: no repository available";
+        const safeAbs = this.safeResolve(clonePath, relPath);
+        if (!safeAbs) return `Error: path '${relPath}' is outside the repository root`;
+        try {
+          const entries = await fs.readdir(safeAbs, { withFileTypes: true });
+          return entries
+            .map((e) => (e.isDirectory() ? `${e.name}/` : e.name))
+            .join("\n");
+        } catch {
+          return `Error: directory not found at ${relPath}`;
+        }
+      }
+
+      if (name === "finish") {
+        const rawFiles = String(args["files_changed"] ?? "[]");
+        let parsedFiles: FileChange[] = [];
+        try {
+          parsedFiles = JSON.parse(rawFiles) as FileChange[];
+        } catch {
+          // fall back to written files tracked during the loop
+        }
+
+        if (parsedFiles.length === 0 && writtenFiles.length > 0) {
+          parsedFiles = writtenFiles.map((f) => ({ ...f, description: `${f.action}d by implementer` }));
+        }
+
+        finishPayload = {
+          task_id: String(args["task_id"] ?? "unknown"),
+          sprint_id: String(args["sprint_id"] ?? "unknown"),
+          summary: String(args["summary"] ?? ""),
+          files_changed: parsedFiles,
+        };
+        return "Implementation recorded. Loop will terminate.";
+      }
+
+      return `Unknown tool: ${name}`;
+    };
+
+    // Run the agentic loop (max 30 iterations for a real implementation)
+    await provider.chatWithTools(
+      [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userContent },
+      ],
+      FILESYSTEM_TOOLS,
+      toolExecutor,
+      { maxIterations: 30, max_tokens: 8192 }
+    );
+
+    // If finish was not called, build a fallback from tracked writes
+    if (!finishPayload) {
+      const taskId = taskArtifact
+        ? (() => {
+            try { return (JSON.parse(taskArtifact.content) as { task_id?: string }).task_id ?? "unknown"; }
+            catch { return "unknown"; }
+          })()
+        : "unknown";
+
+      finishPayload = {
+        task_id: taskId,
+        sprint_id: "unknown",
+        summary: "Implementation completed (finish tool not called)",
+        files_changed: writtenFiles.map((f) => ({ ...f, description: `${f.action}d` })),
+      };
     }
 
-    if (impl.files_changed.length > 5) {
-      throw new Error(`Implementer produced ${impl.files_changed.length} file changes — governance limit is 5`);
+    // Commit if we have a project + sprint branch
+    let commitSha: string | undefined;
+    if (project && sprintBranch) {
+      try {
+        const message = `feat(${finishPayload.task_id}): implement task\n\n${finishPayload.summary}`;
+        commitSha = await projectGitService.commitAll(project, sprintBranch, message);
+        context.log("Implementer: committed", { commit_sha: commitSha, sprint_branch: sprintBranch });
+      } catch (err) {
+        context.log("Implementer: git commit failed", { error: String(err) });
+      }
     }
 
-    const artifactContent = this.formatMarkdown(impl);
+    // Write evidence artifact
+    const artifactContent = this.formatMarkdown(finishPayload, commitSha);
     const artifactPath = await artifactService.write(
       pipelineId,
       "implementation_summary.md",
@@ -96,15 +301,38 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
     );
 
     context.log("Implementer complete", {
-      task_id: impl.task_id,
-      files_changed: impl.files_changed.length,
+      task_id: finishPayload.task_id,
+      files_changed: finishPayload.files_changed.length,
+      commit_sha: commitSha,
       artifact_path: artifactPath,
     });
 
-    return { ...impl, artifact_path: artifactPath };
+    return {
+      ...finishPayload,
+      commit_sha: commitSha,
+      artifact_path: artifactPath,
+    } satisfies ImplementerOutput;
   }
 
-  private formatMarkdown(impl: ImplementerOutput): string {
+  /**
+   * Resolve a user-supplied relative path within clonePath.
+   * Returns the absolute path if it is safely within clonePath, or null if it escapes.
+   */
+  private safeResolve(clonePath: string, relPath: string): string | null {
+    // Normalise to reject absolute paths and traversal attempts
+    const normalised = path.normalize(relPath);
+    if (path.isAbsolute(normalised)) return null;
+    const abs = path.join(clonePath, normalised);
+    // Verify the resolved path is still within clonePath
+    const relative = path.relative(clonePath, abs);
+    if (relative.startsWith("..")) return null;
+    return abs;
+  }
+
+  private formatMarkdown(
+    impl: { task_id: string; sprint_id: string; summary: string; files_changed: FileChange[] },
+    commitSha?: string
+  ): string {
     const fileLines = impl.files_changed
       .map((f) => `### ${f.action}: \`${f.path}\`\n${f.description}`)
       .join("\n\n");
@@ -112,17 +340,14 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
     return `# Implementation Summary
 
 **Task:** ${impl.task_id}
-**Sprint:** ${impl.sprint_id}
+**Sprint:** ${impl.sprint_id}${commitSha ? `\n**Commit:** ${commitSha}` : ""}
 
 ## Summary
 ${impl.summary}
 
-## Deliverables Checklist
+## Files Changed
 
-${fileLines}
-
-## Test Approach
-${impl.test_approach}
+${fileLines || "_No files changed._"}
 `;
   }
 }
