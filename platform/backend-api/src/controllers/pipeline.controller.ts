@@ -180,9 +180,15 @@ async function executeCurrentStep(
     );
 
     const artifactPaths: string[] = [];
-    if (result.output && typeof result.output === "object" && "artifact_path" in result.output) {
-      const path = (result.output as Record<string, unknown>).artifact_path;
-      if (typeof path === "string") artifactPaths.push(path);
+    let verificationPassed: boolean | undefined;
+    if (result.output && typeof result.output === "object") {
+      const out = result.output as Record<string, unknown>;
+      if ("artifact_path" in out && typeof out.artifact_path === "string") {
+        artifactPaths.push(out.artifact_path);
+      }
+      if (role === "verifier" && "passed" in out) {
+        verificationPassed = Boolean(out.passed);
+      }
     }
 
     const run = await pipelineService.completeStep(
@@ -190,7 +196,8 @@ async function executeCurrentStep(
       role,
       result.execution_id,
       artifactPaths,
-      !result.ok
+      !result.ok,
+      verificationPassed
     );
 
     await pipelineNotifierService.notify({

@@ -124,6 +124,17 @@ export function buildSlackMessage(n: PipelineNotification): { channel: string | 
         },
       },
     ];
+  } else if (status === "cancelled") {
+    text = `🚫 Pipeline cancelled — fixer loop limit reached — ${pipeline_id}`;
+    blocks = [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `🚫 *Pipeline cancelled* — \`${pipeline_id}\` exceeded the maximum fixer attempts and was stopped.\nUse \`/takeover ${pipeline_id}\` to take manual ownership.`,
+        },
+      },
+    ];
   } else {
     // running — progress context message
     text = `⚙️ ${label} is running — ${pipeline_id}`;

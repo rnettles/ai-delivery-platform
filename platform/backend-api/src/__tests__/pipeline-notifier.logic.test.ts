@@ -118,6 +118,19 @@ describe("buildSlackMessage (pipeline-notifier Build Slack Message node)", () =>
     });
   });
 
+  // ── cancelled (fixer loop limit) ─────────────────────────────────────────
+
+  describe("status: cancelled", () => {
+    it("posts a cancellation message mentioning fixer loop limit", () => {
+      const result = buildSlackMessage({ ...base, status: "cancelled", step: "verifier" });
+      expect(result.slack_payload?.text).toContain("cancelled");
+      const section = (result.slack_payload?.blocks as Array<Record<string, unknown>>)[0] as Record<string, unknown>;
+      const text = (section["text"] as Record<string, unknown>)["text"] as string;
+      expect(text).toContain("fixer attempts");
+      expect(text).toContain("/takeover");
+    });
+  });
+
   // ── running (progress context) ────────────────────────────────────────────
 
   describe("status: running", () => {

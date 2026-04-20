@@ -33,6 +33,9 @@ const GATED_ROLES = new Set<PipelineRole>([
   "implementer",
 ]);
 
+// Maximum number of completed fixer attempts before the pipeline is cancelled
+const MAX_FIXER_ATTEMPTS = 3;
+
 // Roles that have a "next" in the default happy path
 const NEXT_ROLE: Partial<Record<PipelineRole, PipelineRole>> = {
   planner: "sprint-controller",
@@ -135,7 +138,8 @@ export class PipelineService {
     role: PipelineRole,
     executionId: string,
     artifactPaths: string[],
-    failed: boolean
+    failed: boolean,
+    verificationPassed?: boolean
   ): Promise<PipelineRun> {
     const run = await this.get(pipelineId);
 
@@ -186,6 +190,20 @@ export class PipelineService {
         status: "awaiting_approval",
         steps,
       });
+    }
+
+    // Verifier FAIL: route to fixer with circuit-breaker
+    if (role === "verifier" && verificationPassed === false) {
+      const fixerAttempts = steps.filter((s) => s.role === "fixer" && s.status === "complete").length;
+      if (fixerAttempts >= MAX_FIXER_ATTEMPTS) {
+        logger.warn("Fixer loop limit reached — cancelling pipeline", {
+          pipeline_id: run.pipeline_id,
+          fixer_attempts: fixerAttempts,
+        });
+        return this.save(run, { current_step: role, status: "cancelled", steps });
+      }
+      steps.push(this.newRunningStep("fixer", now));
+      return this.save(run, { current_step: "fixer", status: "running", steps });
     }
 
     // Auto-advance
