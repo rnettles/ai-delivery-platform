@@ -1,7 +1,12 @@
 import { Script, ScriptExecutionContext } from "./script.interface";
+import { exec } from "child_process";
+import { promisify } from "util";
 import { llmFactory } from "../services/llm/llm-factory.service";
 import { artifactService } from "../services/artifact.service";
 import { governanceService } from "../services/governance.service";
+import { config } from "../config";
+
+const execAsync = promisify(exec);
 
 export interface VerifierInput {
   previous_artifacts?: string[];
@@ -17,7 +22,16 @@ export interface VerificationResult {
   result: "PASS" | "FAIL";
   summary: string;
   required_corrections: string[];
+  command_results: CommandResult[];
   verified_at: string;
+}
+
+interface CommandResult {
+  command: string;
+  ok: boolean;
+  exit_code: number;
+  stdout: string;
+  stderr: string;
 }
 
 /**
@@ -46,6 +60,8 @@ interface LlmResponse {
   required_corrections: string[];
   handoff: HandoffContract;
 }
+
+const DEFAULT_VERIFY_COMMANDS = ["npm test", "npm run lint", "npx tsc --noEmit"];
 
 export class VerifierScript implements Script<Record<string, unknown>, unknown> {
   public readonly descriptor = {
@@ -86,34 +102,45 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
       previousArtifacts.filter((p) => p.includes("implementation_summary"))
     );
 
-    const contextParts: string[] = [];
-    if (briefArtifact) contextParts.push(`# AI_IMPLEMENTATION_BRIEF.md\n\n${briefArtifact.content}`);
-    if (taskArtifact) contextParts.push(`# current_task.json\n\n${taskArtifact.content}`);
-    if (implArtifact) contextParts.push(`# implementation_summary.md\n\n${implArtifact.content}`);
+    const taskId = this.extractTaskId(taskArtifact?.content) ?? `task-${pipelineId}`;
 
-    const userContent = contextParts.length > 0
-      ? `${contextParts.join("\n\n---\n\n")}\n\nVerify the implementation against all acceptance criteria.`
-      : "No artifacts available. Return FAIL with 'No implementation artifacts found' as the correction.";
+    const repoPath =
+      (context.metadata.repo_path as string | undefined) ??
+      (input.repo_path as string | undefined) ??
+      config.gitClonePath;
 
-    const systemPrompt = await governanceService.getPrompt("verifier");
-    const provider = await llmFactory.forRole("verifier");
-    const llm = await provider.chatJson<LlmResponse>([
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userContent },
-    ]);
+    const commands = this.resolveCommands(input);
+    const commandResults = await this.runCommands(commands, repoPath, context);
+    const passed = commandResults.every((r) => r.ok);
 
-    if (!llm.task_id || !llm.result) {
-      throw new Error("Verifier LLM response missing required fields");
+    let summary = passed
+      ? "All verifier commands completed successfully."
+      : "One or more verifier commands failed.";
+    let requiredCorrections: string[] = [];
+    let handoff: HandoffContract | undefined;
+
+    if (!passed) {
+      const triage = await this.triageFailures({
+        taskId,
+        commandResults,
+        briefContent: briefArtifact?.content,
+        taskContent: taskArtifact?.content,
+        implContent: implArtifact?.content,
+      });
+      summary = triage.summary;
+      requiredCorrections = triage.required_corrections;
+      handoff = triage.handoff;
     }
 
     const verifiedAt = new Date().toISOString();
 
     // Write verification_result.json — machine-readable, consumed by Fixer and Sprint Controller
     const verificationResult: VerificationResult = {
-      task_id: llm.task_id,
-      result: llm.result,
-      summary: llm.summary,
-      required_corrections: llm.required_corrections ?? [],
+      task_id: taskId,
+      result: passed ? "PASS" : "FAIL",
+      summary,
+      required_corrections: requiredCorrections,
+      command_results: commandResults,
       verified_at: verifiedAt,
     };
     const verificationResultPath = await artifactService.write(
@@ -123,7 +150,7 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
     );
 
     // Write human-readable markdown summary
-    const artifactContent = this.formatMarkdown(verificationResult, llm.handoff);
+    const artifactContent = this.formatMarkdown(verificationResult, handoff);
     const artifactPath = await artifactService.write(
       pipelineId,
       "verification_result.md",
@@ -131,28 +158,149 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
     );
 
     context.log("Verifier complete", {
-      task_id: llm.task_id,
-      result: llm.result,
-      corrections: verificationResult.required_corrections.length,
+      task_id: taskId,
+      result: verificationResult.result,
+      corrections: requiredCorrections.length,
     });
 
     const output: VerifierOutput = {
-      task_id: llm.task_id,
-      passed: llm.result === "PASS",
+      task_id: taskId,
+      passed,
       verification_result_path: verificationResultPath,
       artifact_path: artifactPath,
-      handoff: llm.handoff,
+      handoff,
     };
 
     return output;
   }
 
+  private resolveCommands(input: Record<string, unknown>): string[] {
+    const requested = input.verification_commands;
+    if (Array.isArray(requested)) {
+      const normalized = requested
+        .filter((c): c is string => typeof c === "string")
+        .map((c) => c.trim())
+        .filter(Boolean);
+      if (normalized.length > 0) return normalized;
+    }
+
+    const envRaw = process.env.VERIFIER_COMMANDS ?? "";
+    if (envRaw.trim()) {
+      return envRaw.split(",").map((c) => c.trim()).filter(Boolean);
+    }
+
+    return DEFAULT_VERIFY_COMMANDS;
+  }
+
+  private async runCommands(commands: string[], cwd: string, context: ScriptExecutionContext): Promise<CommandResult[]> {
+    const results: CommandResult[] = [];
+
+    for (const command of commands) {
+      context.log("Verifier executing command", { command, cwd });
+      try {
+        const { stdout, stderr } = await execAsync(command, {
+          cwd,
+          timeout: 600000,
+          maxBuffer: 4 * 1024 * 1024,
+          env: process.env,
+        });
+
+        results.push({
+          command,
+          ok: true,
+          exit_code: 0,
+          stdout: (stdout ?? "").slice(0, 12000),
+          stderr: (stderr ?? "").slice(0, 12000),
+        });
+      } catch (error) {
+        const err = error as {
+          code?: number | string;
+          stdout?: string;
+          stderr?: string;
+          message?: string;
+        };
+
+        results.push({
+          command,
+          ok: false,
+          exit_code: typeof err.code === "number" ? err.code : 1,
+          stdout: (err.stdout ?? "").slice(0, 12000),
+          stderr: `${err.stderr ?? ""}${err.message ? `\n${err.message}` : ""}`.slice(0, 12000),
+        });
+
+        // Fail fast on first command failure to reduce cost and runtime.
+        break;
+      }
+    }
+
+    return results;
+  }
+
+  private async triageFailures(opts: {
+    taskId: string;
+    commandResults: CommandResult[];
+    briefContent?: string;
+    taskContent?: string;
+    implContent?: string;
+  }): Promise<LlmResponse> {
+    const systemPrompt = await governanceService.getPrompt("verifier");
+    const provider = await llmFactory.forRole("verifier");
+
+    const sections: string[] = [];
+    if (opts.briefContent) sections.push(`# AI_IMPLEMENTATION_BRIEF.md\n\n${opts.briefContent}`);
+    if (opts.taskContent) sections.push(`# current_task.json\n\n${opts.taskContent}`);
+    if (opts.implContent) sections.push(`# implementation_summary.md\n\n${opts.implContent}`);
+    sections.push(`# command_results.json\n\n${JSON.stringify(opts.commandResults, null, 2)}`);
+
+    const userContent = `${sections.join("\n\n---\n\n")}\n\nAnalyze command failures and return required corrections.`;
+
+    const llm = await provider.chatJson<LlmResponse>([
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userContent },
+    ]);
+
+    if (!llm.summary) {
+      return {
+        task_id: opts.taskId,
+        result: "FAIL",
+        summary: "Verification command failed. Review command_results for details.",
+        required_corrections: ["Fix failing verifier command output in command_results."],
+        handoff: {
+          changed_scope: [],
+          verification_state: "fail",
+          open_risks: ["Verification command failed"],
+          next_role_action: "implementer_retry",
+          evidence_refs: [],
+        },
+      };
+    }
+
+    return {
+      ...llm,
+      task_id: llm.task_id || opts.taskId,
+      result: "FAIL",
+    };
+  }
+
+  private extractTaskId(taskJson?: string): string | undefined {
+    if (!taskJson) return undefined;
+    try {
+      const parsed = JSON.parse(taskJson) as { task_id?: string };
+      return parsed.task_id;
+    } catch {
+      return undefined;
+    }
+  }
+
   private formatMarkdown(result: VerificationResult, handoff?: HandoffContract): string {
-    const status = result.result === "PASS" ? "✅ PASS" : "❌ FAIL";
+    const status = result.result === "PASS" ? "PASS" : "FAIL";
     const corrections =
       result.required_corrections.length > 0
         ? result.required_corrections.map((c) => `- ${c}`).join("\n")
         : "None — all acceptance criteria met.";
+    const commandResults = result.command_results
+      .map((r) => `- [${r.ok ? "PASS" : "FAIL"}] \`${r.command}\` (exit=${r.exit_code})`)
+      .join("\n");
 
     const handoffSection = handoff
       ? `\n## Handoff Contract\n\`\`\`json\n${JSON.stringify(handoff, null, 2)}\n\`\`\``
@@ -166,6 +314,9 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
 
 ## Summary
 ${result.summary}
+
+## Command Results
+${commandResults}
 
 ## Required Corrections
 ${corrections}

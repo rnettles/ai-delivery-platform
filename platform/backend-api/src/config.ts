@@ -28,4 +28,7 @@ export const config = {
   llmOpenAiCompatDeployment: process.env.LLM_OPENAI_COMPAT_DEPLOYMENT ?? process.env.AZURE_OPENAI_DEPLOYMENT ?? "gpt-4.1",
   // LLM providers — Anthropic (Claude)
   llmAnthropicApiKey: process.env.LLM_ANTHROPIC_API_KEY ?? "",
+  // GitHub API integration (ADR-030)
+  githubToken: process.env.GITHUB_TOKEN ?? process.env.GIT_PAT ?? "",
+  githubApiBaseUrl: process.env.GITHUB_API_BASE_URL ?? "https://api.github.com",
 };

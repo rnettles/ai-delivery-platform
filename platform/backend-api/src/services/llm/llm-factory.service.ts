@@ -5,7 +5,7 @@ import { AnthropicProvider } from "./anthropic.provider";
 import { LlmProvider } from "./llm-provider.interface";
 import { OpenAiCompatProvider } from "./openai-compat.provider";
 
-type ProviderName = "openai-compat" | "anthropic";
+type ProviderName = "openai-compat" | "anthropic" | "claude-code";
 
 interface LlmRoleConfig {
   provider: ProviderName;
@@ -100,6 +100,19 @@ class LlmFactory {
         if (!apiKey) {
           throw new Error("LLM factory: anthropic requires LLM_ANTHROPIC_API_KEY");
         }
+        provider = new AnthropicProvider(apiKey, roleConfig.model);
+        break;
+      }
+      case "claude-code": {
+        // Temporary runtime alias: until Claude Code SDK orchestration is wired,
+        // map claude-code role configs onto Anthropic chat API for continuity.
+        const apiKey = config.llmAnthropicApiKey;
+        if (!apiKey) {
+          throw new Error("LLM factory: claude-code requires LLM_ANTHROPIC_API_KEY");
+        }
+        logger.info("LLM factory: provider 'claude-code' currently aliases to anthropic provider", {
+          model: roleConfig.model,
+        });
         provider = new AnthropicProvider(apiKey, roleConfig.model);
         break;
       }

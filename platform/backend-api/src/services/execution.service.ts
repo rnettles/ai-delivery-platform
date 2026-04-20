@@ -1,11 +1,10 @@
 import { randomUUID } from "crypto";
 import { executionRecordModel } from "../domain/execution.model";
 import { ExecutionQuery, ExecutionRecord, ExecutionRequestEnvelope, ExecutionResponseEnvelope } from "../domain/execution.types";
-import { scriptRegistry } from "./script-registry.service";
-import { validationService } from "./validation.service";
 import { logger } from "./logger.service";
 import { HttpError } from "../utils/http-error";
 import { gitSyncService } from "./git-sync.service";
+import { scriptRunnerService } from "./script-runner.service";
 
 export class ExecutionService {
 	async execute(
@@ -16,11 +15,10 @@ export class ExecutionService {
 		const executionId = randomUUID();
 		const startedAt = Date.now();
 		const gitSync = gitSyncService.getContext();
-
-		const { script, resolvedTarget } = scriptRegistry.resolveTarget(payload.target);
+		let resolvedTarget = payload.target;
 
 		try {
-			const output = await script.run(payload.input, {
+			const runResult = await scriptRunnerService.run(payload, {
 				execution_id: executionId,
 				correlation_id: payload.correlation_id,
 				request_id: requestId,
@@ -34,7 +32,8 @@ export class ExecutionService {
 				}
 			});
 
-			validationService.validateScriptOutput(script.descriptor.output_schema, output);
+			resolvedTarget = runResult.resolvedTarget;
+			const output = runResult.output;
 
 			const completedAt = Date.now();
 

@@ -74,16 +74,24 @@ export class PipelineService {
       ...req.metadata,
     };
 
-    // Resolve project from Slack channel or fall back to default (ADR-027)
+    // Resolve project from Slack channel or fall back to default (ADR-027).
+    // Keep create() resilient when project tables are unavailable (e.g., unit-test mocks).
     let projectId: string | undefined;
-    const slackChannel = metadata.slack_channel as string | undefined;
-    if (slackChannel) {
-      const project = await projectService.getByChannel(slackChannel);
-      projectId = project?.project_id;
-    }
-    if (!projectId) {
-      const defaultProject = await projectService.getByName("default");
-      projectId = defaultProject?.project_id;
+    try {
+      const slackChannel = metadata.slack_channel as string | undefined;
+      if (slackChannel) {
+        const project = await projectService.getByChannel(slackChannel);
+        projectId = project?.project_id;
+      }
+      if (!projectId) {
+        const defaultProject = await projectService.getByName("default");
+        projectId = defaultProject?.project_id;
+      }
+    } catch (err) {
+      logger.info("Project resolution skipped during pipeline create", {
+        pipeline_id: pipelineId,
+        error: String(err),
+      });
     }
 
     // Build step history: mark all roles before entry_point as not_applicable
@@ -315,9 +323,19 @@ export class PipelineService {
    */
   async setPrDetails(pipelineId: string, prNumber: number, prUrl: string, sprintBranch: string): Promise<PipelineRun> {
     const run = await this.get(pipelineId);
-    this.assertStatus(run, ["awaiting_pr_review"]);
+    this.assertStatus(run, ["running", "awaiting_pr_review"]);
     logger.info("Pipeline PR details set", { pipeline_id: pipelineId, pr_number: prNumber, pr_url: prUrl });
     return this.save(run, { pr_number: prNumber, pr_url: prUrl, sprint_branch: sprintBranch });
+  }
+
+  /**
+   * Persist sprint branch as soon as Sprint Controller (setup) creates it.
+   */
+  async setSprintBranch(pipelineId: string, sprintBranch: string): Promise<PipelineRun> {
+    const run = await this.get(pipelineId);
+    this.assertStatus(run, ["running", "awaiting_pr_review", "paused_takeover"]);
+    logger.info("Pipeline sprint branch set", { pipeline_id: pipelineId, sprint_branch: sprintBranch });
+    return this.save(run, { sprint_branch: sprintBranch });
   }
 
   /**

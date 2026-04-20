@@ -4,7 +4,6 @@ import { PlannerScript } from "../scripts/role-planner.script";
 import { SprintControllerScript } from "../scripts/role-sprint-controller.script";
 import { ImplementerScript } from "../scripts/role-implementer.script";
 import { VerifierScript } from "../scripts/role-verifier.script";
-import { FixerScript } from "../scripts/role-fixer.script";
 import { ExecutionTarget, RoleDiscovery, ScriptDiscovery, ScriptsDiscoveryResponse } from "../domain/execution.types";
 import { HttpError } from "../utils/http-error";
 
@@ -25,7 +24,6 @@ export class ScriptRegistryService {
     this.register(new SprintControllerScript());
     this.register(new ImplementerScript());
     this.register(new VerifierScript());
-    this.register(new FixerScript());
 
     // Legacy test binding kept for backward compat
     this.registerRoleBinding("planner", "2026.04.18", "test.echo", "2026.04.18");
@@ -35,7 +33,6 @@ export class ScriptRegistryService {
     this.registerRoleBinding("sprint-controller", "2026.04.19", "role.sprint-controller", "2026.04.19");
     this.registerRoleBinding("implementer", "2026.04.19", "role.implementer", "2026.04.19");
     this.registerRoleBinding("verifier", "2026.04.19", "role.verifier", "2026.04.19");
-    this.registerRoleBinding("fixer", "2026.04.19", "role.fixer", "2026.04.19");
   }
 
   register(script: Script): void {

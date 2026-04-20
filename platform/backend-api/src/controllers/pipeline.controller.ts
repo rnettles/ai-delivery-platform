@@ -183,9 +183,29 @@ async function executeCurrentStep(
     let verificationPassed: boolean | undefined;
     if (result.output && typeof result.output === "object") {
       const out = result.output as Record<string, unknown>;
-      if ("artifact_path" in out && typeof out.artifact_path === "string") {
-        artifactPaths.push(out.artifact_path);
+
+      // Collect artifact paths from common output keys:
+      // - artifact_path
+      // - any string field ending with _path
+      // - any string[] field ending with _paths
+      for (const [key, value] of Object.entries(out)) {
+        if (key === "artifact_path" && typeof value === "string") {
+          artifactPaths.push(value);
+          continue;
+        }
+        if (key.endsWith("_path") && typeof value === "string") {
+          artifactPaths.push(value);
+          continue;
+        }
+        if (key.endsWith("_paths") && Array.isArray(value)) {
+          for (const item of value) {
+            if (typeof item === "string") {
+              artifactPaths.push(item);
+            }
+          }
+        }
       }
+
       if (role === "verifier" && "passed" in out) {
         verificationPassed = Boolean(out.passed);
       }

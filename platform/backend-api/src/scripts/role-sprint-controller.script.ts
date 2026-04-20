@@ -2,6 +2,10 @@ import { Script, ScriptExecutionContext } from "./script.interface";
 import { llmFactory } from "../services/llm/llm-factory.service";
 import { artifactService } from "../services/artifact.service";
 import { governanceService } from "../services/governance.service";
+import { pipelineService } from "../services/pipeline.service";
+import { projectService } from "../services/project.service";
+import { projectGitService } from "../services/project-git.service";
+import { githubApiService } from "../services/github-api.service";
 
 export interface SprintControllerInput {
   previous_artifacts?: string[];
@@ -54,6 +58,10 @@ export interface SprintControllerOutput {
   current_task_path: string;
   task_flags: TaskFlags;
   first_task: SprintTask;
+  sprint_branch?: string;
+  pr_number?: number;
+  pr_url?: string;
+  artifact_paths: string[];
 }
 
 interface LlmResponse {
@@ -89,6 +97,23 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
     context.log("Sprint Controller running", { pipeline_id: pipelineId });
 
     const previousArtifacts = typed.previous_artifacts ?? [];
+
+    // Close-out mode: verifier has produced verification_result.json (PASS/FAIL)
+    const verificationArtifact = await artifactService.findFirst(
+      previousArtifacts.filter((p) => p.includes("verification_result.json"))
+    );
+    if (verificationArtifact) {
+      return this.runCloseOut(pipelineId, previousArtifacts, verificationArtifact.content, context);
+    }
+
+    return this.runSetup(pipelineId, previousArtifacts, context);
+  }
+
+  private async runSetup(
+    pipelineId: string,
+    previousArtifacts: string[],
+    context: ScriptExecutionContext
+  ): Promise<SprintControllerOutput> {
     const phasePlanArtifact = await artifactService.findFirst(
       previousArtifacts.filter((p) => p.includes("phase_plan")).concat(previousArtifacts)
     );
@@ -140,10 +165,24 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       JSON.stringify(currentTask, null, 2)
     );
 
-    context.log("Sprint Controller complete", {
+    const run = await pipelineService.get(pipelineId);
+    const project = run.project_id
+      ? await projectService.getById(run.project_id)
+      : await projectService.getByName("default");
+
+    let sprintBranch: string | undefined;
+    if (project) {
+      sprintBranch = `sprint/${llm.sprint_plan.sprint_id.toLowerCase()}`;
+      await projectGitService.ensureReady(project);
+      await projectGitService.createBranch(project, sprintBranch);
+      await pipelineService.setSprintBranch(pipelineId, sprintBranch);
+    }
+
+    context.log("Sprint Controller setup complete", {
       sprint_id: llm.sprint_plan.sprint_id,
       first_task: llm.first_task.task_id,
       brief_path: briefPath,
+      sprint_branch: sprintBranch,
     });
 
     const output: SprintControllerOutput = {
@@ -154,9 +193,118 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       current_task_path: currentTaskPath,
       task_flags: llm.task_flags,
       first_task: llm.first_task,
+      sprint_branch: sprintBranch,
+      artifact_paths: [sprintPlanPath, briefPath, currentTaskPath],
     };
 
     return output;
+  }
+
+  private async runCloseOut(
+    pipelineId: string,
+    previousArtifacts: string[],
+    verificationJson: string,
+    context: ScriptExecutionContext
+  ): Promise<SprintControllerOutput> {
+    const verification = JSON.parse(verificationJson) as { result?: string; summary?: string; task_id?: string };
+    if (verification.result !== "PASS") {
+      throw new Error("Sprint Controller close-out called before verifier PASS");
+    }
+
+    const run = await pipelineService.get(pipelineId);
+    const project = run.project_id
+      ? await projectService.getById(run.project_id)
+      : await projectService.getByName("default");
+    if (!project) {
+      throw new Error("Sprint Controller close-out failed: project not found");
+    }
+
+    const sprintBranch = run.sprint_branch ?? `sprint/${pipelineId}`;
+
+    await projectGitService.ensureReady(project);
+    await projectGitService.push(project, sprintBranch);
+
+    const sprintPlanArtifact = await artifactService.findFirst(
+      previousArtifacts.filter((p) => p.includes("sprint_plan_"))
+    );
+
+    const title = `[${sprintBranch}] Autonomous sprint`;
+    const body = [
+      "## Sprint Summary",
+      verification.summary ?? "Verifier passed.",
+      "",
+      "## Pipeline",
+      `Pipeline ID: ${pipelineId}`,
+      verification.task_id ? `Last Task: ${verification.task_id}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const pr = await githubApiService.createPullRequest({
+      repoUrl: project.repo_url,
+      title,
+      body,
+      head: sprintBranch,
+      base: project.default_branch,
+    });
+
+    await pipelineService.setPrDetails(pipelineId, pr.number, pr.html_url, sprintBranch);
+
+    const closeOutPath = await artifactService.write(
+      pipelineId,
+      "sprint_closeout.json",
+      JSON.stringify(
+        {
+          pipeline_id: pipelineId,
+          sprint_branch: sprintBranch,
+          pr_number: pr.number,
+          pr_url: pr.html_url,
+          verifier_summary: verification.summary ?? "",
+        },
+        null,
+        2
+      )
+    );
+
+    context.log("Sprint Controller close-out complete", {
+      pipeline_id: pipelineId,
+      sprint_branch: sprintBranch,
+      pr_number: pr.number,
+      pr_url: pr.html_url,
+    });
+
+    return {
+      sprint_id: this.extractSprintId(sprintPlanArtifact?.path, pipelineId),
+      phase_id: "closeout",
+      sprint_plan_path: sprintPlanArtifact?.path ?? "",
+      brief_path: "",
+      current_task_path: "",
+      task_flags: {
+        fr_ids_in_scope: [],
+        architecture_contract_change: false,
+        ui_evidence_required: false,
+        incident_tier: "none",
+      },
+      first_task: {
+        task_id: verification.task_id ?? "n/a",
+        title: "Sprint close-out",
+        description: "Push sprint branch and create PR",
+        acceptance_criteria: ["Pull request created"],
+        estimated_effort: "S",
+        files_likely_affected: [],
+        status: "pending",
+      },
+      sprint_branch: sprintBranch,
+      pr_number: pr.number,
+      pr_url: pr.html_url,
+      artifact_paths: [closeOutPath],
+    };
+  }
+
+  private extractSprintId(sprintPlanPath: string | undefined, fallback: string): string {
+    if (!sprintPlanPath) return fallback;
+    const match = sprintPlanPath.match(/sprint_plan_([^/.]+)\.md/i);
+    return match?.[1] ?? fallback;
   }
 
   private formatSprintMarkdown(plan: SprintPlan, firstTask: SprintTask): string {
