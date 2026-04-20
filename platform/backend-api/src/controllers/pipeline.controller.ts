@@ -228,6 +228,13 @@ async function executeCurrentStep(
       artifact_paths: artifactPaths,
       metadata: run.metadata,
     });
+
+      // Autonomous chaining (ADR-030): if the pipeline is still running and no human
+      // gate is required, immediately kick off the next role without waiting.
+      if (run.status === "running" && run.current_step !== "complete") {
+        const nextRole = run.current_step as PipelineRole;
+        executeCurrentStep(pipelineId, nextRole, {}, requestId).catch(() => {});
+      }
   } catch (error) {
     logger.error("Pipeline step execution failed", {
       pipeline_id: pipelineId,
