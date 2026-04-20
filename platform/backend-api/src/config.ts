@@ -31,4 +31,6 @@ export const config = {
   // GitHub API integration (ADR-030)
   githubToken: process.env.GITHUB_TOKEN ?? process.env.GIT_PAT ?? "",
   githubApiBaseUrl: process.env.GITHUB_API_BASE_URL ?? "https://api.github.com",
+  // GitHub Models (LLM via Copilot subscription) — uses GIT_PAT by default
+  llmGitHubModelsApiKey: process.env.LLM_GITHUB_MODELS_API_KEY ?? process.env.GIT_PAT ?? "",
 };

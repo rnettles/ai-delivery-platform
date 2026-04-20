@@ -2,10 +2,11 @@ import { config } from "../../config";
 import { governanceService } from "../governance.service";
 import { logger } from "../logger.service";
 import { AnthropicProvider } from "./anthropic.provider";
+import { GitHubModelsProvider } from "./github-models.provider";
 import { LlmProvider } from "./llm-provider.interface";
 import { OpenAiCompatProvider } from "./openai-compat.provider";
 
-type ProviderName = "openai-compat" | "anthropic" | "claude-code";
+type ProviderName = "openai-compat" | "anthropic" | "claude-code" | "github-models";
 
 interface LlmRoleConfig {
   provider: ProviderName;
@@ -70,9 +71,13 @@ class LlmFactory {
       logger.info("LLM factory: using anthropic fallback", { role });
       return { provider: "anthropic", model: "claude-opus-4-5" };
     }
+    if (config.llmGitHubModelsApiKey) {
+      logger.info("LLM factory: using github-models fallback", { role });
+      return { provider: "github-models", model: "gpt-4o" };
+    }
     throw new Error(
       `LLM factory: no provider configured for role '${role}'. ` +
-      "Set LLM_OPENAI_COMPAT_ENDPOINT + LLM_OPENAI_COMPAT_API_KEY or LLM_ANTHROPIC_API_KEY."
+      "Set LLM_OPENAI_COMPAT_ENDPOINT + LLM_OPENAI_COMPAT_API_KEY, LLM_ANTHROPIC_API_KEY, or LLM_GITHUB_MODELS_API_KEY."
     );
   }
 
@@ -114,6 +119,16 @@ class LlmFactory {
           model: roleConfig.model,
         });
         provider = new AnthropicProvider(apiKey, roleConfig.model);
+        break;
+      }
+      case "github-models": {
+        const apiKey = config.llmGitHubModelsApiKey;
+        if (!apiKey) {
+          throw new Error(
+            "LLM factory: github-models requires LLM_GITHUB_MODELS_API_KEY or GIT_PAT"
+          );
+        }
+        provider = new GitHubModelsProvider(apiKey, roleConfig.model);
         break;
       }
       default: {
