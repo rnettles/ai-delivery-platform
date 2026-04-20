@@ -1,3 +1,4 @@
+import { setTimeout as delay } from "timers/promises";
 import { logger } from "../logger.service";
 import {
   ChatMessage,
@@ -174,22 +175,44 @@ export class AnthropicProvider implements LlmProvider {
   }
 
   private async post(body: Record<string, unknown>): Promise<AnthropicResponse> {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": this.apiKey,
-        "anthropic-version": this.apiVersion,
-      },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(180_000),
-    });
+    const maxAttempts = Number(process.env.LLM_ANTHROPIC_MAX_ATTEMPTS ?? 3);
 
-    if (!response.ok) {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": this.apiKey,
+          "anthropic-version": this.apiVersion,
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(180_000),
+      });
+
+      if (response.ok) {
+        return response.json() as Promise<AnthropicResponse>;
+      }
+
       const text = await response.text();
+      if (response.status === 429 && attempt < maxAttempts) {
+        const retryAfterSeconds = Number(response.headers.get("retry-after") ?? "0");
+        const inputReset = Number(response.headers.get("anthropic-ratelimit-input-tokens-reset") ?? "0");
+        const outputReset = Number(response.headers.get("anthropic-ratelimit-output-tokens-reset") ?? "0");
+        const resetMs = Math.max(retryAfterSeconds * 1000, inputReset * 1000, outputReset * 1000, 5000);
+
+        logger.info("Anthropic rate limited, retrying", {
+          model: this.model,
+          attempt,
+          next_attempt_in_ms: resetMs,
+        });
+
+        await delay(resetMs);
+        continue;
+      }
+
       throw new Error(`Anthropic error ${response.status}: ${text.slice(0, 500)}`);
     }
 
-    return response.json() as Promise<AnthropicResponse>;
+    throw new Error(`Anthropic retry loop exhausted for model ${this.model}`);
   }
 }
