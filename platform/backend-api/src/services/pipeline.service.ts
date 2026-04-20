@@ -24,6 +24,15 @@ export interface PipelineStatusSummary extends PipelineRun {
   last_error?: { code: string; message: string; details?: unknown };
   prior_step_detail?: PipelineStepRecord;
   current_step_detail?: PipelineStepRecord;
+  execution_signals?: PipelineExecutionSignal[];
+}
+
+export interface PipelineExecutionSignal {
+  level: "waiting" | "warning" | "error";
+  code: string;
+  message: string;
+  since?: string;
+  minutes?: number;
 }
 
 export interface PipelineStatusChoice {
@@ -35,6 +44,7 @@ export interface PipelineStatusChoice {
   repo_url?: string;
   sprint_branch?: string;
   updated_at: string;
+  wait_state?: string;
 }
 
 export type CurrentPipelineStatusResult =
@@ -84,6 +94,93 @@ function rowToRun(row: typeof pipelineRuns.$inferSelect): PipelineRun {
     created_at: row.created_at.toISOString(),
     updated_at: row.updated_at.toISOString(),
   };
+}
+
+function minutesSince(iso: string | undefined, nowMs: number): number | undefined {
+  if (!iso) return undefined;
+  const ts = Date.parse(iso);
+  if (Number.isNaN(ts)) return undefined;
+  return Math.floor((nowMs - ts) / 60000);
+}
+
+function summarizeWaitState(run: PipelineRun): string | undefined {
+  if (run.status === "awaiting_approval") return "Waiting for approval";
+  if (run.status === "awaiting_pr_review") return "Waiting for PR review";
+  if (run.status === "paused_takeover") return "Waiting for human handoff";
+
+  if (run.status === "running") {
+    const idleMinutes = minutesSince(run.updated_at, Date.now());
+    if (idleMinutes !== undefined && idleMinutes >= 10) {
+      return `No state update for ${idleMinutes}m`;
+    }
+  }
+
+  return undefined;
+}
+
+function buildExecutionSignals(run: PipelineRun, summary: PipelineStatusSummary): PipelineExecutionSignal[] {
+  const signals: PipelineExecutionSignal[] = [];
+  const nowMs = Date.now();
+
+  if (summary.last_error) {
+    signals.push({
+      level: "error",
+      code: summary.last_error.code,
+      message: summary.last_error.message,
+    });
+  }
+
+  if (run.status === "awaiting_approval") {
+    signals.push({
+      level: "waiting",
+      code: "WAITING_APPROVAL",
+      message: "Pipeline is waiting for approval before it can continue.",
+    });
+  }
+
+  if (run.status === "awaiting_pr_review") {
+    signals.push({
+      level: "waiting",
+      code: "WAITING_PR_REVIEW",
+      message: "Pipeline is waiting for PR review completion.",
+    });
+  }
+
+  if (run.status === "paused_takeover") {
+    signals.push({
+      level: "waiting",
+      code: "WAITING_HANDOFF",
+      message: "Pipeline is paused in takeover and waiting for handoff.",
+    });
+  }
+
+  const current = summary.current_step_detail;
+  if (run.status === "running" && current?.status === "running") {
+    const stepAgeMinutes = minutesSince(current.started_at, nowMs);
+    const idleMinutes = minutesSince(run.updated_at, nowMs);
+
+    if (stepAgeMinutes !== undefined && stepAgeMinutes >= 10) {
+      signals.push({
+        level: "warning",
+        code: "STEP_RUNNING_LONG",
+        message: `Current step has been running for ${stepAgeMinutes}m.`,
+        since: current.started_at,
+        minutes: stepAgeMinutes,
+      });
+    }
+
+    if (idleMinutes !== undefined && idleMinutes >= 10) {
+      signals.push({
+        level: "warning",
+        code: "NO_STATE_PROGRESS",
+        message: `No pipeline state change detected for ${idleMinutes}m while step is running.`,
+        since: run.updated_at,
+        minutes: idleMinutes,
+      });
+    }
+  }
+
+  return signals;
 }
 
 export class PipelineService {
@@ -555,6 +652,8 @@ export class PipelineService {
       }
     }
 
+    summary.execution_signals = buildExecutionSignals(run, summary);
+
     return summary;
   }
 
@@ -580,6 +679,22 @@ export class PipelineService {
       .orderBy(desc(pipelineRuns.updated_at));
 
     if (rows.length === 0) {
+      if (channelId) {
+        const latestRows = await db
+          .select()
+          .from(pipelineRuns)
+          .where(sql`${pipelineRuns.metadata} ->> 'slack_channel' = ${channelId}`)
+          .orderBy(desc(pipelineRuns.updated_at))
+          .limit(1);
+
+        if (latestRows.length > 0) {
+          return {
+            kind: "single",
+            run: await this.getStatusSummary(latestRows[0].pipeline_id),
+          };
+        }
+      }
+
       return {
         kind: "none",
         message: channelId
@@ -625,6 +740,7 @@ export class PipelineService {
           repo_url: repoUrl,
           sprint_branch: run.sprint_branch,
           updated_at: run.updated_at,
+          wait_state: summarizeWaitState(run),
         };
       })
     );

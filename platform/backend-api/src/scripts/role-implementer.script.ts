@@ -286,7 +286,9 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       try {
         const message = `feat(${finishPayload.task_id}): implement task\n\n${finishPayload.summary}`;
         commitSha = await projectGitService.commitAll(project, sprintBranch, message);
+        await projectGitService.push(project, sprintBranch);
         context.log("Implementer: committed", { commit_sha: commitSha, sprint_branch: sprintBranch });
+        context.log("Implementer: pushed", { commit_sha: commitSha, sprint_branch: sprintBranch });
       } catch (err) {
         context.log("Implementer: git commit failed", { error: String(err) });
       }

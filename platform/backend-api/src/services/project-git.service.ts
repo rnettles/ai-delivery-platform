@@ -38,7 +38,14 @@ class ProjectGitService {
   }
 
   /**
-   * Create and checkout a new branch from the current HEAD of default branch.
+   * Ensure a branch exists and check it out.
+   *
+   * Behavior:
+   *  - If local branch exists: checkout it
+   *  - Else if remote branch exists: create local tracking branch from origin
+   *  - Else: create a new branch from current default-branch HEAD
+   *
+   * This is intentionally non-destructive for existing branches.
    * Caller must have called ensureReady() first.
    */
   async createBranch(project: Project, branchName: string): Promise<void> {
@@ -46,7 +53,19 @@ class ProjectGitService {
       logger.info("git: creating branch", { project: project.name, branch: branchName });
       this.git(project.clone_path, ["checkout", project.default_branch]);
       this.git(project.clone_path, ["pull", "--ff-only"]);
-      this.git(project.clone_path, ["checkout", "-B", branchName]);
+      this.git(project.clone_path, ["fetch", "origin"]);
+
+      if (this.branchExistsLocal(project.clone_path, branchName)) {
+        this.git(project.clone_path, ["checkout", branchName]);
+        return;
+      }
+
+      if (this.branchExistsRemote(project.clone_path, branchName)) {
+        this.git(project.clone_path, ["checkout", "-b", branchName, `origin/${branchName}`]);
+        return;
+      }
+
+      this.git(project.clone_path, ["checkout", "-b", branchName]);
     });
   }
 
@@ -157,6 +176,24 @@ class ProjectGitService {
 
   private headCommit(clonePath: string): string {
     return this.git(clonePath, ["rev-parse", "HEAD"]).trim();
+  }
+
+  private branchExistsLocal(clonePath: string, branchName: string): boolean {
+    try {
+      this.git(clonePath, ["show-ref", "--verify", `refs/heads/${branchName}`]);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private branchExistsRemote(clonePath: string, branchName: string): boolean {
+    try {
+      this.git(clonePath, ["show-ref", "--verify", `refs/remotes/origin/${branchName}`]);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /** Embed PAT into URL for credential-free HTTPS auth (ADR-011) */

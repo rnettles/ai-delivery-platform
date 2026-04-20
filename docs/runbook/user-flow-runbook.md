@@ -37,7 +37,7 @@ n8n Action Handler  →  POST /pipeline/:id/{approve|takeover|skip}  →  Execut
 | `/approve [pipeline-id]` | Pipeline ID | Approves the current gate — advances the pipeline |
 | `/takeover [pipeline-id]` | Pipeline ID | Pauses the pipeline — you own the current step |
 | `/handoff [pipeline-id] [artifact-path]` | Pipeline ID + optional artifact | Marks your human step complete — resumes the pipeline |
-| `/status [pipeline-id]` | Pipeline ID | Returns current state of the pipeline run |
+| `/status [pipeline-id]` | Optional pipeline ID | Returns current state for that pipeline ID, or the latest pipeline for your channel when omitted |
 
 `mode` values:
 - `next` (default): run only the entry role, then stop
@@ -89,6 +89,8 @@ Skips Planner. Entry point: `sprint-controller`. Continues through downstream fl
 ```
 
 Runs Implementer for one task. Entry point: `implementer`. Continues to Verifier and stops on PASS.
+
+During this flow, Implementer commits and pushes incrementally to the task feature branch associated with the sprint.
 
 ---
 
@@ -148,6 +150,14 @@ Use this when the failure is a known fluke and does not block delivery.
 Returns the current status (`running`, `awaiting_approval`, `failed`, `complete`, `paused_takeover`) and the active step.
 
 For sprint close-out flows, status may also be `awaiting_pr_review`.
+
+You can also omit the ID:
+
+```
+/status
+```
+
+When omitted, the platform returns the latest pipeline for your Slack channel. This is useful when a `next` mode run completes quickly and is no longer in an active state.
 
 ---
 

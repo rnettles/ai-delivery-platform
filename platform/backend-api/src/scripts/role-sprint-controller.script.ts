@@ -70,6 +70,20 @@ interface LlmResponse {
   task_flags: TaskFlags;
 }
 
+function slug(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+}
+
+function buildTaskFeatureBranch(taskId: string, sprintId: string): string {
+  const task = slug(taskId) || "task";
+  const sprint = slug(sprintId) || "sprint";
+  return `feature/${task}-${sprint}`;
+}
+
 export class SprintControllerScript implements Script<Record<string, unknown>, unknown> {
   public readonly descriptor = {
     name: "role.sprint-controller",
@@ -172,7 +186,7 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
 
     let sprintBranch: string | undefined;
     if (project) {
-      sprintBranch = `sprint/${llm.sprint_plan.sprint_id.toLowerCase()}`;
+      sprintBranch = buildTaskFeatureBranch(llm.first_task.task_id, llm.sprint_plan.sprint_id);
       await projectGitService.ensureReady(project);
       await projectGitService.createBranch(project, sprintBranch);
       await pipelineService.setSprintBranch(pipelineId, sprintBranch);
@@ -219,7 +233,7 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       throw new Error("Sprint Controller close-out failed: project not found");
     }
 
-    const sprintBranch = run.sprint_branch ?? `sprint/${pipelineId}`;
+    const sprintBranch = run.sprint_branch ?? `feature/${pipelineId}`;
 
     await projectGitService.ensureReady(project);
     await projectGitService.push(project, sprintBranch);
