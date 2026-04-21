@@ -1,0 +1,1879 @@
+extracted_rules:
+
+  # ── platform/governance/rules/global_rules.md ──────────────────────────────
+
+  - id: GR-001
+    source: platform/governance/rules/global_rules.md
+    category: scope
+    rule: "Must not perform the work of another role."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: GR-002
+    source: platform/governance/rules/global_rules.md
+    category: scope
+    rule: "Must not expand scope beyond the current task."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: GR-003
+    source: platform/governance/rules/global_rules.md
+    category: scope
+    rule: "Never delete files unless explicitly instructed."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: GR-004
+    source: platform/governance/rules/global_rules.md
+    category: scope
+    rule: "Never modify database migrations unless required by the current task."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: GR-005
+    source: platform/governance/rules/global_rules.md
+    category: scope
+    rule: "Never refactor unrelated modules."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: GR-006
+    source: platform/governance/rules/global_rules.md
+    category: scope
+    rule: "Must not implement future sprint tasks."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: GR-007
+    source: platform/governance/rules/global_rules.md
+    category: scope
+    rule: "Must modify no more than 5 files per task in standard mode."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: GR-008
+    source: platform/governance/rules/global_rules.md
+    category: scope
+    rule: "Must keep changes under 200 lines of code per task in standard mode."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: GR-009
+    source: platform/governance/rules/global_rules.md
+    category: scope
+    rule: "All new behavior must have tests."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: GR-010
+    source: platform/governance/rules/global_rules.md
+    category: validation
+    rule: "Tests must include a success case, a failure case, and an edge case."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: GR-011
+    source: platform/governance/rules/global_rules.md
+    category: artifacts
+    rule: "Output ONLY valid JSON unless the role's prompt specifies otherwise."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: GR-012
+    source: platform/governance/rules/global_rules.md
+    category: artifacts
+    rule: "Must not wrap output in markdown code fences."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: GR-013
+    source: platform/governance/rules/global_rules.md
+    category: artifacts
+    rule: "Must not include prose or explanation outside the JSON structure."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: GR-014
+    source: platform/governance/rules/global_rules.md
+    category: scope
+    rule: "Must not implement behavior that contradicts an Accepted ADR; must flag the conflict instead."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: GR-015
+    source: platform/governance/rules/global_rules.md
+    category: scope
+    rule: "Must not invent component interfaces or field schemas not specified in an approved design document."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: GR-016
+    source: platform/governance/rules/global_rules.md
+    category: context
+    rule: "All role prompts, schemas, and contracts must be versioned with the governance manifest (platform/governance/)."
+    confidence: explicit
+    enforcement: code_enforced
+
+  # ── platform/governance/rules/runtime_gates.md ─────────────────────────────
+
+  - id: RG-001
+    source: platform/governance/rules/runtime_gates.md
+    category: validation
+    rule: "All implementation tasks must pass lint on changed files before the Verifier runs."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: RG-002
+    source: platform/governance/rules/runtime_gates.md
+    category: validation
+    rule: "All implementation tasks must pass typecheck on changed files before the Verifier runs."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: RG-003
+    source: platform/governance/rules/runtime_gates.md
+    category: validation
+    rule: "All implementation tasks must pass relevant unit and integration tests before the Verifier runs."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: RG-004
+    source: platform/governance/rules/runtime_gates.md
+    category: validation
+    rule: "The Verifier must FAIL the task if any gate (lint, typecheck, tests) is not represented in the implementation evidence."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: RG-005
+    source: platform/governance/rules/runtime_gates.md
+    category: lifecycle
+    rule: "The Fixer must address all gate failures before the Verifier is permitted to re-run."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: RG-006
+    source: platform/governance/rules/runtime_gates.md
+    category: traceability
+    rule: "Each file change must trace to at least one acceptance criterion."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: RG-007
+    source: platform/governance/rules/runtime_gates.md
+    category: artifacts
+    rule: "The implementation summary must include a test_approach field describing test types, specific behaviors tested, and which acceptance criteria each test covers."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  # ── platform/governance/rules/runtime_loading_rules.md ─────────────────────
+
+  - id: RL-001
+    source: platform/governance/rules/runtime_loading_rules.md
+    category: context
+    rule: "All roles must always load AI_IMPLEMENTATION_BRIEF.md as Stage A."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: RL-002
+    source: platform/governance/rules/runtime_loading_rules.md
+    category: context
+    rule: "All roles must always load current_task.json as Stage A."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: RL-003
+    source: platform/governance/rules/runtime_loading_rules.md
+    category: context
+    rule: "Verifier and Fixer roles must always load verification_result.json as Stage A."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: RL-004
+    source: platform/governance/rules/runtime_loading_rules.md
+    category: context
+    rule: "Must load referenced functional requirement sections when fr_ids_in_scope is not empty (Stage B)."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: RL-005
+    source: platform/governance/rules/runtime_loading_rules.md
+    category: context
+    rule: "Must load referenced architecture docs when architecture_contract_change is true (Stage B)."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: RL-006
+    source: platform/governance/rules/runtime_loading_rules.md
+    category: context
+    rule: "Must load UI test guidance and evidence references when ui_evidence_required is true (Stage B)."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: RL-007
+    source: platform/governance/rules/runtime_loading_rules.md
+    category: context
+    rule: "Must load governance incident or reconciliation sections when incident_tier is p0 or p1 (Stage B)."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: RL-008
+    source: platform/governance/rules/runtime_loading_rules.md
+    category: context
+    rule: "Must load additional documents (Stage C) only when a concrete failure or correction references them."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: RL-009
+    source: platform/governance/rules/runtime_loading_rules.md
+    category: context
+    rule: "The same task flags must resolve to the same Stage B document set across runs (determinism)."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: RL-010
+    source: platform/governance/rules/runtime_loading_rules.md
+    category: context
+    rule: "Must not expand Stage B document loads based on intuition or convenience."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: RL-011
+    source: platform/governance/rules/runtime_loading_rules.md
+    category: context
+    rule: "If a needed document is not covered by task flags, it must only be loaded under Stage C with an evidence link."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: RL-012
+    source: platform/governance/rules/runtime_loading_rules.md
+    category: context
+    rule: "Must not load onboarding or setup documents during the implementation loop unless the user explicitly requests them."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  # ── platform/governance/rules/handoff_contract.md ──────────────────────────
+
+  - id: HC-001
+    source: platform/governance/rules/handoff_contract.md
+    category: handoff
+    rule: "All handoff artifacts must include a changed_scope field."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: HC-002
+    source: platform/governance/rules/handoff_contract.md
+    category: handoff
+    rule: "All handoff artifacts must include a verification_state field with value pass, fail, or not_run."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: HC-003
+    source: platform/governance/rules/handoff_contract.md
+    category: handoff
+    rule: "All handoff artifacts must include an open_risks field (may be empty array)."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: HC-004
+    source: platform/governance/rules/handoff_contract.md
+    category: handoff
+    rule: "All handoff artifacts must include a next_role_action field stating the exact action expected from the downstream role."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: HC-005
+    source: platform/governance/rules/handoff_contract.md
+    category: handoff
+    rule: "All handoff artifacts must include an evidence_refs field listing supporting artifact paths."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: HC-006
+    source: platform/governance/rules/handoff_contract.md
+    category: handoff
+    rule: "Must use the handoff contract structure instead of narrative summaries in active handoff artifacts."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: HC-007
+    source: platform/governance/rules/handoff_contract.md
+    category: handoff
+    rule: "Active handoff artifacts are overwrite-only and must contain only the current task state."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  # ── platform/governance/rules/task_flags_contract.md ───────────────────────
+
+  - id: TF-001
+    source: platform/governance/rules/task_flags_contract.md
+    category: context
+    rule: "Sprint Controller must emit fr_ids_in_scope flag (array of FR IDs or empty array) for every task."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: TF-002
+    source: platform/governance/rules/task_flags_contract.md
+    category: context
+    rule: "Sprint Controller must emit architecture_contract_change flag (boolean) for every task."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: TF-003
+    source: platform/governance/rules/task_flags_contract.md
+    category: context
+    rule: "Sprint Controller must emit ui_evidence_required flag (boolean) for every task."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: TF-004
+    source: platform/governance/rules/task_flags_contract.md
+    category: context
+    rule: "Sprint Controller must emit incident_tier flag (none | p0 | p1 | p2 | p3) for every task."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: TF-005
+    source: platform/governance/rules/task_flags_contract.md
+    category: context
+    rule: "Task flags must be emitted by the sprint-controller and included in current_task.json."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: TF-006
+    source: platform/governance/rules/task_flags_contract.md
+    category: context
+    rule: "architecture_contract_change must be set true if ADRs or architecture docs change."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: TF-007
+    source: platform/governance/rules/task_flags_contract.md
+    category: context
+    rule: "ui_evidence_required must be set true for any user-facing feature."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  # ── platform/governance/prompts/role-planner.md ─────────────────────────────
+
+  - id: PP-001
+    source: platform/governance/prompts/role-planner.md
+    category: scope
+    rule: "Planner must never write code."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: PP-002
+    source: platform/governance/prompts/role-planner.md
+    category: artifacts
+    rule: "Planner output must be valid JSON matching phase_plan.schema.json exactly — no markdown, no prose."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: PP-003
+    source: platform/governance/prompts/role-planner.md
+    category: artifacts
+    rule: "phase_id must follow the format PH-{STREAM}-{N} where STREAM is 2-6 uppercase letters from the topic area."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: PP-004
+    source: platform/governance/prompts/role-planner.md
+    category: artifacts
+    rule: "objectives must contain 2-4 measurable outcomes, each independently verifiable."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: PP-005
+    source: platform/governance/prompts/role-planner.md
+    category: artifacts
+    rule: "deliverables must be concrete artifacts or features that can be checked into Git."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: PP-006
+    source: platform/governance/prompts/role-planner.md
+    category: lifecycle
+    rule: "Phase status must always be 'Draft' — the Planner must never activate a phase."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: PP-007
+    source: platform/governance/prompts/role-planner.md
+    category: scope
+    rule: "Must not produce sprint plans or implementation details — that is the Sprint Controller's job."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  # ── platform/governance/prompts/role-sprint-controller.md ───────────────────
+
+  - id: SC-001
+    source: platform/governance/prompts/role-sprint-controller.md
+    category: scope
+    rule: "Sprint tasks must be atomic: ≤ 5 files modified and ≤ 200 lines of code each."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: SC-002
+    source: platform/governance/prompts/role-sprint-controller.md
+    category: lifecycle
+    rule: "Sprint Controller must select the first task and produce a full implementation brief for it."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: SC-003
+    source: platform/governance/prompts/role-sprint-controller.md
+    category: context
+    rule: "Sprint Controller must emit task flags so the Implementer knows which governance docs to load."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: SC-004
+    source: platform/governance/prompts/role-sprint-controller.md
+    category: artifacts
+    rule: "sprint_id must follow the format S<NN> (e.g. S01, S02)."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: SC-005
+    source: platform/governance/prompts/role-sprint-controller.md
+    category: artifacts
+    rule: "task_id must follow the format S<NN>-<NNN> (e.g. S01-001)."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: SC-006
+    source: platform/governance/prompts/role-sprint-controller.md
+    category: artifacts
+    rule: "tasks in sprint_plan must be an array of task_id strings, not objects."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: SC-007
+    source: platform/governance/prompts/role-sprint-controller.md
+    category: artifacts
+    rule: "files_likely_affected must be specific file paths relative to project root, 2-5 files maximum."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: SC-008
+    source: platform/governance/prompts/role-sprint-controller.md
+    category: validation
+    rule: "acceptance_criteria must be testable, specific, and verifiable by the Verifier AI."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  # ── platform/governance/prompts/role-implementer.md ────────────────────────
+
+  - id: IP-001
+    source: platform/governance/prompts/role-implementer.md
+    category: context
+    rule: "Implementer's primary source of truth must be AI_IMPLEMENTATION_BRIEF.md."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: IP-002
+    source: platform/governance/prompts/role-implementer.md
+    category: scope
+    rule: "Implementer must modify no more than 5 files."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: IP-003
+    source: platform/governance/prompts/role-implementer.md
+    category: scope
+    rule: "Implementer must keep changes under ~200 lines of code."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: IP-004
+    source: platform/governance/prompts/role-implementer.md
+    category: scope
+    rule: "Implementer must not refactor unrelated code."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: IP-005
+    source: platform/governance/prompts/role-implementer.md
+    category: scope
+    rule: "Implementer must not implement future sprint tasks."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: IP-006
+    source: platform/governance/prompts/role-implementer.md
+    category: traceability
+    rule: "Every file change must trace to an acceptance criterion in the implementation brief."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: IP-007
+    source: platform/governance/prompts/role-implementer.md
+    category: artifacts
+    rule: "files_changed action must be exactly 'Create' or 'Modify'."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: IP-008
+    source: platform/governance/prompts/role-implementer.md
+    category: artifacts
+    rule: "files_changed description must be specific enough for a developer or Verifier to verify."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: IP-009
+    source: platform/governance/prompts/role-implementer.md
+    category: validation
+    rule: "test_approach must be concrete and not generic."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  # ── platform/governance/prompts/role-verifier.md ────────────────────────────
+
+  - id: VP-001
+    source: platform/governance/prompts/role-verifier.md
+    category: validation
+    rule: "Must confirm that task_id in current_task.json matches the implementation summary."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: VP-002
+    source: platform/governance/prompts/role-verifier.md
+    category: validation
+    rule: "Must validate that each file in the Deliverables Checklist has an explicit Create or Modify action."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: VP-003
+    source: platform/governance/prompts/role-verifier.md
+    category: validation
+    rule: "For Create deliverables: the file must exist in the plan."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: VP-004
+    source: platform/governance/prompts/role-verifier.md
+    category: validation
+    rule: "For Modify deliverables: the file must be changed within the current task scope."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: VP-005
+    source: platform/governance/prompts/role-verifier.md
+    category: validation
+    rule: "Must confirm required tests exist and match brief expectations."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: VP-006
+    source: platform/governance/prompts/role-verifier.md
+    category: scope
+    rule: "Must confirm no unrelated scope expansion occurred (≤5 files, ≤200 lines constraint)."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: VP-007
+    source: platform/governance/prompts/role-verifier.md
+    category: traceability
+    rule: "Must confirm implementation traces to at least one acceptance criterion per file."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: VP-008
+    source: platform/governance/prompts/role-verifier.md
+    category: validation
+    rule: "result must be 'PASS' only if ALL acceptance criteria are met."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: VP-009
+    source: platform/governance/prompts/role-verifier.md
+    category: artifacts
+    rule: "required_corrections must be an empty array on PASS and contain specific actionable items on FAIL."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: VP-010
+    source: platform/governance/prompts/role-verifier.md
+    category: handoff
+    rule: "On PASS, handoff.next_role_action must be 'Sprint Controller archives task and closes it.'"
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: VP-011
+    source: platform/governance/prompts/role-verifier.md
+    category: handoff
+    rule: "On FAIL, handoff.next_role_action must be 'Fixer addresses only the listed corrections and re-verifies.'"
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: VP-012
+    source: platform/governance/prompts/role-verifier.md
+    category: validation
+    rule: "Must not invent issues not evidenced in the artifacts."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  # ── platform/governance/prompts/role-fixer.md ────────────────────────────────
+
+  - id: FP-001
+    source: platform/governance/prompts/role-fixer.md
+    category: scope
+    rule: "Fixer must address ONLY the corrections listed in verification_result.json."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: FP-002
+    source: platform/governance/prompts/role-fixer.md
+    category: scope
+    rule: "Fixer must not expand scope or fix issues not listed in required_corrections."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: FP-003
+    source: platform/governance/prompts/role-fixer.md
+    category: scope
+    rule: "Each fix must be targeted and minimal."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: FP-004
+    source: platform/governance/prompts/role-fixer.md
+    category: handoff
+    rule: "Fixer must produce a handoff contract per AI_HANDOFF_CONTRACT.md."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: FP-005
+    source: platform/governance/prompts/role-fixer.md
+    category: artifacts
+    rule: "fixes_applied must contain one entry per correction item from verification_result.json."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: FP-006
+    source: platform/governance/prompts/role-fixer.md
+    category: lifecycle
+    rule: "Fixer must set verification_state to 'not_run' — the Verifier decides pass/fail after re-checking."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: FP-007
+    source: platform/governance/prompts/role-fixer.md
+    category: lifecycle
+    rule: "Verifier must always re-run after Fixer completes."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  - id: FP-008
+    source: platform/governance/prompts/role-fixer.md
+    category: scope
+    rule: "Must not invent fixes for issues not present in the required_corrections list."
+    confidence: explicit
+    enforcement: agent_enforced
+
+  # ── docs/functional_requirements/rule_registry.yml ─────────────────────────
+
+  - id: RR-PLN-001
+    source: docs/functional_requirements/rule_registry.yml
+    category: scope
+    rule: "Planner must not implement code."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-PLN-002
+    source: docs/functional_requirements/rule_registry.yml
+    category: traceability
+    rule: "Planner must not create tasks without valid FR IDs."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-PLN-003
+    source: docs/functional_requirements/rule_registry.yml
+    category: validation
+    rule: "Planner must ensure each task is atomic and testable."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-PLN-004
+    source: docs/functional_requirements/rule_registry.yml
+    category: traceability
+    rule: "Planner must include explicit FR mapping for each task."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-PLN-005
+    source: docs/functional_requirements/rule_registry.yml
+    category: validation
+    rule: "Planner must include acceptance checks for each task."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-PLN-006
+    source: docs/functional_requirements/rule_registry.yml
+    category: scope
+    rule: "Planner must not include implementation-level detail in task definitions."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-PLN-007
+    source: docs/functional_requirements/rule_registry.yml
+    category: scope
+    rule: "Planner must not create circular dependencies between tasks."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-PLN-008
+    source: docs/functional_requirements/rule_registry.yml
+    category: context
+    rule: "Planner must set task flags accurately for each task."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-PLN-009
+    source: docs/functional_requirements/rule_registry.yml
+    category: lifecycle
+    rule: "Planner must not stage a new sprint while another sprint is still open."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-PLN-010
+    source: docs/functional_requirements/rule_registry.yml
+    category: lifecycle
+    rule: "Planner must not advance a phase without required design artifacts approved."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-PLN-011
+    source: docs/functional_requirements/rule_registry.yml
+    category: handoff
+    rule: "Planner must create user_flow.md for every feature that introduces or changes user-facing behavior before Sprint 1 is staged."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-PLN-012
+    source: docs/functional_requirements/rule_registry.yml
+    category: lifecycle
+    rule: "Planner must not advance Planning to Active until user_flow.md is approved for user-facing features."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-PLN-013
+    source: docs/functional_requirements/rule_registry.yml
+    category: artifacts
+    rule: "Planner must include at least one failure-state row in every user_flow.md."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-PLN-014
+    source: docs/functional_requirements/rule_registry.yml
+    category: lifecycle
+    rule: "Planner must not close a sprint without explicit operator confirmation that the documenter has run and sprint documentation is complete."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-PLN-015
+    source: docs/functional_requirements/rule_registry.yml
+    category: lifecycle
+    rule: "Planner must archive the active sprint plan before setting sprint_state.json.status to closed."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-CTL-001
+    source: docs/functional_requirements/rule_registry.yml
+    category: scope
+    rule: "Sprint Controller must not implement code."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-CTL-002
+    source: docs/functional_requirements/rule_registry.yml
+    category: lifecycle
+    rule: "Sprint Controller must not stage a task when current_task.json.status is active, in-progress, or ready_for_verification."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-CTL-003
+    source: docs/functional_requirements/rule_registry.yml
+    category: lifecycle
+    rule: "Sprint Controller must require explicit operator confirmation that the most recently completed task PR is merged before staging proceeds."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-CTL-004
+    source: docs/functional_requirements/rule_registry.yml
+    category: lifecycle
+    rule: "Sprint Controller must not infer PR status from task state."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-CTL-005
+    source: docs/functional_requirements/rule_registry.yml
+    category: lifecycle
+    rule: "Sprint Controller must stage the next incomplete task only when explicitly instructed by the operator."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-CTL-006
+    source: docs/functional_requirements/rule_registry.yml
+    category: artifacts
+    rule: "Sprint Controller must always write the implementation brief to ai_dev_stack/ai_project_tasks/active/AI_IMPLEMENTATION_BRIEF.md."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-CTL-007
+    source: docs/functional_requirements/rule_registry.yml
+    category: artifacts
+    rule: "Sprint Controller must not create task-suffixed brief filenames in the active/ directory."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-CTL-008
+    source: docs/functional_requirements/rule_registry.yml
+    category: lifecycle
+    rule: "Sprint Controller must execute the close-out protocol in the defined phase order whenever a Verifier PASS is received."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-CTL-009
+    source: docs/functional_requirements/rule_registry.yml
+    category: lifecycle
+    rule: "Sprint Controller must STOP after Phase 1 task close until explicit operator action."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-CTL-010
+    source: docs/functional_requirements/rule_registry.yml
+    category: lifecycle
+    rule: "Sprint Controller must STOP after Phase 2 PR confirmation until explicit operator action."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-CTL-011
+    source: docs/functional_requirements/rule_registry.yml
+    category: lifecycle
+    rule: "Sprint Controller must enforce fast-track lane metadata and controls before staging a fast-track task."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-IMP-001
+    source: docs/functional_requirements/rule_registry.yml
+    category: scope
+    rule: "Implementer must implement the assigned task only."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-IMP-002
+    source: docs/functional_requirements/rule_registry.yml
+    category: scope
+    rule: "Implementer must not stage, verify, or close out tasks."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-IMP-003
+    source: docs/functional_requirements/rule_registry.yml
+    category: scope
+    rule: "Implementer must implement only deliverables listed in the brief checklist."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-IMP-004
+    source: docs/functional_requirements/rule_registry.yml
+    category: scope
+    rule: "Implementer must keep scope minimal and avoid unrelated refactor."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-IMP-005
+    source: docs/functional_requirements/rule_registry.yml
+    category: context
+    rule: "Implementer must read the Task Flags block from the implementation brief before exploring additional documents."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-IMP-006
+    source: docs/functional_requirements/rule_registry.yml
+    category: scope
+    rule: "Implementer must not invent schemas, field names, or algorithms not specified by an approved TDN governing the task component."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-IMP-007
+    source: docs/functional_requirements/rule_registry.yml
+    category: context
+    rule: "Implementer must load user_flow.md before writing any user-facing code if it exists."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-IMP-008
+    source: docs/functional_requirements/rule_registry.yml
+    category: validation
+    rule: "Implementer must stop and report that the UX Gate is not satisfied if user_flow.md is missing for a user-facing task."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-IMP-009
+    source: docs/functional_requirements/rule_registry.yml
+    category: scope
+    rule: "Implementer must implement the exact steps, inputs, outputs, and failure states defined in user_flow.md."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-IMP-010
+    source: docs/functional_requirements/rule_registry.yml
+    category: scope
+    rule: "Implementer must not invent alternative flows or skip failure handling defined in user_flow.md."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-IMP-011
+    source: docs/functional_requirements/rule_registry.yml
+    category: context
+    rule: "Implementer must load wireframe.md and ui_spec.md before implementing UI when they exist."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-IMP-012
+    source: docs/functional_requirements/rule_registry.yml
+    category: scope
+    rule: "Implementer must ensure user-facing error messages match the failure-state descriptions in user_flow.md."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-IMP-013
+    source: docs/functional_requirements/rule_registry.yml
+    category: validation
+    rule: "Implementer must run required gates and tests."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-IMP-014
+    source: docs/functional_requirements/rule_registry.yml
+    category: artifacts
+    rule: "Implementer must write real results to ai_dev_stack/ai_project_tasks/active/test_results.json."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-IMP-015
+    source: docs/functional_requirements/rule_registry.yml
+    category: validation
+    rule: "Implementer must run validate_test_results.py."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-IMP-016
+    source: docs/functional_requirements/rule_registry.yml
+    category: lifecycle
+    rule: "Implementer must set current_task.json status to ready_for_verification."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-IMP-017
+    source: docs/functional_requirements/rule_registry.yml
+    category: lifecycle
+    rule: "Implementer must commit and push the feature/{task_id} branch and then stop."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-VER-001
+    source: docs/functional_requirements/rule_registry.yml
+    category: scope
+    rule: "Verifier must validate only — must not implement or fix."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-VER-002
+    source: docs/functional_requirements/rule_registry.yml
+    category: artifacts
+    rule: "Verifier must return PASS or FAIL."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-VER-003
+    source: docs/functional_requirements/rule_registry.yml
+    category: validation
+    rule: "Verifier must verify that every Create deliverable exists."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-VER-004
+    source: docs/functional_requirements/rule_registry.yml
+    category: validation
+    rule: "Verifier must verify that every Modify deliverable was actually changed in scope."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-VER-005
+    source: docs/functional_requirements/rule_registry.yml
+    category: validation
+    rule: "Verifier must verify required tests are present and appropriate."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-VER-006
+    source: docs/functional_requirements/rule_registry.yml
+    category: validation
+    rule: "Verifier must verify CI and test_results status are pass and non-placeholder."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-VER-007
+    source: docs/functional_requirements/rule_registry.yml
+    category: scope
+    rule: "Verifier must fail verification if unrelated scope expansion is detected."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-VER-008
+    source: docs/functional_requirements/rule_registry.yml
+    category: validation
+    rule: "Verifier must verify TDN input and output field names and types match the approved TDN when one governs the task component."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-VER-009
+    source: docs/functional_requirements/rule_registry.yml
+    category: validation
+    rule: "Verifier must verify component interfaces match the approved TDN when one governs the task component."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-VER-010
+    source: docs/functional_requirements/rule_registry.yml
+    category: validation
+    rule: "Verifier must verify retry behavior, abort thresholds, and logging match the TDN error model when one governs the task component."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-VER-011
+    source: docs/functional_requirements/rule_registry.yml
+    category: validation
+    rule: "Verifier must flag any TDN deviation as a required correction even if tests pass."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-VER-012
+    source: docs/functional_requirements/rule_registry.yml
+    category: validation
+    rule: "Verifier must verify checkpoint evidence exists at the required cadence for fast-track tasks."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-VER-013
+    source: docs/functional_requirements/rule_registry.yml
+    category: validation
+    rule: "Verifier must verify each required fast-track checkpoint includes lint, typecheck, and focused tests."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-VER-014
+    source: docs/functional_requirements/rule_registry.yml
+    category: validation
+    rule: "Verifier must verify final full validation gates ran before close recommendation on fast-track tasks."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-VER-015
+    source: docs/functional_requirements/rule_registry.yml
+    category: artifacts
+    rule: "Verifier must verify that user_flow.md exists and has Status 'Approved' for any user-facing task."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-VER-016
+    source: docs/functional_requirements/rule_registry.yml
+    category: validation
+    rule: "Verifier must verify the happy path defined in user_flow.md is reachable end-to-end."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-VER-017
+    source: docs/functional_requirements/rule_registry.yml
+    category: validation
+    rule: "Verifier must verify at least one documented failure state produces the correct user-visible error message."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-VER-018
+    source: docs/functional_requirements/rule_registry.yml
+    category: validation
+    rule: "Verifier must verify CLI output is human-readable and not a raw JSON dump unless explicitly specified in the flow."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-VER-019
+    source: docs/functional_requirements/rule_registry.yml
+    category: validation
+    rule: "Verifier must verify all UI status, error, and loading states defined in the flow are visually distinct."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-VER-020
+    source: docs/functional_requirements/rule_registry.yml
+    category: validation
+    rule: "Verifier must verify chat responses match the tone and format described in the flow."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-VER-021
+    source: docs/functional_requirements/rule_registry.yml
+    category: validation
+    rule: "Verifier must fail if any step in user_flow.md is broken or silently skipped."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-VER-022
+    source: docs/functional_requirements/rule_registry.yml
+    category: handoff
+    rule: "Verifier must emit compact handoff fields from AI_HANDOFF_CONTRACT.md on FAIL."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-VER-023
+    source: docs/functional_requirements/rule_registry.yml
+    category: artifacts
+    rule: "Verifier must write ai_dev_stack/ai_project_tasks/active/verification_result.json with the required fields."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-FIX-001
+    source: docs/functional_requirements/rule_registry.yml
+    category: scope
+    rule: "Fixer must repair only the verified failure scope."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-FIX-002
+    source: docs/functional_requirements/rule_registry.yml
+    category: context
+    rule: "Fixer must use task flags to load only the same conditional documents that applied to the failing task."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-FIX-003
+    source: docs/functional_requirements/rule_registry.yml
+    category: context
+    rule: "Fixer must load the governing TDN when the fix touches a component governed by a TDN."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-FIX-004
+    source: docs/functional_requirements/rule_registry.yml
+    category: validation
+    rule: "Fixer must ensure the fix conforms to approved TDN contracts and must not introduce contradictory field names, error handling, or interface shapes."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-FIX-005
+    source: docs/functional_requirements/rule_registry.yml
+    category: context
+    rule: "Fixer must add Stage C files only when verifier corrections or CI output cite them."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-FIX-006
+    source: docs/functional_requirements/rule_registry.yml
+    category: handoff
+    rule: "Fixer must consume the structured verifier handoff from AI_HANDOFF_CONTRACT.md instead of narrative summaries."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-FIX-007
+    source: docs/functional_requirements/rule_registry.yml
+    category: handoff
+    rule: "Fixer must treat changed_scope, open_risks, and next_role_action as the authoritative repair inputs."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-FIX-008
+    source: docs/functional_requirements/rule_registry.yml
+    category: artifacts
+    rule: "Fixer must produce ai_dev_stack/ai_guidance/AI_FIX_REQUEST.md."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-FIX-009
+    source: docs/functional_requirements/rule_registry.yml
+    category: artifacts
+    rule: "Fixer must produce ai_dev_stack/ai_project_tasks/active/fix_state.json."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-FIX-010
+    source: docs/functional_requirements/rule_registry.yml
+    category: scope
+    rule: "Fixer must keep corrections minimal and evidence-linked."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-DOC-001
+    source: docs/functional_requirements/rule_registry.yml
+    category: lifecycle
+    rule: "Documenter must sync documentation only after verified delivery."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-DOC-002
+    source: docs/functional_requirements/rule_registry.yml
+    category: scope
+    rule: "Documenter must use task flags from the archived brief to constrain documentation sync to delivered scope."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-DOC-003
+    source: docs/functional_requirements/rule_registry.yml
+    category: context
+    rule: "Documenter must load architecture, UI, or incident documents only when archived task flags require them."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-DOC-004
+    source: docs/functional_requirements/rule_registry.yml
+    category: traceability
+    rule: "Documenter must flag the relevant TDN in docs/design/ as requiring an update if delivered implementation deviates from the approved TDN."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-DOC-005
+    source: docs/functional_requirements/rule_registry.yml
+    category: traceability
+    rule: "Documenter must note delivered TDN deviation in documentation_sync_report.md and must not silently accept drift."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-DOC-006
+    source: docs/functional_requirements/rule_registry.yml
+    category: scope
+    rule: "Documenter must not change runtime code."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-SYS-001
+    source: docs/functional_requirements/rule_registry.yml
+    category: traceability
+    rule: "Every planned task must map to FR scope."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-SYS-002
+    source: docs/functional_requirements/rule_registry.yml
+    category: traceability
+    rule: "Every implementation must map to the assigned task."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: RR-SYS-003
+    source: docs/functional_requirements/rule_registry.yml
+    category: scope
+    rule: "No agent may expand scope beyond its governing inputs and contracts."
+    confidence: explicit
+    enforcement: documented_only
+
+  # ── platform/backend-api/src/middleware/api-key.middleware.ts ───────────────
+
+  - id: AK-001
+    source: platform/backend-api/src/middleware/api-key.middleware.ts
+    category: lifecycle
+    rule: "All non-health endpoints must include a valid x-api-key header."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: AK-002
+    source: platform/backend-api/src/middleware/api-key.middleware.ts
+    category: lifecycle
+    rule: "Requests missing x-api-key must be rejected with HTTP 401."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: AK-003
+    source: platform/backend-api/src/middleware/api-key.middleware.ts
+    category: lifecycle
+    rule: "Requests with an invalid x-api-key must be rejected with HTTP 403."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: AK-004
+    source: platform/backend-api/src/middleware/api-key.middleware.ts
+    category: lifecycle
+    rule: "The /health endpoint must remain unauthenticated."
+    confidence: explicit
+    enforcement: code_enforced
+
+  # ── platform/backend-api/src/services/validation.service.ts ────────────────
+
+  - id: VS-001
+    source: platform/backend-api/src/services/validation.service.ts
+    category: validation
+    rule: "All execution requests must include target and input fields."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: VS-002
+    source: platform/backend-api/src/services/validation.service.ts
+    category: validation
+    rule: "target must include type, name, and version fields; no additional properties are allowed."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: VS-003
+    source: platform/backend-api/src/services/validation.service.ts
+    category: validation
+    rule: "target.type must be exactly 'script' or 'role'."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: VS-004
+    source: platform/backend-api/src/services/validation.service.ts
+    category: validation
+    rule: "target.name and target.version must be non-empty strings."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: VS-005
+    source: platform/backend-api/src/services/validation.service.ts
+    category: validation
+    rule: "Floating version aliases ('latest', 'stable') are not allowed — an explicit immutable version must be provided."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: VS-006
+    source: platform/backend-api/src/services/validation.service.ts
+    category: validation
+    rule: "Script output must be validated against its registered output_schema before the execution response is returned."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: VS-007
+    source: platform/backend-api/src/services/validation.service.ts
+    category: validation
+    rule: "Coordination create requests must include kind, scope, and data fields."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: VS-008
+    source: platform/backend-api/src/services/validation.service.ts
+    category: validation
+    rule: "Coordination kind must be one of 'workflow', 'agent', or 'session'."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: VS-009
+    source: platform/backend-api/src/services/validation.service.ts
+    category: validation
+    rule: "Execution request envelope must not include additional properties beyond the declared schema."
+    confidence: explicit
+    enforcement: code_enforced
+
+  # ── platform/backend-api/src/services/governance.service.ts ────────────────
+
+  - id: GS-001
+    source: platform/backend-api/src/services/governance.service.ts
+    category: context
+    rule: "All role prompts must be registered in the governance manifest before they can be loaded by scripts."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: GS-002
+    source: platform/backend-api/src/services/governance.service.ts
+    category: context
+    rule: "All rules must be registered in the governance manifest before they can be loaded by scripts."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: GS-003
+    source: platform/backend-api/src/services/governance.service.ts
+    category: context
+    rule: "All schemas must be registered in the governance manifest before they can be loaded by scripts."
+    confidence: explicit
+    enforcement: code_enforced
+
+  # ── platform/backend-api/src/services/script-runner.service.ts ─────────────
+
+  - id: SR-001
+    source: platform/backend-api/src/services/script-runner.service.ts
+    category: lifecycle
+    rule: "Scripts must be resolved through the registry before execution — unregistered scripts must not run."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: SR-002
+    source: platform/backend-api/src/services/script-runner.service.ts
+    category: validation
+    rule: "Script output must be validated against the script descriptor's output_schema after every execution."
+    confidence: explicit
+    enforcement: code_enforced
+
+  # ── platform/backend-api/src/services/pipeline.service.ts ──────────────────
+
+  - id: PS-001
+    source: platform/backend-api/src/services/pipeline.service.ts
+    category: lifecycle
+    rule: "completeStep must assert the pipeline's current_step matches the completing role; mismatches must be rejected."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: PS-002
+    source: platform/backend-api/src/services/pipeline.service.ts
+    category: lifecycle
+    rule: "completeStep is only valid when pipeline status is 'running'."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: PS-003
+    source: platform/backend-api/src/services/pipeline.service.ts
+    category: lifecycle
+    rule: "When execution mode is 'next' and the entry role completes, the pipeline must stop immediately and not advance downstream."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: PS-004
+    source: platform/backend-api/src/services/pipeline.service.ts
+    category: lifecycle
+    rule: "When Verifier fails and Implementer attempts are below the maximum (3), the pipeline must route back to the Implementer."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: PS-005
+    source: platform/backend-api/src/services/pipeline.service.ts
+    category: lifecycle
+    rule: "When Verifier fails and Implementer attempts reach 3, the pipeline must transition to 'cancelled'."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: PS-006
+    source: platform/backend-api/src/services/pipeline.service.ts
+    category: lifecycle
+    rule: "In 'next-flow' mode with a non-planner entry point, a Verifier PASS must stop the pipeline."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: PS-007
+    source: platform/backend-api/src/services/pipeline.service.ts
+    category: lifecycle
+    rule: "In 'full-sprint' mode, a Verifier PASS must route the pipeline to sprint-controller for close-out."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: PS-008
+    source: platform/backend-api/src/services/pipeline.service.ts
+    category: lifecycle
+    rule: "Sprint Controller close-out (when a prior verifier step has already completed) must transition pipeline status to 'awaiting_pr_review'."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: PS-009
+    source: platform/backend-api/src/services/pipeline.service.ts
+    category: handoff
+    rule: "approve action is only valid when pipeline status is 'awaiting_approval'."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: PS-010
+    source: platform/backend-api/src/services/pipeline.service.ts
+    category: handoff
+    rule: "cancel action is only valid when pipeline status is 'running', 'awaiting_approval', or 'paused_takeover'."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: PS-011
+    source: platform/backend-api/src/services/pipeline.service.ts
+    category: handoff
+    rule: "takeover action is only valid when pipeline status is 'awaiting_approval' or 'running'."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: PS-012
+    source: platform/backend-api/src/services/pipeline.service.ts
+    category: handoff
+    rule: "handoff action is only valid when pipeline status is 'paused_takeover'."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: PS-013
+    source: platform/backend-api/src/services/pipeline.service.ts
+    category: handoff
+    rule: "skip action is only valid when pipeline status is 'running', 'awaiting_approval', or 'paused_takeover'."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: PS-014
+    source: platform/backend-api/src/services/pipeline.service.ts
+    category: lifecycle
+    rule: "markPrMerged is only valid when pipeline status is 'awaiting_pr_review'."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: PS-015
+    source: platform/backend-api/src/services/pipeline.service.ts
+    category: lifecycle
+    rule: "Pipeline is complete only when the PR is merged — sprint-controller close-out alone does not complete the pipeline."
+    confidence: inferred
+    enforcement: code_enforced
+
+  # ── platform/backend-api/src/scripts/role-verifier.script.ts ───────────────
+
+  - id: VX-001
+    source: platform/backend-api/src/scripts/role-verifier.script.ts
+    category: validation
+    rule: "Verifier must execute all verification commands (npm test, npm run lint, npx tsc --noEmit by default) and evaluate exit codes."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: VX-002
+    source: platform/backend-api/src/scripts/role-verifier.script.ts
+    category: artifacts
+    rule: "Verifier must write verification_result.json before returning, containing task_id, result, summary, required_corrections, command_results, and verified_at."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: VX-003
+    source: platform/backend-api/src/scripts/role-verifier.script.ts
+    category: artifacts
+    rule: "Verifier must also write a human-readable verification_result.md artifact."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: VX-004
+    source: platform/backend-api/src/scripts/role-verifier.script.ts
+    category: validation
+    rule: "Verifier must use the LLM only for failure triage — pass/fail determination must be based on command exit codes, not LLM reasoning."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: VX-005
+    source: platform/backend-api/src/scripts/role-verifier.script.ts
+    category: context
+    rule: "Verifier must load AI_IMPLEMENTATION_BRIEF.md, current_task.json, and implementation_summary as Stage A inputs."
+    confidence: explicit
+    enforcement: code_enforced
+
+  # ── platform/backend-api/src/scripts/role-sprint-controller.script.ts ───────
+
+  - id: SX-001
+    source: platform/backend-api/src/scripts/role-sprint-controller.script.ts
+    category: artifacts
+    rule: "Sprint Controller must write AI_IMPLEMENTATION_BRIEF.md as the Implementer's canonical source of truth."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: SX-002
+    source: platform/backend-api/src/scripts/role-sprint-controller.script.ts
+    category: artifacts
+    rule: "Sprint Controller must write current_task.json with task_id, title, description, assigned_to, status, and artifacts fields."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: SX-003
+    source: platform/backend-api/src/scripts/role-sprint-controller.script.ts
+    category: lifecycle
+    rule: "Sprint Controller must only enter close-out mode when verification_result.json is present in the previous artifacts."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: SX-004
+    source: platform/backend-api/src/scripts/role-sprint-controller.script.ts
+    category: lifecycle
+    rule: "Sprint Controller close-out must throw and halt if the verification result is not 'PASS'."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: SX-005
+    source: platform/backend-api/src/scripts/role-sprint-controller.script.ts
+    category: lifecycle
+    rule: "Sprint Controller must create the task feature branch during setup before the Implementer runs."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: SX-006
+    source: platform/backend-api/src/scripts/role-sprint-controller.script.ts
+    category: lifecycle
+    rule: "Sprint Controller close-out must push the sprint branch to remote before opening a pull request."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: SX-007
+    source: platform/backend-api/src/scripts/role-sprint-controller.script.ts
+    category: artifacts
+    rule: "Sprint Controller must record PR number and URL in the pipeline run metadata."
+    confidence: explicit
+    enforcement: code_enforced
+
+  # ── platform/backend-api/src/scripts/role-implementer.script.ts ─────────────
+
+  - id: IX-001
+    source: platform/backend-api/src/scripts/role-implementer.script.ts
+    category: lifecycle
+    rule: "Implementer must operate on the designated sprint feature branch — it must create or check out the branch before writing any files."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: IX-002
+    source: platform/backend-api/src/scripts/role-implementer.script.ts
+    category: lifecycle
+    rule: "Implementer must throw and halt if no project or Git persistence is available."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: IX-003
+    source: platform/backend-api/src/scripts/role-implementer.script.ts
+    category: artifacts
+    rule: "files_changed action must be exactly 'Create' or 'Modify'."
+    confidence: explicit
+    enforcement: code_enforced
+
+  # ── platform/backend-api/src/scripts/role-planner.script.ts ────────────────
+
+  - id: PX-001
+    source: platform/backend-api/src/scripts/role-planner.script.ts
+    category: validation
+    rule: "Planner LLM response must include phase_id, objectives (array), and deliverables (array); missing fields must cause the script to throw."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: PX-002
+    source: platform/backend-api/src/scripts/role-planner.script.ts
+    category: artifacts
+    rule: "Planner must write the phase plan artifact using the naming convention phase_plan_{descriptor}.md."
+    confidence: explicit
+    enforcement: code_enforced
+
+  # ── platform/governance/manifest.json ─────────────────────────────────────
+
+  - id: MAN-001
+    source: platform/governance/manifest.json
+    category: context
+    rule: "All pipeline roles must declare a provider, model, and temperature in the manifest before being invocable."
+    confidence: explicit
+    enforcement: code_enforced
+
+  - id: MAN-002
+    source: platform/governance/manifest.json
+    category: context
+    rule: "All schemas must be registered in the manifest under the schemas key before they can be loaded at runtime."
+    confidence: inferred
+    enforcement: code_enforced
+
+  # ── platform/governance/schemas/phase_plan.schema.json ─────────────────────
+
+  - id: SCH-001
+    source: platform/governance/schemas/phase_plan.schema.json
+    category: artifacts
+    rule: "Phase plan output must include phase_id, name, objectives, and deliverables fields."
+    confidence: explicit
+    enforcement: code_enforced
+
+  # ── platform/governance/schemas/sprint_plan.schema.json ────────────────────
+
+  - id: SCH-002
+    source: platform/governance/schemas/sprint_plan.schema.json
+    category: artifacts
+    rule: "Sprint plan output must include sprint_id, phase_id, and tasks fields."
+    confidence: explicit
+    enforcement: code_enforced
+
+  # ── platform/governance/schemas/task.schema.json ────────────────────────────
+
+  - id: SCH-003
+    source: platform/governance/schemas/task.schema.json
+    category: artifacts
+    rule: "Task output must include task_id, title, and status fields."
+    confidence: explicit
+    enforcement: code_enforced
+
+  # ── docs/adr/adr-003-deterministic-over-llm.md ─────────────────────────────
+
+  - id: ADR3-001
+    source: docs/adr/adr-003-deterministic-over-llm.md
+    category: validation
+    rule: "LLMs must be used only within controlled, bounded, and validated contexts."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: ADR3-002
+    source: docs/adr/adr-003-deterministic-over-llm.md
+    category: validation
+    rule: "All LLM outputs must be validated before being accepted as system state."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: ADR3-003
+    source: docs/adr/adr-003-deterministic-over-llm.md
+    category: lifecycle
+    rule: "State transitions must be performed by deterministic systems, not by LLM-driven workflows."
+    confidence: explicit
+    enforcement: documented_only
+
+  # ── docs/adr/adr-006-human-in-the-loop.md ──────────────────────────────────
+
+  - id: ADR6-001
+    source: docs/adr/adr-006-human-in-the-loop.md
+    category: handoff
+    rule: "Designated execution stages must require explicit human approval before proceeding."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: ADR6-002
+    source: docs/adr/adr-006-human-in-the-loop.md
+    category: handoff
+    rule: "High-impact, destructive, or irreversible operations must require human approval before execution."
+    confidence: explicit
+    enforcement: documented_only
+
+  # ── docs/adr/adr-008-structured-llm-output.md ──────────────────────────────
+
+  - id: ADR8-001
+    source: docs/adr/adr-008-structured-llm-output.md
+    category: artifacts
+    rule: "All LLM outputs must be produced as structured JSON conforming to an explicit schema."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: ADR8-002
+    source: docs/adr/adr-008-structured-llm-output.md
+    category: validation
+    rule: "All LLM outputs must be validated against JSON schemas before being accepted by the system."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: ADR8-003
+    source: docs/adr/adr-008-structured-llm-output.md
+    category: validation
+    rule: "Each LLM output schema must include structural validation covering required fields and types, and additional property constraints."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: ADR8-004
+    source: docs/adr/adr-008-structured-llm-output.md
+    category: artifacts
+    rule: "Each LLM output must be associated with a versioned JSON Schema definition."
+    confidence: explicit
+    enforcement: documented_only
+
+  # ── docs/adr/adr-025-two-tier-governance-composition.md ─────────────────────
+
+  - id: ADR25-001
+    source: docs/adr/adr-025-two-tier-governance-composition.md
+    category: context
+    rule: "Tier 1 (dotfiles) governance content must be kept consistent with Tier 2 principles."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: ADR25-002
+    source: docs/adr/adr-025-two-tier-governance-composition.md
+    category: context
+    rule: "When Tier 1 governance changes, a Tier 2 governance review must be performed to detect drift."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: ADR25-003
+    source: docs/adr/adr-025-two-tier-governance-composition.md
+    category: context
+    rule: "Tier 2 (platform/governance/) content must be versioned with the Docker image release cycle."
+    confidence: explicit
+    enforcement: documented_only
+
+  # ── docs/adr/adr-030-autonomous-sprint-execution.md ─────────────────────────
+
+  - id: ADR30-001
+    source: docs/adr/adr-030-autonomous-sprint-execution.md
+    category: lifecycle
+    rule: "Implementer must operate on a task feature branch (feature/{task_id}-{sprint_id}) created during Sprint Controller setup."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: ADR30-002
+    source: docs/adr/adr-030-autonomous-sprint-execution.md
+    category: scope
+    rule: "Implementer must be constrained to the files and scope declared in AI_IMPLEMENTATION_BRIEF.md."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: ADR30-003
+    source: docs/adr/adr-030-autonomous-sprint-execution.md
+    category: traceability
+    rule: "Implementer must commit changes with a structured commit message including pipeline_id, task_id, and execution traceability metadata."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: ADR30-004
+    source: docs/adr/adr-030-autonomous-sprint-execution.md
+    category: lifecycle
+    rule: "Implementer must push each commit incrementally to the remote sprint branch so progress is durable during execution."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: ADR30-005
+    source: docs/adr/adr-030-autonomous-sprint-execution.md
+    category: validation
+    rule: "Verifier must run the actual test suite, lint, and type-check commands — it must not reason about an implementation summary."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: ADR30-006
+    source: docs/adr/adr-030-autonomous-sprint-execution.md
+    category: validation
+    rule: "Verifier must invoke LLM only for failure triage when commands fail — all passing runs require no LLM call."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: ADR30-007
+    source: docs/adr/adr-030-autonomous-sprint-execution.md
+    category: lifecycle
+    rule: "Sprint Controller close-out must open a GitHub Pull Request from the feature branch to the default branch."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: ADR30-008
+    source: docs/adr/adr-030-autonomous-sprint-execution.md
+    category: lifecycle
+    rule: "Sprint Controller close-out must set pipeline status to 'awaiting_pr_review' after opening the PR."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: ADR30-009
+    source: docs/adr/adr-030-autonomous-sprint-execution.md
+    category: lifecycle
+    rule: "After 3 consecutive Implementer attempts without a Verifier pass, the pipeline must transition to 'failed' and trigger human escalation."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: ADR30-010
+    source: docs/adr/adr-030-autonomous-sprint-execution.md
+    category: scope
+    rule: "Implementer attempting to modify files outside the declared scope must trigger mandatory human escalation."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: ADR30-011
+    source: docs/adr/adr-030-autonomous-sprint-execution.md
+    category: scope
+    rule: "Verifier detecting changes to files not listed in the implementation brief (scope drift) must trigger mandatory human escalation."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: ADR30-012
+    source: docs/adr/adr-030-autonomous-sprint-execution.md
+    category: validation
+    rule: "Schema validation failures beyond the configured retry limit must trigger mandatory human escalation."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: ADR30-013
+    source: docs/adr/adr-030-autonomous-sprint-execution.md
+    category: lifecycle
+    rule: "Git operation failures (merge conflict, push rejection) must trigger mandatory human escalation."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: ADR30-014
+    source: docs/adr/adr-030-autonomous-sprint-execution.md
+    category: artifacts
+    rule: "PR body must be populated with structured content (sprint summary, tasks completed, verification results, pipeline metadata) — not generated by LLM prose."
+    confidence: explicit
+    enforcement: documented_only
+
+  - id: ADR30-015
+    source: docs/adr/adr-030-autonomous-sprint-execution.md
+    category: lifecycle
+    rule: "The pipeline is considered complete only when the PR is merged, detected via GitHub webhook or polling."
+    confidence: explicit
+    enforcement: documented_only

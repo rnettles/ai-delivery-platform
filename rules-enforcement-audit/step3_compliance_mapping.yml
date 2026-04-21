@@ -1,0 +1,747 @@
+compliance_map:
+
+  # ── AI_RUNTIME_LOADING_RULES.md ──────────────────────────────────────
+
+  - rule_id: LDR-001
+    status: PARTIAL
+    target_rule_id: RL-001, RL-002, RL-003
+    target_location: platform/governance/rules/runtime_loading_rules.md
+    notes: Stage A loading for brief and task is explicit, but the test_results.json Stage A exception scoped to verifier/fixer/documenter roles is not stated.
+
+  - rule_id: LDR-002
+    status: PRESENT
+    target_rule_id: RL-010
+    target_location: platform/governance/rules/runtime_loading_rules.md
+    notes: RL-010 prohibits intuition-based Stage B expansion; RL-004 through RL-007 enumerate flag-driven Stage B triggers.
+
+  - rule_id: LDR-003
+    status: PRESENT
+    target_rule_id: RL-009
+    target_location: platform/governance/rules/runtime_loading_rules.md
+    notes: RL-009 explicitly states deterministic Stage B resolution — same flags, same document set across runs.
+
+  - rule_id: LDR-004
+    status: PRESENT
+    target_rule_id: RL-008
+    target_location: platform/governance/rules/runtime_loading_rules.md
+    notes: RL-008 matches exactly — Stage C requires a concrete failure or correction that directly references the file.
+
+  - rule_id: LDR-005
+    status: PRESENT
+    target_rule_id: RL-012
+    target_location: platform/governance/rules/runtime_loading_rules.md
+    notes: RL-012 is a verbatim match on the onboarding/setup document exclusion.
+
+  - rule_id: LDR-006
+    status: PRESENT
+    target_rule_id: RL-011
+    target_location: platform/governance/rules/runtime_loading_rules.md
+    notes: RL-011 matches — un-flagged documents may only be loaded as Stage C with an evidence link.
+
+  # ── AI_RUNTIME_POLICY.md ─────────────────────────────────────────────
+
+  - rule_id: POL-001
+    status: PARTIAL
+    target_rule_id: IX-001, SX-005
+    target_location: platform/backend-api/src/scripts/role-implementer.script.ts, role-sprint-controller.script.ts
+    notes: Feature branch creation is code-enforced; an explicit "never push directly to main" prohibition does not appear as an agent or system rule.
+
+  - rule_id: POL-002
+    status: PRESENT
+    target_rule_id: GR-002
+    target_location: platform/governance/rules/global_rules.md
+    notes: GR-002 covers scope expansion prohibition; RR-IMP-001 reinforces for the implementer role.
+
+  - rule_id: POL-003
+    status: PRESENT
+    target_rule_id: GR-005
+    target_location: platform/governance/rules/global_rules.md
+    notes: GR-005 (never refactor unrelated modules) and IP-004 (implementer must not refactor unrelated code) together satisfy this rule.
+
+  - rule_id: POL-004
+    status: PRESENT
+    target_rule_id: RG-001, RG-002, RG-003, RG-004
+    target_location: platform/governance/rules/runtime_gates.md
+    notes: RG-001/002/003 mandate lint, typecheck, and tests; RG-004 requires the Verifier to FAIL if any gate is missing from implementation evidence.
+
+  - rule_id: POL-005
+    status: PRESENT
+    target_rule_id: GR-003
+    target_location: platform/governance/rules/global_rules.md
+    notes: GR-003 is a direct match — never delete files unless explicitly instructed.
+
+  - rule_id: POL-006
+    status: PRESENT
+    target_rule_id: GR-001
+    target_location: platform/governance/rules/global_rules.md
+    notes: GR-001 is the global no-role-crossing rule; PP-001, RR-CTL-001, RR-IMP-002, RR-VER-001, FP-001 reinforce it per role.
+
+  # ── AI_RUNTIME_GATES.md ──────────────────────────────────────────────
+
+  - rule_id: GTR-001
+    status: PARTIAL
+    target_rule_id: RG-001, RG-002, RG-003
+    target_location: platform/governance/rules/runtime_gates.md
+    notes: Three mandatory gates (lint, typecheck, tests) are present but reference-stack tools (flake8/mypy/pytest) differ from target stack (npm lint/tsc/vitest per VX-001); intent matches, tooling references do not.
+
+  - rule_id: GTR-002
+    status: PARTIAL
+    target_rule_id: RR-IMP-015
+    target_location: docs/functional_requirements/rule_registry.yml
+    notes: RR-IMP-015 requires running validate_test_results.py but is documented_only; reference treats this as a universal non-optional gate enforced in the flow.
+
+  - rule_id: GTR-003
+    status: PARTIAL
+    target_rule_id: RR-CTL-011
+    target_location: docs/functional_requirements/rule_registry.yml
+    notes: RR-CTL-011 requires fast-track controls before staging, but the full activation criteria — explicit sprint marking, rationale, and linked intake ID — are not stated.
+
+  - rule_id: GTR-004
+    status: PARTIAL
+    target_rule_id: RR-VER-012, RR-VER-013
+    target_location: docs/functional_requirements/rule_registry.yml
+    notes: Verifier-side checkpoint evidence checks exist (RR-VER-012/013), but no rule defines the 300–400 line cadence obligation for the implementer.
+
+  - rule_id: GTR-005
+    status: PARTIAL
+    target_rule_id: RL-006
+    target_location: platform/governance/rules/runtime_loading_rules.md
+    notes: RL-006 triggers loading UI test guidance when ui_evidence_required is true, but no rule mandates Playwright execution and test_results.json recording specifically.
+
+  - rule_id: GTR-006
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No rule governs Fast Track sprint planning structure (larger bundles, bundle map, 3A/3B gate task definition).
+
+  # ── AI_RUNTIME_PATHS.md ──────────────────────────────────────────────
+
+  - rule_id: PTH-001
+    status: PARTIAL
+    target_rule_id: SX-001, RR-CTL-007
+    target_location: platform/backend-api/src/scripts/role-sprint-controller.script.ts, docs/functional_requirements/rule_registry.yml
+    notes: SX-001 (code_enforced) writes to canonical brief path; RR-CTL-007 (documented_only) prohibits task-suffixed filenames, but the overwrite-only single-file model constraint is not formally stated.
+
+  - rule_id: PTH-002
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No rule requires active-slot state files (test_results.json, verification_result.json, fix_state.json) to be reinitialized to not_run when a new task is staged.
+
+  - rule_id: PTH-003
+    status: PARTIAL
+    target_rule_id: RR-CTL-008
+    target_location: docs/functional_requirements/rule_registry.yml
+    notes: RR-CTL-008 requires executing the close-out protocol in phase order, but no rule specifies archive_task_artifacts.py completion and history index update as the close-transition completion criteria.
+
+  - rule_id: PTH-004
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No rule requires close-out checkpoint commits to bundle active-slot close-state files and task-history archive artifacts in the same commit.
+
+  - rule_id: PTH-005
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No rule enforces that current_task.json.brief_path and handoff evidence_refs point to the canonical active brief path.
+
+  # ── AI_RULES.md ──────────────────────────────────────────────────────
+
+  - rule_id: RUL-001
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No rule establishes a document hierarchy with a highest-authority constraint file subordinating all other governance documents.
+
+  - rule_id: RUL-002
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No side quest concept exists in ai-delivery-platform; the SQ spec-before-staging and one-slice-per-task constraints have no equivalent.
+
+  - rule_id: RUL-003
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No intake process or RC-* reconciliation obligation exists; the 48-hour P0/P1 fix reconciliation requirement has no equivalent.
+
+  - rule_id: RUL-004
+    status: PARTIAL
+    target_rule_id: RR-SYS-001
+    target_location: docs/functional_requirements/rule_registry.yml
+    notes: RR-SYS-001 requires task-to-FR traceability, but no rule prohibits sprint staging from a Draft-phase or requires a phase checklist or intake origin.
+
+  - rule_id: RUL-005
+    status: PARTIAL
+    target_rule_id: GR-015
+    target_location: platform/governance/rules/global_rules.md
+    notes: GR-015 prohibits inventing interfaces or schemas not in an approved design document, but no rule establishes a TDN Status:Approved gate before the first sprint of a phase is staged.
+
+  - rule_id: RUL-006
+    status: PRESENT
+    target_rule_id: RR-PLN-011, RR-PLN-012
+    target_location: docs/functional_requirements/rule_registry.yml
+    notes: RR-PLN-011 requires user_flow.md before Sprint 1 for user-facing features; RR-PLN-012 blocks Planning-to-Active advancement until user_flow.md is approved; wireframe.md requirement for UI/Hybrid is absent.
+
+  - rule_id: RUL-007
+    status: DIFFERENT
+    target_rule_id: GR-007, GR-008
+    target_location: platform/governance/rules/global_rules.md
+    notes: Target enforces a stricter ceiling (≤5 files / ≤200 LOC); reference allows 7 files / ~400 LOC standard and up to 12–15 files / 1200–1500 LOC in Fast Track — materially different limits.
+
+  - rule_id: RUL-008
+    status: PARTIAL
+    target_rule_id: RR-CTL-011
+    target_location: docs/functional_requirements/rule_registry.yml
+    notes: RR-CTL-011 requires fast-track controls before staging but does not address operator direction documentation, next_steps.md recording, or the automatic Fast Track expiry on sprint close.
+
+  - rule_id: RUL-009
+    status: PARTIAL
+    target_rule_id: GR-009, GR-010
+    target_location: platform/governance/rules/global_rules.md
+    notes: GR-009/010 require tests covering success, failure, and edge cases; the Playwright mandate for Admin UI with data fetch/filter/pagination is absent.
+
+  - rule_id: RUL-010
+    status: PARTIAL
+    target_rule_id: GR-003
+    target_location: platform/governance/rules/global_rules.md
+    notes: GR-003 broadly prohibits file deletion, but no rule mandates ADR lifecycle management (Deprecated/Superseded vs. deleted) or constrains Spikes to written findings only.
+
+  # ── AI_TASK_FLAGS_CONTRACT.md ─────────────────────────────────────────
+
+  - rule_id: TFC-001
+    status: PRESENT
+    target_rule_id: TF-001, TF-002, TF-003, TF-004, TF-005
+    target_location: platform/governance/rules/task_flags_contract.md
+    notes: All four required flags are defined individually (TF-001–004) and TF-005 requires inclusion in current_task.json; missing/null enforcement is implicit but not labeled a staging gate failure.
+
+  - rule_id: TFC-002
+    status: PARTIAL
+    target_rule_id: RL-010
+    target_location: platform/governance/rules/runtime_loading_rules.md
+    notes: RL-010 prohibits expanding Stage B by intuition; no rule explicitly states that flag values may not be inferred or modified by execution-role agents.
+
+  - rule_id: TFC-003
+    status: PARTIAL
+    target_rule_id: SC-003, TF-005
+    target_location: platform/governance/rules/runtime_loading_rules.md, task_flags_contract.md
+    notes: Sprint Controller's obligation to emit flags is stated; no rule explicitly prohibits other agents from setting or altering flag values.
+
+  - rule_id: TFC-004
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: The architectural gap for optional flags (schema_change, migration_change, cross_subsystem_change) with no defined Stage B loading consequence is not documented in the target.
+
+  # ── AI_HANDOFF_CONTRACT.md ───────────────────────────────────────────
+
+  - rule_id: HND-001
+    status: PRESENT
+    target_rule_id: HC-001, HC-002, HC-003, HC-004, HC-005
+    target_location: platform/governance/rules/handoff_contract.md
+    notes: All five required handoff fields are individually enumerated with agent_enforced status.
+
+  - rule_id: HND-002
+    status: PRESENT
+    target_rule_id: HC-006, HC-007
+    target_location: platform/governance/rules/handoff_contract.md
+    notes: HC-006 requires structured contract over narrative summaries; HC-007 enforces overwrite-only containing only current task state.
+
+  - rule_id: HND-003
+    status: PARTIAL
+    target_rule_id: HC-005
+    target_location: platform/governance/rules/handoff_contract.md
+    notes: HC-005 requires evidence_refs to be present but does not constrain it to be non-empty on FAIL, and the Stage C load-trigger role of evidence_refs is not stated.
+
+  # ── planner.agent.md ─────────────────────────────────────────────────
+
+  - rule_id: PLN-001
+    status: PARTIAL
+    target_rule_id: PP-001, RR-PLN-001
+    target_location: platform/governance/prompts/role-planner.md, docs/functional_requirements/rule_registry.yml
+    notes: No-code prohibition is explicit; TDN authoring authority, phase management ownership, and sprint close-out ownership for the Planner role are absent.
+
+  - rule_id: PLN-002
+    status: PARTIAL
+    target_rule_id: RR-PLN-009, RR-PLN-010, RR-PLN-012
+    target_location: docs/functional_requirements/rule_registry.yml
+    notes: Individual gate conditions exist (no open sprint, design artifacts approved, user_flow approved) but the sequential 4-HARD-STOP execution contract is not formalized.
+
+  - rule_id: PLN-003
+    status: PARTIAL
+    target_rule_id: RR-PLN-014, RR-PLN-015
+    target_location: docs/functional_requirements/rule_registry.yml
+    notes: Documenter confirmation (RR-PLN-014) and sprint archive (RR-PLN-015) are present, but the prescribed phase order and the sprint_state.json/next_steps.md update step are not specified.
+
+  - rule_id: PLN-004
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No planner-specific Always Load list exists; RL-001/002 define generic Stage A but do not enumerate a role-scoped 9-document unconditional set.
+
+  - rule_id: PLN-005
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No UX-only task type with relaxed TDN/verification/documenter requirements is defined; fast-track pre-approval recording has no equivalent.
+
+  # ── implementer.agent.md ─────────────────────────────────────────────
+
+  - rule_id: IMP-001
+    status: PRESENT
+    target_rule_id: RR-IMP-001, RR-IMP-002, RR-IMP-003, RR-IMP-016
+    target_location: docs/functional_requirements/rule_registry.yml
+    notes: Implementer scope (assigned task only, no staging/verify/close) and terminal status transition to ready_for_verification are all covered.
+
+  - rule_id: IMP-002
+    status: PARTIAL
+    target_rule_id: RR-IMP-008
+    target_location: docs/functional_requirements/rule_registry.yml
+    notes: RR-IMP-008 halts on missing user_flow.md for a user-facing task; the reference triggers on the ui_evidence_required flag value, creating a slightly different activation condition.
+
+  - rule_id: IMP-003
+    status: PRESENT
+    target_rule_id: RR-IMP-017, IX-001
+    target_location: docs/functional_requirements/rule_registry.yml, platform/backend-api/src/scripts/role-implementer.script.ts
+    notes: Commit-push-stop terminal state is present in RR-IMP-017 (documented) and IX-001 (code_enforced).
+
+  - rule_id: IMP-004
+    status: PARTIAL
+    target_rule_id: GR-015, RR-IMP-006
+    target_location: platform/governance/rules/global_rules.md, docs/functional_requirements/rule_registry.yml
+    notes: No-invention of interfaces/schemas is enforced, but the positive TDN conformance obligation ("must conform exactly including error model") is not stated.
+
+  # ── fixer.agent.md ───────────────────────────────────────────────────
+
+  - rule_id: FIX-001
+    status: PRESENT
+    target_rule_id: FP-001, FP-002, FP-003
+    target_location: platform/governance/prompts/role-fixer.md
+    notes: FP-001 bounds scope to verification_result.json corrections; FP-002 prohibits unlisted issue fixing; FP-003 requires targeted, minimal fixes.
+
+  - rule_id: FIX-002
+    status: PARTIAL
+    target_rule_id: FP-006, FP-007
+    target_location: platform/governance/prompts/role-fixer.md
+    notes: FP-006 sets verification_state to not_run and FP-007 requires Verifier re-run; fix_state.json artifact write and current_task.json status update are not code-enforced.
+
+  - rule_id: FIX-003
+    status: PARTIAL
+    target_rule_id: RR-FIX-008
+    target_location: docs/functional_requirements/rule_registry.yml
+    notes: RR-FIX-008 requires producing AI_FIX_REQUEST.md (documented_only); the architectural inconsistency of placing mutable output inside a static governance directory is not flagged.
+
+  - rule_id: FIX-004
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No rule or design note documents that AI_RUNTIME_GATES.md is not in the fixer's load set and that gate re-execution is delegated to the Verifier.
+
+  # ── sprint-controller.agent.md ───────────────────────────────────────
+
+  - rule_id: SCT-001
+    status: PRESENT
+    target_rule_id: RR-CTL-002, RR-CTL-003, RR-CTL-004
+    target_location: docs/functional_requirements/rule_registry.yml
+    notes: All three Pre-Stage Gate conditions are present: status check, explicit PR-merged confirmation, and no-inference-of-PR-status.
+
+  - rule_id: SCT-002
+    status: PRESENT
+    target_rule_id: RR-CTL-008, RR-CTL-009, RR-CTL-010
+    target_location: docs/functional_requirements/rule_registry.yml
+    notes: Three-phase close-out with mandatory STOPs after Phase 1 and Phase 2 is fully represented.
+
+  - rule_id: SCT-003
+    status: PARTIAL
+    target_rule_id: HC-007, SX-002
+    target_location: platform/governance/rules/handoff_contract.md, platform/backend-api/src/scripts/role-sprint-controller.script.ts
+    notes: Active artifact overwrite-only rule exists (HC-007); no rule explicitly requires a staging checkpoint commit after every task staging.
+
+  - rule_id: SCT-004
+    status: PARTIAL
+    target_rule_id: SX-001, RR-CTL-006, RR-CTL-007
+    target_location: platform/backend-api/src/scripts/role-sprint-controller.script.ts, docs/functional_requirements/rule_registry.yml
+    notes: SX-001 (code_enforced) writes to canonical brief path; RR-CTL-007 (documented_only) prohibits task-suffixed names; brief_path integrity in current_task.json is not explicitly required.
+
+  - rule_id: SCT-005
+    status: PARTIAL
+    target_rule_id: RR-CTL-011
+    target_location: docs/functional_requirements/rule_registry.yml
+    notes: RR-CTL-011 requires fast-track controls enforcement, but next_steps.md rationale recording, linked intake requirement, and Fast Track Controls block in the brief are absent.
+
+  - rule_id: SCT-006
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: The close-out ownership conflict between Planner and Sprint Controller is not documented in the target system.
+
+  # ── documenter.agent.md ──────────────────────────────────────────────
+
+  - rule_id: DOC-001
+    status: PRESENT
+    target_rule_id: RR-DOC-001, RR-DOC-006
+    target_location: docs/functional_requirements/rule_registry.yml
+    notes: RR-DOC-001 requires post-verified-delivery sync; RR-DOC-006 prohibits runtime code changes.
+
+  - rule_id: DOC-002
+    status: PARTIAL
+    target_rule_id: RR-DOC-002, RR-DOC-003
+    target_location: docs/functional_requirements/rule_registry.yml
+    notes: Task flag scoping and conditional Stage B loading are covered; the specific "4 docs only" Always Load list for the Documenter is absent.
+
+  - rule_id: DOC-003
+    status: PRESENT
+    target_rule_id: RR-DOC-004, RR-DOC-005
+    target_location: docs/functional_requirements/rule_registry.yml
+    notes: TDN flag-for-update and documentation_sync_report.md deviation recording with no-silent-acceptance are both present.
+
+  - rule_id: DOC-004
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: The conflict between test_results.json being Stage A for Documenter per loading rules but absent from the Documenter's Always Load prompt is not documented.
+
+  # ── flow-task.agent.md ───────────────────────────────────────────────
+
+  - rule_id: FLT-001
+    status: PARTIAL
+    target_rule_id: PS-004, PS-005
+    target_location: platform/backend-api/src/services/pipeline.service.ts
+    notes: PS-004/005 enforce the 3-attempt ceiling in the pipeline engine (code_enforced); the gap that fixer.agent.md and verifier.agent.md do not independently state this ceiling is not noted.
+
+  - rule_id: FLT-002
+    status: PRESENT
+    target_rule_id: RG-001, RG-002, RG-003, RR-VER-006
+    target_location: platform/governance/rules/runtime_gates.md, docs/functional_requirements/rule_registry.yml
+    notes: Real gate evidence (lint, typecheck, tests) is required before Verifier; RR-VER-006 prohibits placeholder results.
+
+  - rule_id: FLT-003
+    status: PARTIAL
+    target_rule_id: GR-001
+    target_location: platform/governance/rules/global_rules.md
+    notes: GR-001 is a general no-role-crossing rule; no rule specifically constrains an orchestrator/flow agent from collapsing roles during sprint execution.
+
+  - rule_id: FLT-004
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No rule requires compact closeout output to include execution_lane and fast_track_controls_verified fields.
+
+  # ── flow-sprint.agent.md ─────────────────────────────────────────────
+
+  - rule_id: FSP-001
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No sprint-level orchestration layer (flow-sprint) exists in ai-delivery-platform; task sequencing is handled by pipeline.service.ts without the delegating-to-flow-task model.
+
+  - rule_id: FSP-002
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No equivalent stop-on-escalation rule for a sprint orchestrator; escalation surfacing with handoff contract fields is not defined at the sprint level.
+
+  - rule_id: FSP-003
+    status: PARTIAL
+    target_rule_id: RR-CTL-005
+    target_location: docs/functional_requirements/rule_registry.yml
+    notes: RR-CTL-005 requires explicit operator instruction before staging the next task; sprint completion determined by sprint plan (vs. sprint_state.json) is not addressed.
+
+  # ── ui_architect.agent.md ────────────────────────────────────────────
+
+  - rule_id: UXA-001
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No UX Architect role or project context loading requirement exists in ai-delivery-platform.
+
+  - rule_id: UXA-002
+    status: PARTIAL
+    target_rule_id: RR-PLN-013
+    target_location: docs/functional_requirements/rule_registry.yml
+    notes: RR-PLN-013 requires at least one failure-state row in user_flow.md; the exact-string requirement for user-facing error messages is absent.
+
+  - rule_id: UXA-003
+    status: PARTIAL
+    target_rule_id: RR-PLN-011, RR-PLN-012
+    target_location: docs/functional_requirements/rule_registry.yml
+    notes: user_flow.md gating before Sprint 1 is present; wireframe.md (UI/Hybrid) and ui_spec.md (complex UI) requirements are absent.
+
+  - rule_id: UXA-004
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No ui_architect vs. ux_architect duplication concern documented; the role does not exist in ai-delivery-platform.
+
+  # ── AI_TASK.md ───────────────────────────────────────────────────────
+
+  - rule_id: TSK-001
+    status: DIFFERENT
+    target_rule_id: SX-002, SX-001
+    target_location: platform/backend-api/src/scripts/role-sprint-controller.script.ts
+    notes: ai-delivery-platform uses current_task.json + AI_IMPLEMENTATION_BRIEF.md (code-enforced schema) instead of a markdown AI_TASK.md; intent equivalent but mechanism is structured JSON vs. freeform document.
+
+  - rule_id: TSK-002
+    status: PARTIAL
+    target_rule_id: VP-001
+    target_location: platform/governance/prompts/role-verifier.md
+    notes: VP-001 checks task_id consistency at verification time; source-of-truth reference path consistency is not explicitly validated.
+
+  - rule_id: TSK-003
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: The recurring architectural inconsistency of mutable instance files inside a static governance directory is not documented in the target.
+
+  # ── AI_REVIEW.md ─────────────────────────────────────────────────────
+
+  - rule_id: REV-001
+    status: PARTIAL
+    target_rule_id: VX-005
+    target_location: platform/backend-api/src/scripts/role-verifier.script.ts
+    notes: VX-005 (code_enforced) loads brief, current_task.json, and implementation_summary as Stage A; test_results.json and a governance rules document are not listed as required preconditions.
+
+  - rule_id: REV-002
+    status: PARTIAL
+    target_rule_id: VP-001, VP-002, VP-003, VP-004, VP-005, VP-006, VP-007, VP-012
+    target_location: platform/governance/prompts/role-verifier.md
+    notes: Individual verification checks are present in VP rules, but no formal ordered 10-check protocol exists; contradiction guardrail behavior and Playwright evidence checks are absent.
+
+  - rule_id: REV-003
+    status: PRESENT
+    target_rule_id: VX-002
+    target_location: platform/backend-api/src/scripts/role-verifier.script.ts
+    notes: VX-002 (code_enforced) writes verification_result.json with all required fields including command_results; VP-009/010/011 cover PASS/FAIL handoff behavior.
+
+  - rule_id: REV-004
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No equivalent documentation of possible task contamination in AI_REVIEW.md verification steps.
+
+  # ── AI_PHASE_PROCESS.md ──────────────────────────────────────────────
+
+  - rule_id: PHP-001
+    status: PARTIAL
+    target_rule_id: RR-PLN-002, RR-SYS-001
+    target_location: docs/functional_requirements/rule_registry.yml
+    notes: Task-to-FR traceability is required; the specific phase creation gate (accepted intake item or explicit operator direction) is absent.
+
+  - rule_id: PHP-002
+    status: PARTIAL
+    target_rule_id: RR-PLN-010, RR-PLN-012
+    target_location: docs/functional_requirements/rule_registry.yml
+    notes: Design artifacts and user_flow.md approval gates exist; joint condition with first sprint brief staged is not explicit, and TDN approval is not named.
+
+  - rule_id: PHP-003
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No rule prohibits deleting or overwriting phase plan files; no retention-as-audit-trail obligation exists.
+
+  - rule_id: PHP-004
+    status: PARTIAL
+    target_rule_id: RR-SYS-001, RR-PLN-004
+    target_location: docs/functional_requirements/rule_registry.yml
+    notes: FR mapping per task is required; phase checklist traceability and required sprint plan fields (Phase ID, phase tasks covered) are absent.
+
+  - rule_id: PHP-005
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No equivalent note that AI_DESIGN_PROCESS.md is missing from the file system making Section 4a partially unenforceable.
+
+  # ── AI_INTAKE_PROCESS.md ─────────────────────────────────────────────
+
+  - rule_id: INT-001
+    status: PARTIAL
+    target_rule_id: RR-PLN-002
+    target_location: docs/functional_requirements/rule_registry.yml
+    notes: FR ID requirement for tasks exists; no full intake process is defined, and mid-sprint phase amendment control is absent.
+
+  - rule_id: INT-002
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No reconciliation intake (RC-*) process or 48-hour P0/P1 remediation obligation exists.
+
+  - rule_id: INT-003
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No intake process with a mandatory UX section for user-facing features exists; the earliest UX gate is the user_flow.md planning gate, not an intake stage.
+
+  - rule_id: INT-004
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No intake triage lifecycle (accepted/rejected/accepted_fast_track) or sprint-cycle triage deadline defined.
+
+  - rule_id: INT-005
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No intake audit trail preservation rule; the intake directory and README update model have no equivalent.
+
+  # ── AI_FIX_REQUEST.md ────────────────────────────────────────────────
+
+  - rule_id: FRQ-001
+    status: PARTIAL
+    target_rule_id: FP-006, HC-007
+    target_location: platform/governance/prompts/role-fixer.md, platform/governance/rules/handoff_contract.md
+    notes: Overwrite-only and not_run state reset are covered; the null-state template representation and AI_FIX_REQUEST.md-specific overwrite model are not explicit.
+
+  - rule_id: FRQ-002
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: The path conflict between AI_FIX_REQUEST.md and the canonical task history path is not documented.
+
+  # ── COORDINATION_CONTEXT.md ──────────────────────────────────────────
+
+  - rule_id: CCX-001
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No next_steps.md coordination ledger concept or content scope constraint exists in ai-delivery-platform.
+
+  - rule_id: CCX-002
+    status: PARTIAL
+    target_rule_id: RR-CTL-002, RR-CTL-003, RR-CTL-005
+    target_location: docs/functional_requirements/rule_registry.yml
+    notes: Task status sequencing and PR merge gate before re-staging are covered; the full 5-rule execution dependency model and Fast Track lane sequencing rules are not formalized.
+
+  - rule_id: CCX-003
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No canonical source-of-truth map for all artifact types and paths exists; there is no COORDINATION_CONTEXT.md equivalent.
+
+  # ── AI_SIDE_QUEST_PROCESS.md ─────────────────────────────────────────
+
+  - rule_id: SQP-001
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No side quest concept exists in ai-delivery-platform.
+
+  - rule_id: SQP-002
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No side quest ID format or domain token convention exists.
+
+  - rule_id: SQP-003
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No spec-before-staging gate for side quests exists.
+
+  - rule_id: SQP-004
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No per-slice file/LOC ceiling or slice count evaluation rule exists.
+
+  - rule_id: SQP-005
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No side quest implementer scope prohibition exists.
+
+  - rule_id: SQP-006
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No side quest close-out protocol exists.
+
+  - rule_id: SQP-007
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No side quest archive procedure (spec relocation after all slices complete) exists.
+
+  - rule_id: SQP-008
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No next_steps.md side-quest queue or usability backlog model exists.
+
+  # ── AI_GOVERNANCE_PILOT_REVIEW.md ────────────────────────────────────
+
+  - rule_id: GPR-001
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No governance regression review or pilot review process with 4 control categories is defined.
+
+  - rule_id: GPR-002
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No pilot measurement evaluation model (target band, FAIL-on-exceed) exists.
+
+  # ── AI_CONTEXT.md ────────────────────────────────────────────────────
+
+  - rule_id: CTX-001
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: AI_CONTEXT.md deprecation notice and canonical replacement pointer have no equivalent in ai-delivery-platform.
+
+  # ── AI_STEP_HISTORY.md ───────────────────────────────────────────────
+
+  - rule_id: STH-001
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No step history artifact or per-entry recording requirement exists; traceability is through pipeline run metadata and task archives instead.
+
+  # ── AI_PROMPT_STAGING_REFERENCE.md ───────────────────────────────────
+
+  - rule_id: PSR-001
+    status: PARTIAL
+    target_rule_id: RL-001, RL-002, RL-008, RL-009, RL-010
+    target_location: platform/governance/rules/runtime_loading_rules.md
+    notes: Individual stage loading rules exist; the formal 6-step ordered prompt contract as a binding execution procedure for all agents is not stated.
+
+  - rule_id: PSR-002
+    status: PRESENT
+    target_rule_id: TF-001, TF-002, TF-003, TF-004
+    target_location: platform/governance/rules/task_flags_contract.md
+    notes: The same four canonical flag fields are defined; their exclusive role as Stage B loading governors is confirmed by RL-004 through RL-007.
+
+  - rule_id: PSR-003
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No rule requires each agent prompt file to reference AI_RUNTIME_LOADING_RULES.md and describe its Stage B/C resolution approach.
+
+  - rule_id: PSR-004
+    status: PARTIAL
+    target_rule_id: SC-003, TF-005, RR-IMP-005
+    target_location: platform/governance/rules/runtime_loading_rules.md, task_flags_contract.md
+    notes: Sprint Controller flag emission and Implementer flag consumption are covered; Planner flag-setting authority, Fixer failure-evidence scoping, and Documenter scope-constraining roles are not stated.
+
+  # ── AI_COMMIT_TEMPLATE.md ────────────────────────────────────────────
+
+  - rule_id: CMT-001
+    status: DIFFERENT
+    target_rule_id: ADR30-003
+    target_location: docs/adr/adr-030-autonomous-sprint-execution.md
+    notes: Both require structured commit metadata, but the field sets differ — reference specifies Commit Message, Files Changed, Reason, Tests Added, Notes; target requires pipeline_id, task_id, and execution traceability metadata.
+
+  # ── AI_EXECUTION_ARTIFACT_NAMING.md ──────────────────────────────────
+
+  - rule_id: NMG-001
+    status: PRESENT
+    target_rule_id: SC-004, SC-005
+    target_location: platform/governance/prompts/role-sprint-controller.md
+    notes: SC-004 defines sprint_id as S<NN> and SC-005 defines task_id as S<NN>-<NNN>, matching the reference naming convention.
+
+  - rule_id: NMG-002
+    status: ABSENT
+    target_rule_id: null
+    target_location: none
+    notes: No side quest concept or SQ-<DOMAIN>-<NNN><slice?> ID format exists in ai-delivery-platform.

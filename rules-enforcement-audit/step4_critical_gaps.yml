@@ -1,0 +1,34 @@
+behavioral_conflicts:
+
+  - rule_id: RUL-007
+    reference_behavior: >
+      Standard mode allows up to 7 files and ~400 lines of code per task;
+      Fast Track mode allows up to 12–15 files and 1200–1500 lines of code.
+    target_behavior: >
+      A hard ceiling of ≤ 5 files and ≤ 200 lines of code applies to every
+      task in all modes, with no Fast Track escalation path.
+    conflict_type: narrowing
+    risk: >
+      Any task legitimately planned under reference Fast Track limits (e.g.,
+      10 files, 800 LOC) will be structurally rejected by the target Verifier
+      (VP-006) and Sprint Controller scope gate (GR-007/GR-008) regardless of
+      operator authorization, making Fast Track workflows impossible to execute
+      in the target system without a governance rule change.
+
+  - rule_id: TSK-001
+    reference_behavior: >
+      Task context is delivered as a freeform markdown document (AI_TASK.md)
+      whose path and structure are defined by the reference governance system's
+      path conventions.
+    target_behavior: >
+      Task context is split across two structured-JSON artifacts —
+      current_task.json (machine-readable state) and AI_IMPLEMENTATION_BRIEF.md
+      (code-enforced via SX-001/SX-002) — with the brief as the Implementer's
+      canonical source of truth.
+    conflict_type: contradiction
+    risk: >
+      Reference-side runbooks, agent prompts, or integration tooling that
+      reference AI_TASK.md by path will find no such file in the target system,
+      causing silent context resolution failures; conversely, any target tool
+      expecting structured JSON from current_task.json will break if a reference
+      migration attempts to substitute a freeform AI_TASK.md.

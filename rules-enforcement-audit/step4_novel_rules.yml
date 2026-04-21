@@ -1,0 +1,1305 @@
+novel_rules:
+
+  # ── platform/governance/rules/global_rules.md ──────────────────────
+
+  - target_rule_id: GR-004
+    rule: "Never modify database migrations unless required by the current task."
+    source: platform/governance/rules/global_rules.md
+    adoption_recommendation: adopt
+    rationale: >
+      Protects schema integrity by preventing accidental migration drift during
+      unrelated tasks; no reference equivalent constrains this high-risk surface.
+
+  - target_rule_id: GR-006
+    rule: "Must not implement future sprint tasks."
+    source: platform/governance/rules/global_rules.md
+    adoption_recommendation: adopt
+    rationale: >
+      Closes a scope-creep vector not covered by the reference system's
+      general scope expansion prohibition.
+
+  - target_rule_id: GR-011
+    rule: "Output ONLY valid JSON unless the role's prompt specifies otherwise."
+    source: platform/governance/rules/global_rules.md
+    adoption_recommendation: adopt
+    rationale: >
+      Prevents schema validation breakage caused by prose-wrapped JSON; complements
+      ADR-008 at the agent instruction level.
+
+  - target_rule_id: GR-012
+    rule: "Must not wrap output in markdown code fences."
+    source: platform/governance/rules/global_rules.md
+    adoption_recommendation: adopt
+    rationale: >
+      Eliminates a common LLM output defect that silently breaks downstream
+      JSON parsers; the reference system has no equivalent guardrail.
+
+  - target_rule_id: GR-013
+    rule: "Must not include prose or explanation outside the JSON structure."
+    source: platform/governance/rules/global_rules.md
+    adoption_recommendation: adopt
+    rationale: >
+      Partners with GR-011/GR-012 to make output-format discipline a
+      first-class governance constraint rather than a parser implementation
+      assumption.
+
+  - target_rule_id: GR-014
+    rule: "Must not implement behavior that contradicts an Accepted ADR; must flag the conflict instead."
+    source: platform/governance/rules/global_rules.md
+    adoption_recommendation: adopt
+    rationale: >
+      Prevents silent ADR drift by forcing agents to surface contradictions
+      rather than quietly work around them; no reference equivalent exists.
+
+  - target_rule_id: GR-016
+    rule: "All role prompts, schemas, and contracts must be versioned with the governance manifest."
+    source: platform/governance/rules/global_rules.md
+    adoption_recommendation: adopt
+    rationale: >
+      Anchors auditability — every execution run can be reproduced with the
+      exact governance content that was active at the time.
+
+  # ── platform/governance/rules/runtime_gates.md ─────────────────────
+
+  - target_rule_id: RG-005
+    rule: "The Fixer must address all gate failures before the Verifier is permitted to re-run."
+    source: platform/governance/rules/runtime_gates.md
+    adoption_recommendation: adopt
+    rationale: >
+      Prevents partial-fix loops where the Verifier is invoked before all
+      listed corrections are addressed; the reference system has no equivalent
+      ordering constraint.
+
+  - target_rule_id: RG-006
+    rule: "Each file change must trace to at least one acceptance criterion."
+    source: platform/governance/rules/runtime_gates.md
+    adoption_recommendation: adopt
+    rationale: >
+      Grounds every code change in a deliverable, making scope drift
+      structurally detectable by the Verifier at artifact inspection time.
+
+  - target_rule_id: RG-007
+    rule: "The implementation summary must include a test_approach field describing test types, specific behaviors tested, and which acceptance criteria each test covers."
+    source: platform/governance/rules/runtime_gates.md
+    adoption_recommendation: adopt
+    rationale: >
+      Makes test intent auditable and prevents the Verifier from accepting
+      tests that pass mechanically but miss the acceptance criteria intent.
+
+  # ── platform/governance/rules/task_flags_contract.md ───────────────
+
+  - target_rule_id: TF-006
+    rule: "architecture_contract_change must be set true if ADRs or architecture docs change."
+    source: platform/governance/rules/task_flags_contract.md
+    adoption_recommendation: adopt
+    rationale: >
+      Closes the flag trigger gap — without this, architecture-touching tasks
+      silently skip Stage B architecture doc loading.
+
+  - target_rule_id: TF-007
+    rule: "ui_evidence_required must be set true for any user-facing feature."
+    source: platform/governance/rules/task_flags_contract.md
+    adoption_recommendation: adopt
+    rationale: >
+      Provides an explicit set-condition for ui_evidence_required, preventing
+      ambiguous Sprint Controller judgment calls on UI scope.
+
+  # ── platform/governance/prompts/role-planner.md ────────────────────
+
+  - target_rule_id: PP-002
+    rule: "Planner output must be valid JSON matching phase_plan.schema.json exactly — no markdown, no prose."
+    source: platform/governance/prompts/role-planner.md
+    adoption_recommendation: adopt
+    rationale: >
+      Machine-validates Planner output at the artifact level, preventing a
+      freeform plan from reaching downstream roles in an unparseable form.
+
+  - target_rule_id: PP-003
+    rule: "phase_id must follow the format PH-{STREAM}-{N} where STREAM is 2-6 uppercase letters."
+    source: platform/governance/prompts/role-planner.md
+    adoption_recommendation: adopt
+    rationale: >
+      Deterministic phase IDs enable unambiguous cross-artifact traceability
+      and prevent duplicate or colliding phase identifiers.
+
+  - target_rule_id: PP-004
+    rule: "objectives must contain 2-4 measurable outcomes, each independently verifiable."
+    source: platform/governance/prompts/role-planner.md
+    adoption_recommendation: adopt
+    rationale: >
+      Bounds objective scope to prevent vague plans that cannot be verified
+      at sprint close.
+
+  - target_rule_id: PP-005
+    rule: "deliverables must be concrete artifacts or features that can be checked into Git."
+    source: platform/governance/prompts/role-planner.md
+    adoption_recommendation: adopt
+    rationale: >
+      Eliminates non-auditable deliverables (e.g., "understanding of X") that
+      cannot be confirmed in the task archive.
+
+  - target_rule_id: PP-006
+    rule: "Phase status must always be 'Draft' — the Planner must never activate a phase."
+    source: platform/governance/prompts/role-planner.md
+    adoption_recommendation: adopt
+    rationale: >
+      Enforces the separation between planning authority and activation
+      authority, preventing unreviewed phases from entering execution.
+
+  - target_rule_id: PP-007
+    rule: "Must not produce sprint plans or implementation details — that is the Sprint Controller's job."
+    source: platform/governance/prompts/role-planner.md
+    adoption_recommendation: adopt
+    rationale: >
+      Reinforces role boundary at the prompt level for the most common
+      Planner over-reach pattern.
+
+  # ── platform/governance/prompts/role-sprint-controller.md ──────────
+
+  - target_rule_id: SC-004
+    rule: "sprint_id must follow the format S<NN> (e.g. S01, S02)."
+    source: platform/governance/prompts/role-sprint-controller.md
+    adoption_recommendation: adopt
+    rationale: >
+      Deterministic sprint IDs prevent archive path collisions and enable
+      reliable cross-artifact linking.
+
+  - target_rule_id: SC-005
+    rule: "task_id must follow the format S<NN>-<NNN> (e.g. S01-001)."
+    source: platform/governance/prompts/role-sprint-controller.md
+    adoption_recommendation: adopt
+    rationale: >
+      Paired with SC-004, ensures every task has a globally unique,
+      predictable identifier across all sprint archives.
+
+  - target_rule_id: SC-006
+    rule: "tasks in sprint_plan must be an array of task_id strings, not objects."
+    source: platform/governance/prompts/role-sprint-controller.md
+    adoption_recommendation: adopt
+    rationale: >
+      Prevents schema drift in the sprint plan that would break downstream
+      task-iteration logic.
+
+  - target_rule_id: SC-007
+    rule: "files_likely_affected must be specific file paths relative to project root, 2-5 files maximum."
+    source: platform/governance/prompts/role-sprint-controller.md
+    adoption_recommendation: adopt
+    rationale: >
+      Grounds the Implementer's scope before execution begins, reducing
+      ambiguity about which files are in scope.
+
+  - target_rule_id: SC-008
+    rule: "acceptance_criteria must be testable, specific, and verifiable by the Verifier AI."
+    source: platform/governance/prompts/role-sprint-controller.md
+    adoption_recommendation: adopt
+    rationale: >
+      Prevents acceptance criteria that pass human review but cannot be
+      evaluated deterministically by the Verifier role.
+
+  # ── platform/governance/prompts/role-implementer.md ────────────────
+
+  - target_rule_id: IP-001
+    rule: "Implementer's primary source of truth must be AI_IMPLEMENTATION_BRIEF.md."
+    source: platform/governance/prompts/role-implementer.md
+    adoption_recommendation: adopt
+    rationale: >
+      Anchors Implementer context to a single authoritative artifact,
+      preventing divergence when multiple governance documents contain
+      overlapping or contradictory guidance.
+
+  - target_rule_id: IP-006
+    rule: "Every file change must trace to an acceptance criterion in the implementation brief."
+    source: platform/governance/prompts/role-implementer.md
+    adoption_recommendation: adopt
+    rationale: >
+      Enforces RG-006 at the Implementer prompt level, making traceability
+      a pre-commit obligation rather than a post-hoc Verifier check.
+
+  - target_rule_id: IP-007
+    rule: "files_changed action must be exactly 'Create' or 'Modify'."
+    source: platform/governance/prompts/role-implementer.md
+    adoption_recommendation: adopt
+    rationale: >
+      Ensures the Deliverables Checklist uses a controlled vocabulary the
+      Verifier can evaluate deterministically.
+
+  - target_rule_id: IP-008
+    rule: "files_changed description must be specific enough for a developer or Verifier to verify."
+    source: platform/governance/prompts/role-implementer.md
+    adoption_recommendation: adopt
+    rationale: >
+      Prevents vague descriptions (e.g., "updated file") that satisfy the
+      schema but convey no verifiable intent.
+
+  - target_rule_id: IP-009
+    rule: "test_approach must be concrete and not generic."
+    source: platform/governance/prompts/role-implementer.md
+    adoption_recommendation: adopt
+    rationale: >
+      Closes the loophole where Implementers emit boilerplate test_approach
+      values that pass schema validation but provide no audit evidence.
+
+  # ── platform/governance/prompts/role-verifier.md ───────────────────
+
+  - target_rule_id: VP-002
+    rule: "Must validate that each file in the Deliverables Checklist has an explicit Create or Modify action."
+    source: platform/governance/prompts/role-verifier.md
+    adoption_recommendation: adopt
+    rationale: >
+      Ensures the Verifier cross-checks the Implementer's action vocabulary
+      against the brief, catching missing or ambiguous deliverable entries.
+
+  - target_rule_id: VP-003
+    rule: "For Create deliverables: the file must exist in the plan."
+    source: platform/governance/prompts/role-verifier.md
+    adoption_recommendation: adopt
+    rationale: >
+      Prevents the Verifier from passing a task where a declared Create
+      artifact was never actually created.
+
+  - target_rule_id: VP-004
+    rule: "For Modify deliverables: the file must be changed within the current task scope."
+    source: platform/governance/prompts/role-verifier.md
+    adoption_recommendation: adopt
+    rationale: >
+      Prevents a Verifier pass for scope-drifted changes to files not in
+      the declared task scope.
+
+  - target_rule_id: VP-005
+    rule: "Must confirm required tests exist and match brief expectations."
+    source: platform/governance/prompts/role-verifier.md
+    adoption_recommendation: adopt
+    rationale: >
+      Closes the gap between tests passing and tests covering the right
+      behaviors as declared in the brief.
+
+  - target_rule_id: VP-006
+    rule: "Must confirm no unrelated scope expansion occurred (≤5 files, ≤200 lines constraint)."
+    source: platform/governance/prompts/role-verifier.md
+    adoption_recommendation: adopt
+    rationale: >
+      Makes scope limit enforcement a named Verifier check, not an implied
+      consequence of artifact inspection.
+
+  - target_rule_id: VP-007
+    rule: "Must confirm implementation traces to at least one acceptance criterion per file."
+    source: platform/governance/prompts/role-verifier.md
+    adoption_recommendation: adopt
+    rationale: >
+      Directly enforces RG-006 from the Verifier side, creating a bilateral
+      traceability obligation.
+
+  - target_rule_id: VP-008
+    rule: "result must be 'PASS' only if ALL acceptance criteria are met."
+    source: platform/governance/prompts/role-verifier.md
+    adoption_recommendation: adopt
+    rationale: >
+      Prevents partial-pass verdicts where some criteria are satisfied and
+      others are silently deferred.
+
+  - target_rule_id: VP-009
+    rule: "required_corrections must be an empty array on PASS and contain specific actionable items on FAIL."
+    source: platform/governance/prompts/role-verifier.md
+    adoption_recommendation: adopt
+    rationale: >
+      Ensures FAIL verdicts carry the structured correction data the Fixer
+      depends on, rather than free-text summaries.
+
+  - target_rule_id: VP-010
+    rule: "On PASS, handoff.next_role_action must be 'Sprint Controller archives task and closes it.'"
+    source: platform/governance/prompts/role-verifier.md
+    adoption_recommendation: adopt
+    rationale: >
+      Prescribes the exact handoff signal so Sprint Controller routing is
+      deterministic and cannot be misread as a fix-loop trigger.
+
+  - target_rule_id: VP-011
+    rule: "On FAIL, handoff.next_role_action must be 'Fixer addresses only the listed corrections and re-verifies.'"
+    source: platform/governance/prompts/role-verifier.md
+    adoption_recommendation: adopt
+    rationale: >
+      Mirrors VP-010 for the failure path; prevents the Fixer from receiving
+      ambiguous or missing routing instructions.
+
+  - target_rule_id: VP-012
+    rule: "Must not invent issues not evidenced in the artifacts."
+    source: platform/governance/prompts/role-verifier.md
+    adoption_recommendation: adopt
+    rationale: >
+      Prevents hallucinated corrections that expand the fix scope beyond what
+      the Implementer actually produced.
+
+  # ── platform/governance/prompts/role-fixer.md ──────────────────────
+
+  - target_rule_id: FP-004
+    rule: "Fixer must produce a handoff contract per AI_HANDOFF_CONTRACT.md."
+    source: platform/governance/prompts/role-fixer.md
+    adoption_recommendation: adopt
+    rationale: >
+      Ensures the Fixer emits a structured handoff after repairs, not a
+      narrative summary, enabling deterministic Verifier re-routing.
+
+  - target_rule_id: FP-005
+    rule: "fixes_applied must contain one entry per correction item from verification_result.json."
+    source: platform/governance/prompts/role-fixer.md
+    adoption_recommendation: adopt
+    rationale: >
+      Creates a 1:1 traceability link between each listed correction and
+      each applied fix, making partial-fix gaps detectable.
+
+  - target_rule_id: FP-008
+    rule: "Must not invent fixes for issues not present in the required_corrections list."
+    source: platform/governance/prompts/role-fixer.md
+    adoption_recommendation: adopt
+    rationale: >
+      Mirrors VP-012 for the Fixer role; prevents scope expansion disguised
+      as proactive repair.
+
+  # ── docs/functional_requirements/rule_registry.yml ─────────────────
+
+  - target_rule_id: RR-PLN-003
+    rule: "Planner must ensure each task is atomic and testable."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Complements SC-008 on the planning side by requiring the Planner to
+      pre-validate task atomicity before sprint decomposition.
+
+  - target_rule_id: RR-PLN-005
+    rule: "Planner must include acceptance checks for each task."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Ensures every task carries verifiable acceptance criteria from the
+      planning stage, not just at sprint-controller brief time.
+
+  - target_rule_id: RR-PLN-006
+    rule: "Planner must not include implementation-level detail in task definitions."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Preserves role separation by keeping the Planner out of the Sprint
+      Controller's implementation decomposition domain.
+
+  - target_rule_id: RR-PLN-007
+    rule: "Planner must not create circular dependencies between tasks."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Prevents deadlocked sprint plans that cannot be executed in any valid
+      sequential order.
+
+  - target_rule_id: RR-PLN-008
+    rule: "Planner must set task flags accurately for each task."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Extends flag-ownership responsibility to the Planner's planning output,
+      establishing a pre-Sprint-Controller accuracy obligation.
+
+  - target_rule_id: RR-CTL-001
+    rule: "Sprint Controller must not implement code."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Mirrors RR-PLN-001 for the Sprint Controller role; the reference system
+      omits an explicit no-code rule for this role.
+
+  - target_rule_id: RR-IMP-004
+    rule: "Implementer must keep scope minimal and avoid unrelated refactor."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Reinforces GR-005 at the role-registry level with documented_only
+      enforcement, providing a named, citable rule for audit findings.
+
+  - target_rule_id: RR-IMP-005
+    rule: "Implementer must read the Task Flags block from the implementation brief before exploring additional documents."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Establishes an explicit sequencing obligation that prevents the
+      Implementer from loading Stage B documents before evaluating flags.
+
+  - target_rule_id: RR-IMP-007
+    rule: "Implementer must load user_flow.md before writing any user-facing code if it exists."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Operationalizes the UX gate at the Implementer level, making
+      user_flow.md a required pre-read rather than an optional reference.
+
+  - target_rule_id: RR-IMP-009
+    rule: "Implementer must implement the exact steps, inputs, outputs, and failure states defined in user_flow.md."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Prevents partial user-flow implementation that passes CI gates but
+      silently omits documented failure states.
+
+  - target_rule_id: RR-IMP-010
+    rule: "Implementer must not invent alternative flows or skip failure handling defined in user_flow.md."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Closes the "creative shortcut" pattern where an LLM substitutes a
+      simpler flow for the approved user_flow.md design.
+
+  - target_rule_id: RR-IMP-011
+    rule: "Implementer must load wireframe.md and ui_spec.md before implementing UI when they exist."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Extends the UX gate beyond user_flow.md to visual spec artifacts,
+      closing a gap where UI components are implemented without design context.
+
+  - target_rule_id: RR-IMP-012
+    rule: "Implementer must ensure user-facing error messages match the failure-state descriptions in user_flow.md."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Makes error-message fidelity a named implementation obligation, not
+      an implied consequence of user_flow.md conformance.
+
+  - target_rule_id: RR-IMP-013
+    rule: "Implementer must run required gates and tests."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Explicitly names gate execution as an Implementer exit obligation,
+      preventing "I left it to CI" deferrals.
+
+  - target_rule_id: RR-IMP-014
+    rule: "Implementer must write real results to ai_dev_stack/ai_project_tasks/active/test_results.json."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Partners with RR-IMP-015 to make test result artifact production an
+      explicit requirement, not a convention.
+
+  - target_rule_id: RR-VER-001
+    rule: "Verifier must validate only — must not implement or fix."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Named role-boundary rule for the Verifier at the registry level;
+      the reference system relies on general GR-001 and lacks a Verifier-specific
+      no-implement prohibition.
+
+  - target_rule_id: RR-VER-002
+    rule: "Verifier must return PASS or FAIL."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Constrains the Verifier to a binary verdict, preventing ambiguous
+      partial-pass states that could stall the pipeline.
+
+  - target_rule_id: RR-VER-003
+    rule: "Verifier must verify that every Create deliverable exists."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Explicit artifact existence check at the registry level complements
+      VP-003 with a named citable rule.
+
+  - target_rule_id: RR-VER-004
+    rule: "Verifier must verify that every Modify deliverable was actually changed in scope."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Complements RR-VER-003 for modification deliverables; prevents false
+      passes where a file is listed as modified but unchanged.
+
+  - target_rule_id: RR-VER-005
+    rule: "Verifier must verify required tests are present and appropriate."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Bridges between gate pass/fail (mechanical) and test adequacy
+      (qualitative), making test presence a named Verifier concern.
+
+  - target_rule_id: RR-VER-007
+    rule: "Verifier must fail verification if unrelated scope expansion is detected."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Makes scope drift an explicit FAIL condition, not just a Verifier
+      observation, ensuring it cannot be silently noted and passed.
+
+  - target_rule_id: RR-VER-008
+    rule: "Verifier must verify TDN input and output field names and types match the approved TDN."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      TDN field-level conformance is a critical drift-prevention check the
+      reference system entirely lacks; schema drift discovered post-deployment
+      is expensive to remediate.
+
+  - target_rule_id: RR-VER-009
+    rule: "Verifier must verify component interfaces match the approved TDN."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Complements RR-VER-008 for interface-level conformance, preventing
+      API contract drift that passes field checks but breaks callers.
+
+  - target_rule_id: RR-VER-010
+    rule: "Verifier must verify retry behavior, abort thresholds, and logging match the TDN error model."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Error model divergence is operationally invisible until an incident;
+      gating it at verification time prevents silent runtime governance drift.
+
+  - target_rule_id: RR-VER-011
+    rule: "Verifier must flag any TDN deviation as a required correction even if tests pass."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Prevents "tests pass but contract is broken" false positives where
+      all CI gates are green but the implementation diverges from the approved TDN.
+
+  - target_rule_id: RR-VER-014
+    rule: "Verifier must verify final full validation gates ran before close recommendation on fast-track tasks."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Ensures Fast Track's relaxed checkpoint cadence does not eliminate
+      the final full gate run before a task is closed.
+
+  - target_rule_id: RR-VER-015
+    rule: "Verifier must verify that user_flow.md exists and has Status 'Approved' for any user-facing task."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Makes UX gate compliance a Verifier hard-stop, not just an Implementer
+      pre-condition, preventing approved tasks from shipping without an approved flow.
+
+  - target_rule_id: RR-VER-016
+    rule: "Verifier must verify the happy path defined in user_flow.md is reachable end-to-end."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Closes the gap between "user_flow.md exists and is Approved" and
+      "the implementation actually realises it."
+
+  - target_rule_id: RR-VER-017
+    rule: "Verifier must verify at least one documented failure state produces the correct user-visible error message."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Pairs with RR-IMP-012 — the Verifier must confirm what the Implementer
+      was obligated to produce, closing the bilateral loop.
+
+  - target_rule_id: RR-VER-018
+    rule: "Verifier must verify CLI output is human-readable and not a raw JSON dump unless explicitly specified."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: evaluate
+    rationale: >
+      Valuable for CLI-facing features but overly prescriptive for
+      API-only or background tasks; scope to CLI/conversational flow types only.
+
+  - target_rule_id: RR-VER-019
+    rule: "Verifier must verify all UI status, error, and loading states defined in the flow are visually distinct."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: evaluate
+    rationale: >
+      Valid for UI tasks but non-applicable to backend-only work; adopt
+      conditionally when ui_evidence_required is true.
+
+  - target_rule_id: RR-VER-020
+    rule: "Verifier must verify chat responses match the tone and format described in the flow."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: evaluate
+    rationale: >
+      Applicable to conversational interface features only; requires
+      a defined tone/format spec in user_flow.md to be verifiable.
+
+  - target_rule_id: RR-VER-021
+    rule: "Verifier must fail if any step in user_flow.md is broken or silently skipped."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Zero-tolerance for silent flow omissions; prevents partial UX
+      implementations that pass gate checks but break user journeys.
+
+  - target_rule_id: RR-VER-022
+    rule: "Verifier must emit compact handoff fields from AI_HANDOFF_CONTRACT.md on FAIL."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Named obligation at the registry level ensuring FAIL verdicts always
+      carry structured handoff data even when the Verifier prompt is changed.
+
+  - target_rule_id: RR-VER-023
+    rule: "Verifier must write ai_dev_stack/ai_project_tasks/active/verification_result.json with the required fields."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Named artifact write obligation prevents configurations where the
+      Verifier emits a verdict without persisting it to the active-slot path.
+
+  - target_rule_id: RR-FIX-001
+    rule: "Fixer must repair only the verified failure scope."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Registry-level counterpart to FP-001 providing a citable named rule
+      for audit findings on Fixer scope violations.
+
+  - target_rule_id: RR-FIX-002
+    rule: "Fixer must use task flags to load only the same conditional documents that applied to the failing task."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Ensures fix-loop context is identical to the original task context,
+      preventing the Fixer from silently loading more or fewer governance docs
+      than the Implementer used.
+
+  - target_rule_id: RR-FIX-003
+    rule: "Fixer must load the governing TDN when the fix touches a component governed by a TDN."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Prevents TDN-unaware fixes that correct the gate failure but introduce
+      a new contract violation.
+
+  - target_rule_id: RR-FIX-004
+    rule: "Fixer must ensure the fix conforms to approved TDN contracts and must not introduce contradictory field names, error handling, or interface shapes."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Closes the "fix introduces new TDN drift" vector, which is otherwise
+      not caught until the next Verifier run.
+
+  - target_rule_id: RR-FIX-005
+    rule: "Fixer must add Stage C files only when verifier corrections or CI output cite them."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Mirrors RL-008 specifically for the Fixer role, preventing speculative
+      Stage C loads during the fix loop.
+
+  - target_rule_id: RR-FIX-006
+    rule: "Fixer must consume the structured verifier handoff from AI_HANDOFF_CONTRACT.md instead of narrative summaries."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Ensures the Fixer uses machine-readable correction data, preventing
+      narrative drift where a summary omits required corrections.
+
+  - target_rule_id: RR-FIX-007
+    rule: "Fixer must treat changed_scope, open_risks, and next_role_action as the authoritative repair inputs."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Names specific handoff fields as Fixer inputs, preventing the Fixer
+      from ignoring open_risks or overriding next_role_action.
+
+  - target_rule_id: RR-FIX-009
+    rule: "Fixer must produce ai_dev_stack/ai_project_tasks/active/fix_state.json."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Named artifact obligation ensures fix state is persisted before
+      the Verifier re-runs, not left implicit.
+
+  - target_rule_id: RR-FIX-010
+    rule: "Fixer must keep corrections minimal and evidence-linked."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      Registry-level reinforcement of FP-003 with an evidence-linking
+      obligation the prompt rule does not explicitly name.
+
+  - target_rule_id: RR-SYS-002
+    rule: "Every implementation must map to the assigned task."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      System-level traceability obligation complementing RR-SYS-001;
+      the reference system has no equivalent implementation-to-task binding rule.
+
+  - target_rule_id: RR-SYS-003
+    rule: "No agent may expand scope beyond its governing inputs and contracts."
+    source: docs/functional_requirements/rule_registry.yml
+    adoption_recommendation: adopt
+    rationale: >
+      System-level scope ceiling spanning all roles; more general than
+      GR-002 and closes gaps where role-specific rules are absent.
+
+  # ── platform/backend-api/src/middleware/api-key.middleware.ts ───────
+
+  - target_rule_id: AK-001
+    rule: "All non-health endpoints must include a valid x-api-key header."
+    source: platform/backend-api/src/middleware/api-key.middleware.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Authentication enforcement on the execution API surface is a
+      security baseline with no reference equivalent; prevents unauthenticated
+      pipeline invocations.
+
+  - target_rule_id: AK-002
+    rule: "Requests missing x-api-key must be rejected with HTTP 401."
+    source: platform/backend-api/src/middleware/api-key.middleware.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Specifies the exact rejection response, enabling compliant clients
+      and consistent audit logging.
+
+  - target_rule_id: AK-003
+    rule: "Requests with an invalid x-api-key must be rejected with HTTP 403."
+    source: platform/backend-api/src/middleware/api-key.middleware.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Distinguishes missing-key (401) from invalid-key (403), enabling
+      precise access-control audit trails.
+
+  - target_rule_id: AK-004
+    rule: "The /health endpoint must remain unauthenticated."
+    source: platform/backend-api/src/middleware/api-key.middleware.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Preserves liveness probe operability in orchestrated environments
+      without compromising the auth perimeter.
+
+  # ── platform/backend-api/src/services/validation.service.ts ────────
+
+  - target_rule_id: VS-001
+    rule: "All execution requests must include target and input fields."
+    source: platform/backend-api/src/services/validation.service.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Baseline API envelope contract enforced at code level; the reference
+      system has no equivalent machine-enforced request schema.
+
+  - target_rule_id: VS-002
+    rule: "target must include type, name, and version fields; no additional properties are allowed."
+    source: platform/backend-api/src/services/validation.service.ts
+    adoption_recommendation: adopt
+    rationale: >
+      additionalProperties: false prevents undeclared fields from silently
+      reaching script execution context.
+
+  - target_rule_id: VS-003
+    rule: "target.type must be exactly 'script' or 'role'."
+    source: platform/backend-api/src/services/validation.service.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Controlled vocabulary for execution type prevents routing to
+      unrecognized handlers.
+
+  - target_rule_id: VS-004
+    rule: "target.name and target.version must be non-empty strings."
+    source: platform/backend-api/src/services/validation.service.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Rejects trivially malformed requests before they reach the registry
+      lookup layer.
+
+  - target_rule_id: VS-005
+    rule: "Floating version aliases ('latest', 'stable') are not allowed — an explicit immutable version must be provided."
+    source: platform/backend-api/src/services/validation.service.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Enforces execution determinism at the API boundary; floating aliases
+      would make governance audit trails unreproducible.
+
+  - target_rule_id: VS-006
+    rule: "Script output must be validated against its registered output_schema before the execution response is returned."
+    source: platform/backend-api/src/services/validation.service.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Operationalises ADR-008 at the service layer; schema validation is
+      the last defence before invalid LLM output enters pipeline state.
+
+  - target_rule_id: VS-007
+    rule: "Coordination create requests must include kind, scope, and data fields."
+    source: platform/backend-api/src/services/validation.service.ts
+    adoption_recommendation: evaluate
+    rationale: >
+      Target-specific to the coordination-context API; adopt only if the
+      reference system implements an equivalent coordination layer.
+
+  - target_rule_id: VS-008
+    rule: "Coordination kind must be one of 'workflow', 'agent', or 'session'."
+    source: platform/backend-api/src/services/validation.service.ts
+    adoption_recommendation: evaluate
+    rationale: >
+      Same scope caveat as VS-007; valid for reference adoption if and only
+      if a coordination-context concept is introduced.
+
+  - target_rule_id: VS-009
+    rule: "Execution request envelope must not include additional properties beyond the declared schema."
+    source: platform/backend-api/src/services/validation.service.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Defense-in-depth at the API layer; prevents injection of unrecognized
+      fields that bypass downstream governance checks.
+
+  # ── platform/backend-api/src/services/governance.service.ts ────────
+
+  - target_rule_id: GS-001
+    rule: "All role prompts must be registered in the governance manifest before they can be loaded by scripts."
+    source: platform/backend-api/src/services/governance.service.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Registry-gating ensures no ad-hoc prompt can be injected at runtime
+      without a versioned manifest entry.
+
+  - target_rule_id: GS-002
+    rule: "All rules must be registered in the governance manifest before they can be loaded by scripts."
+    source: platform/backend-api/src/services/governance.service.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Extends GS-001 to rules files, closing the gap where a rule is
+      authored but never wired into the execution pipeline.
+
+  - target_rule_id: GS-003
+    rule: "All schemas must be registered in the governance manifest before they can be loaded by scripts."
+    source: platform/backend-api/src/services/governance.service.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Completes the manifest-gating triad for prompts, rules, and schemas.
+
+  # ── platform/backend-api/src/services/script-runner.service.ts ─────
+
+  - target_rule_id: SR-001
+    rule: "Scripts must be resolved through the registry before execution — unregistered scripts must not run."
+    source: platform/backend-api/src/services/script-runner.service.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Registry resolution as a pre-execution gate prevents rogue or
+      version-drifted scripts from executing outside governance control.
+
+  - target_rule_id: SR-002
+    rule: "Script output must be validated against the script descriptor's output_schema after every execution."
+    source: platform/backend-api/src/services/script-runner.service.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Post-run validation is the final enforcement point; complements
+      VS-006 for the script execution path specifically.
+
+  # ── platform/backend-api/src/services/pipeline.service.ts ──────────
+
+  - target_rule_id: PS-001
+    rule: "completeStep must assert the pipeline's current_step matches the completing role; mismatches must be rejected."
+    source: platform/backend-api/src/services/pipeline.service.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Prevents out-of-order step completion that would corrupt pipeline
+      state without a named rule to surface in audit findings.
+
+  - target_rule_id: PS-002
+    rule: "completeStep is only valid when pipeline status is 'running'."
+    source: platform/backend-api/src/services/pipeline.service.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Status-gated step completion prevents state machine corruption from
+      duplicate or stale completion signals.
+
+  - target_rule_id: PS-003
+    rule: "When execution mode is 'next' and the entry role completes, the pipeline must stop immediately."
+    source: platform/backend-api/src/services/pipeline.service.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Ensures human review gates between steps in single-step mode are
+      not bypassed by pipeline service routing logic.
+
+  - target_rule_id: PS-006
+    rule: "In 'next-flow' mode with a non-planner entry point, a Verifier PASS must stop the pipeline."
+    source: platform/backend-api/src/services/pipeline.service.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Named routing rule for each execution mode prevents mode-specific
+      routing gaps from silently advancing the pipeline past human gates.
+
+  - target_rule_id: PS-007
+    rule: "In 'full-sprint' mode, a Verifier PASS must route the pipeline to sprint-controller for close-out."
+    source: platform/backend-api/src/services/pipeline.service.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Closes the full-sprint close-out routing gap; without this, a PASS
+      in full-sprint mode has no defined next state.
+
+  - target_rule_id: PS-008
+    rule: "Sprint Controller close-out (when a prior verifier step has already completed) must transition pipeline status to 'awaiting_pr_review'."
+    source: platform/backend-api/src/services/pipeline.service.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Complements ADR30-008 at the code rule level, ensuring PR review
+      is a named gated state, not an optional post-close action.
+
+  - target_rule_id: PS-009
+    rule: "approve action is only valid when pipeline status is 'awaiting_approval'."
+    source: platform/backend-api/src/services/pipeline.service.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Status-gated human actions prevent approval racing conditions that
+      could advance a pipeline before human review is complete.
+
+  - target_rule_id: PS-010
+    rule: "cancel action is only valid when pipeline status is 'running', 'awaiting_approval', or 'paused_takeover'."
+    source: platform/backend-api/src/services/pipeline.service.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Named valid-state set prevents cancel operations from silently
+      no-oping in unexpected states without surfacing an error.
+
+  - target_rule_id: PS-011
+    rule: "takeover action is only valid when pipeline status is 'awaiting_approval' or 'running'."
+    source: platform/backend-api/src/services/pipeline.service.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Bounds the human-takeover action to states where mid-flight
+      intervention is safe and reversible.
+
+  - target_rule_id: PS-012
+    rule: "handoff action is only valid when pipeline status is 'paused_takeover'."
+    source: platform/backend-api/src/services/pipeline.service.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Ensures handoff back to the pipeline is only possible after an
+      explicit takeover, preventing accidental pipeline resumption.
+
+  - target_rule_id: PS-013
+    rule: "skip action is only valid when pipeline status is 'running', 'awaiting_approval', or 'paused_takeover'."
+    source: platform/backend-api/src/services/pipeline.service.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Bounds skip to states where skipping a step is operationally safe;
+      prevents skip from being used as a stuck-pipeline workaround.
+
+  - target_rule_id: PS-014
+    rule: "markPrMerged is only valid when pipeline status is 'awaiting_pr_review'."
+    source: platform/backend-api/src/services/pipeline.service.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Prevents PR-merged signals from advancing a pipeline that is not
+      in the correct gated state, avoiding phantom completions.
+
+  # ── platform/backend-api/src/scripts/role-verifier.script.ts ───────
+
+  - target_rule_id: VX-001
+    rule: "Verifier must execute all verification commands (npm test, npm run lint, npx tsc --noEmit) and evaluate exit codes."
+    source: platform/backend-api/src/scripts/role-verifier.script.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Tool-stack-specific operationalisation of GTR-001; adopt with
+      adapted command set for the reference system's toolchain.
+
+  - target_rule_id: VX-003
+    rule: "Verifier must also write a human-readable verification_result.md artifact."
+    source: platform/backend-api/src/scripts/role-verifier.script.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Provides an operator-readable audit artifact alongside the
+      machine-readable JSON, supporting human-in-the-loop review.
+
+  - target_rule_id: VX-004
+    rule: "Verifier must use the LLM only for failure triage — pass/fail determination must be based on command exit codes, not LLM reasoning."
+    source: platform/backend-api/src/scripts/role-verifier.script.ts
+    adoption_recommendation: adopt
+    rationale: >
+      ADR-003 (determinism over LLM) applied specifically to Verifier
+      verdict logic; prevents non-deterministic PASS verdicts.
+
+  # ── platform/backend-api/src/scripts/role-sprint-controller.script.ts
+
+  - target_rule_id: SX-003
+    rule: "Sprint Controller must only enter close-out mode when verification_result.json is present in the previous artifacts."
+    source: platform/backend-api/src/scripts/role-sprint-controller.script.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Prevents premature close-out when the pipeline routes back to Sprint
+      Controller before a Verifier PASS has been recorded.
+
+  - target_rule_id: SX-004
+    rule: "Sprint Controller close-out must throw and halt if the verification result is not 'PASS'."
+    source: platform/backend-api/src/scripts/role-sprint-controller.script.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Hard-stop on non-PASS close-out prevents a mistaken routing from
+      archiving a failed task as complete.
+
+  - target_rule_id: SX-006
+    rule: "Sprint Controller close-out must push the sprint branch to remote before opening a pull request."
+    source: platform/backend-api/src/scripts/role-sprint-controller.script.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Sequencing rule ensuring the PR is opened against a fully-pushed
+      branch, preventing PRs with missing commits.
+
+  - target_rule_id: SX-007
+    rule: "Sprint Controller must record PR number and URL in the pipeline run metadata."
+    source: platform/backend-api/src/scripts/role-sprint-controller.script.ts
+    adoption_recommendation: adopt
+    rationale: >
+      PR metadata traceability enables audit reconstruction of which PR
+      closed which task without querying GitHub.
+
+  # ── platform/backend-api/src/scripts/role-implementer.script.ts ────
+
+  - target_rule_id: IX-002
+    rule: "Implementer must throw and halt if no project or Git persistence is available."
+    source: platform/backend-api/src/scripts/role-implementer.script.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Fail-fast on infrastructure absence prevents the Implementer from
+      writing code changes with no durable path to commit and push.
+
+  - target_rule_id: IX-003
+    rule: "files_changed action must be exactly 'Create' or 'Modify'."
+    source: platform/backend-api/src/scripts/role-implementer.script.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Code-enforced vocabulary constraint on the artifact output, matching
+      IP-007 at the script execution layer.
+
+  # ── platform/backend-api/src/scripts/role-planner.script.ts ────────
+
+  - target_rule_id: PX-001
+    rule: "Planner LLM response must include phase_id, objectives, and deliverables; missing fields must cause the script to throw."
+    source: platform/backend-api/src/scripts/role-planner.script.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Fail-fast on structural Planner output defects prevents incomplete
+      plans from entering the sprint decomposition pipeline.
+
+  - target_rule_id: PX-002
+    rule: "Planner must write the phase plan artifact using the naming convention phase_plan_{descriptor}.md."
+    source: platform/backend-api/src/scripts/role-planner.script.ts
+    adoption_recommendation: adopt
+    rationale: >
+      Deterministic artifact naming enables reliable archive lookup and
+      prevents phantom or duplicate plan files.
+
+  # ── platform/governance/manifest.json ──────────────────────────────
+
+  - target_rule_id: MAN-001
+    rule: "All pipeline roles must declare a provider, model, and temperature in the manifest before being invocable."
+    source: platform/governance/manifest.json
+    adoption_recommendation: adopt
+    rationale: >
+      Manifest-declared LLM configuration ensures every role execution is
+      auditable and reproducible; prevents implicit model selection.
+
+  # ── platform/governance/schemas/ ───────────────────────────────────
+
+  - target_rule_id: SCH-001
+    rule: "Phase plan output must include phase_id, name, objectives, and deliverables fields."
+    source: platform/governance/schemas/phase_plan.schema.json
+    adoption_recommendation: adopt
+    rationale: >
+      Schema-enforced structure at the code layer complements prompt-level
+      instructions; catches malformed plans before they enter state.
+
+  - target_rule_id: SCH-002
+    rule: "Sprint plan output must include sprint_id, phase_id, and tasks fields."
+    source: platform/governance/schemas/sprint_plan.schema.json
+    adoption_recommendation: adopt
+    rationale: >
+      Same rationale as SCH-001 for sprint plan output.
+
+  - target_rule_id: SCH-003
+    rule: "Task output must include task_id, title, and status fields."
+    source: platform/governance/schemas/task.schema.json
+    adoption_recommendation: adopt
+    rationale: >
+      Named required fields prevent null task_id values that would break
+      archive and handoff routing downstream.
+
+  # ── docs/adr/* ──────────────────────────────────────────────────────
+
+  - target_rule_id: ADR3-001
+    rule: "LLMs must be used only within controlled, bounded, and validated contexts."
+    source: docs/adr/adr-003-deterministic-over-llm.md
+    adoption_recommendation: adopt
+    rationale: >
+      Foundational governance principle constraining LLM use to governed
+      contexts; the reference system has no equivalent bounding rule.
+
+  - target_rule_id: ADR3-002
+    rule: "All LLM outputs must be validated before being accepted as system state."
+    source: docs/adr/adr-003-deterministic-over-llm.md
+    adoption_recommendation: adopt
+    rationale: >
+      Operationalises ADR-008 as a mandatory pipeline invariant;
+      complements VS-006 and SR-002.
+
+  - target_rule_id: ADR3-003
+    rule: "State transitions must be performed by deterministic systems, not by LLM-driven workflows."
+    source: docs/adr/adr-003-deterministic-over-llm.md
+    adoption_recommendation: adopt
+    rationale: >
+      Prevents LLM reasoning from controlling pipeline state, making
+      governance behaviour replayable and auditable.
+
+  - target_rule_id: ADR6-001
+    rule: "Designated execution stages must require explicit human approval before proceeding."
+    source: docs/adr/adr-006-human-in-the-loop.md
+    adoption_recommendation: adopt
+    rationale: >
+      Architectural mandate for human-in-the-loop gates; complements
+      PS-009/PS-012 at the ADR level.
+
+  - target_rule_id: ADR6-002
+    rule: "High-impact, destructive, or irreversible operations must require human approval before execution."
+    source: docs/adr/adr-006-human-in-the-loop.md
+    adoption_recommendation: adopt
+    rationale: >
+      Extends ADR6-001 with a risk-based trigger, not just a stage-based
+      one, closing gaps where stages are reordered.
+
+  - target_rule_id: ADR8-001
+    rule: "All LLM outputs must be produced as structured JSON conforming to an explicit schema."
+    source: docs/adr/adr-008-structured-llm-output.md
+    adoption_recommendation: adopt
+    rationale: >
+      ADR-level backing for GR-011; elevates JSON-only output to an
+      architectural decision with its own rationale and audit trail.
+
+  - target_rule_id: ADR8-002
+    rule: "All LLM outputs must be validated against JSON schemas before being accepted by the system."
+    source: docs/adr/adr-008-structured-llm-output.md
+    adoption_recommendation: adopt
+    rationale: >
+      ADR-level backing for VS-006/SR-002; makes schema validation a
+      first-class architectural constraint.
+
+  - target_rule_id: ADR8-003
+    rule: "Each LLM output schema must include structural validation covering required fields, types, and additional property constraints."
+    source: docs/adr/adr-008-structured-llm-output.md
+    adoption_recommendation: adopt
+    rationale: >
+      Prevents minimal schemas that validate only field presence but
+      allow arbitrary extra properties or mismatched types.
+
+  - target_rule_id: ADR8-004
+    rule: "Each LLM output must be associated with a versioned JSON Schema definition."
+    source: docs/adr/adr-008-structured-llm-output.md
+    adoption_recommendation: adopt
+    rationale: >
+      Schema versioning enables execution replay and change impact analysis;
+      the reference system has no equivalent version-linking rule.
+
+  - target_rule_id: ADR25-001
+    rule: "Tier 1 (dotfiles) governance content must be kept consistent with Tier 2 principles."
+    source: docs/adr/adr-025-two-tier-governance-composition.md
+    adoption_recommendation: evaluate
+    rationale: >
+      Applicable only if the reference system adopts the two-tier
+      governance model; evaluate after assessing whether the dotfiles layer exists.
+
+  - target_rule_id: ADR25-002
+    rule: "When Tier 1 governance changes, a Tier 2 governance review must be performed to detect drift."
+    source: docs/adr/adr-025-two-tier-governance-composition.md
+    adoption_recommendation: evaluate
+    rationale: >
+      Same two-tier dependency as ADR25-001; highly valuable if adopted
+      since tier-drift is the primary governance regression vector.
+
+  - target_rule_id: ADR25-003
+    rule: "Tier 2 (platform/governance/) content must be versioned with the Docker image release cycle."
+    source: docs/adr/adr-025-two-tier-governance-composition.md
+    adoption_recommendation: adopt
+    rationale: >
+      Governance content tied to the image release cycle is auditable
+      and replayable by pipeline run ID; decoupling creates drift risk.
+
+  - target_rule_id: ADR30-003
+    rule: "Implementer must commit changes with a structured commit message including pipeline_id, task_id, and execution traceability metadata."
+    source: docs/adr/adr-030-autonomous-sprint-execution.md
+    adoption_recommendation: adopt
+    rationale: >
+      Traceability metadata in commit messages enables incident attribution
+      without requiring database access.
+
+  - target_rule_id: ADR30-004
+    rule: "Implementer must push each commit incrementally to the remote sprint branch so progress is durable during execution."
+    source: docs/adr/adr-030-autonomous-sprint-execution.md
+    adoption_recommendation: adopt
+    rationale: >
+      Incremental push prevents total loss of Implementer work in the event
+      of a service crash mid-execution.
+
+  - target_rule_id: ADR30-005
+    rule: "Verifier must run the actual test suite, lint, and type-check commands — it must not reason about an implementation summary."
+    source: docs/adr/adr-030-autonomous-sprint-execution.md
+    adoption_recommendation: adopt
+    rationale: >
+      ADR-level backing for VX-004; prevents Verifiers from LLM-reasoning
+      about test results instead of executing them.
+
+  - target_rule_id: ADR30-006
+    rule: "Verifier must invoke LLM only for failure triage when commands fail — all passing runs require no LLM call."
+    source: docs/adr/adr-030-autonomous-sprint-execution.md
+    adoption_recommendation: adopt
+    rationale: >
+      Minimises LLM cost and non-determinism on the happy path; only
+      invokes reasoning where human-readable failure analysis is needed.
+
+  - target_rule_id: ADR30-007
+    rule: "Sprint Controller close-out must open a GitHub Pull Request from the feature branch to the default branch."
+    source: docs/adr/adr-030-autonomous-sprint-execution.md
+    adoption_recommendation: adopt
+    rationale: >
+      PR creation as a named close-out obligation creates the human review
+      gate required by ADR6-001 without relying on operator memory.
+
+  - target_rule_id: ADR30-009
+    rule: "After 3 consecutive Implementer attempts without a Verifier pass, the pipeline must transition to 'failed' and trigger human escalation."
+    source: docs/adr/adr-030-autonomous-sprint-execution.md
+    adoption_recommendation: adopt
+    rationale: >
+      ADR-level backing for PS-004/PS-005; prevents infinite fix-loop
+      execution without a ceiling at the architecture level.
+
+  - target_rule_id: ADR30-010
+    rule: "Implementer attempting to modify files outside the declared scope must trigger mandatory human escalation."
+    source: docs/adr/adr-030-autonomous-sprint-execution.md
+    adoption_recommendation: adopt
+    rationale: >
+      Out-of-scope file modification during autonomous execution is a
+      high-severity governance breach requiring immediate human intervention.
+
+  - target_rule_id: ADR30-011
+    rule: "Verifier detecting changes to files not listed in the implementation brief (scope drift) must trigger mandatory human escalation."
+    source: docs/adr/adr-030-autonomous-sprint-execution.md
+    adoption_recommendation: adopt
+    rationale: >
+      Verifier-side scope drift detection mirrors ADR30-010 for post-hoc
+      detection, ensuring escalation even if the Implementer constraint was bypassed.
+
+  - target_rule_id: ADR30-012
+    rule: "Schema validation failures beyond the configured retry limit must trigger mandatory human escalation."
+    source: docs/adr/adr-030-autonomous-sprint-execution.md
+    adoption_recommendation: adopt
+    rationale: >
+      Prevents repeated schema-invalid LLM outputs from looping silently;
+      surfaces persistent governance violations to human operators.
+
+  - target_rule_id: ADR30-013
+    rule: "Git operation failures (merge conflict, push rejection) must trigger mandatory human escalation."
+    source: docs/adr/adr-030-autonomous-sprint-execution.md
+    adoption_recommendation: adopt
+    rationale: >
+      Git failures are infrastructure events that autonomous agents cannot
+      safely resolve; human escalation is the only safe response.
+
+  - target_rule_id: ADR30-014
+    rule: "PR body must be populated with structured content (sprint summary, tasks, verification results, pipeline metadata) — not generated by LLM prose."
+    source: docs/adr/adr-030-autonomous-sprint-execution.md
+    adoption_recommendation: adopt
+    rationale: >
+      Structured PR bodies enable automated PR audit tooling and eliminate
+      LLM non-determinism in the human review surface.
+
+  - target_rule_id: ADR30-015
+    rule: "The pipeline is considered complete only when the PR is merged, detected via GitHub webhook or polling."
+    source: docs/adr/adr-030-autonomous-sprint-execution.md
+    adoption_recommendation: adopt
+    rationale: >
+      Anchors pipeline completion to a code-merged event, not a
+      status flag, preventing false-complete states where the PR was
+      abandoned.

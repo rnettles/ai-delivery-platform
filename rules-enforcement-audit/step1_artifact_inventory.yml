@@ -1,0 +1,495 @@
+artifact_inventory:
+
+  # ── ADRs ──────────────────────────────────────────────────────────────────
+
+  - path: "docs/adr/adr-001-git-as-source-of-truth.md"
+    form: doc
+    governance_domains: [lifecycle, artifacts]
+    summary: "Mandates Git as the authoritative record for all pipeline state and governance artifacts."
+    enforcement_level: documented_only
+
+  - path: "docs/adr/adr-002-artifact-driven-state.md"
+    form: doc
+    governance_domains: [artifacts, lifecycle]
+    summary: "Establishes that pipeline state is derived solely from the presence and content of filesystem artifacts."
+    enforcement_level: documented_only
+
+  - path: "docs/adr/adr-003-deterministic-over-llm.md"
+    form: doc
+    governance_domains: [validation, lifecycle]
+    summary: "Requires deterministic code (not LLM) to handle state transitions and enforce structural contracts."
+    enforcement_level: documented_only
+
+  - path: "docs/adr/adr-004-governance-first-architecture.md"
+    form: doc
+    governance_domains: [other]
+    summary: "Declares governance constraints as primary architectural drivers rather than afterthoughts."
+    enforcement_level: documented_only
+
+  - path: "docs/adr/adr-005-role-based-execution.md"
+    form: doc
+    governance_domains: [scope, lifecycle]
+    summary: "Defines bounded roles (planner, sprint-controller, implementer, verifier, fixer) with explicit scope separation."
+    enforcement_level: documented_only
+
+  - path: "docs/adr/adr-006-human-in-the-loop.md"
+    form: doc
+    governance_domains: [handoff]
+    summary: "Specifies mandatory human approval gates before certain pipeline stage transitions execute."
+    enforcement_level: documented_only
+
+  - path: "docs/adr/adr-007-n8n-orchestration.md"
+    form: doc
+    governance_domains: [lifecycle]
+    summary: "Selects n8n as the orchestration layer responsible for sequencing governed pipeline steps."
+    enforcement_level: documented_only
+
+  - path: "docs/adr/adr-008-structured-llm-output.md"
+    form: doc
+    governance_domains: [validation, artifacts]
+    summary: "Requires all LLM role outputs to be validated JSON conforming to declared schemas."
+    enforcement_level: documented_only
+
+  - path: "docs/adr/adr-009-execution-service.md"
+    form: doc
+    governance_domains: [lifecycle]
+    summary: "Establishes the execution service as the sole authority for invoking and recording role executions."
+    enforcement_level: documented_only
+
+  - path: "docs/adr/adr-010-azure-files-persistent-storage.md"
+    form: doc
+    governance_domains: [artifacts]
+    summary: "Mandates Azure Files as the durable store for pipeline artifacts shared across pipeline runs."
+    enforcement_level: documented_only
+
+  - path: "docs/adr/adr-011-execution-service-owns-git.md"
+    form: doc
+    governance_domains: [lifecycle]
+    summary: "Assigns exclusive Git read/write responsibility to the execution service, preventing rogue writes."
+    enforcement_level: documented_only
+
+  - path: "docs/adr/adr-012-file-based-state-source-of-truth.md"
+    form: doc
+    governance_domains: [lifecycle, artifacts]
+    summary: "Specifies that the canonical pipeline state is always reconstructed from artifact files, not in-memory state."
+    enforcement_level: documented_only
+
+  - path: "docs/adr/adr-013-execution-service-api-contract.md"
+    form: doc
+    governance_domains: [validation]
+    summary: "Defines the immutable API contract (request/response envelopes) that all callers must conform to."
+    enforcement_level: documented_only
+
+  - path: "docs/adr/adr-014-api-driven-state-management.md"
+    form: doc
+    governance_domains: [lifecycle]
+    summary: "Requires all state mutations to flow through explicit API calls rather than direct database writes."
+    enforcement_level: documented_only
+
+  - path: "docs/adr/adr-015-adopt-drizzle-orm.md"
+    form: doc
+    governance_domains: [other]
+    summary: "Adopts Drizzle ORM as the type-safe data-access layer to enforce schema contracts at the code level."
+    enforcement_level: documented_only
+
+  - path: "docs/adr/adr-016-versioned-state-model"
+    form: doc
+    governance_domains: [lifecycle, artifacts]
+    summary: "Introduces versioned state records so every pipeline state snapshot is immutable and replayable."
+    enforcement_level: documented_only
+
+  - path: "docs/adr/adr-017-script-registry-execution-model.md"
+    form: doc
+    governance_domains: [lifecycle]
+    summary: "Defines the script registry pattern that resolves role targets to versioned, registered implementations."
+    enforcement_level: documented_only
+
+  - path: "docs/adr/adr-018-execution-determinism.md"
+    form: doc
+    governance_domains: [validation, lifecycle]
+    summary: "Requires execution paths to be deterministic and idempotent to support reliable replay and audit."
+    enforcement_level: documented_only
+
+  - path: "docs/adr/adr-019-observability-replayability.md"
+    form: doc
+    governance_domains: [lifecycle, other]
+    summary: "Mandates full execution logging and the ability to replay any past execution from stored artifacts."
+    enforcement_level: documented_only
+
+  - path: "docs/adr/adr-020-sechma-contract-lifecycle-management.md"
+    form: doc
+    governance_domains: [validation, artifacts]
+    summary: "Governs how JSON schemas are versioned, registered, and retired within the governance manifest."
+    enforcement_level: documented_only
+
+  - path: "docs/adr/adr-021-conversational-interface.md"
+    form: doc
+    governance_domains: [handoff]
+    summary: "Specifies the conversational Slack interface as the primary human entry point for pipeline handoffs."
+    enforcement_level: documented_only
+
+  - path: "docs/adr/adr-022-pipeline-execution-model.md"
+    form: doc
+    governance_domains: [lifecycle]
+    summary: "Defines the sequential role-chaining model (planner → sprint-controller → implementer → verifier) and flow modes."
+    enforcement_level: documented_only
+
+  - path: "docs/adr/adr-023-n8n-slack-interface-adapter.md"
+    form: doc
+    governance_domains: [handoff]
+    summary: "Establishes n8n as the adapter translating Slack actions into governed execution API calls."
+    enforcement_level: documented_only
+
+  - path: "docs/adr/adr-024-pipeline-human-override.md"
+    form: doc
+    governance_domains: [handoff]
+    summary: "Defines the protocol for human operators to pause, override, or take over a running pipeline."
+    enforcement_level: documented_only
+
+  - path: "docs/adr/adr-025-two-tier-governance-composition.md"
+    form: doc
+    governance_domains: [context_loading]
+    summary: "Specifies the two-tier model separating platform-owned governance content from project-specific overrides."
+    enforcement_level: documented_only
+
+  - path: "docs/adr/adr-026-platform-owned-ai-governance-content.md"
+    form: doc
+    governance_domains: [context_loading]
+    summary: "Establishes that role prompts, rules, and schemas are platform-owned artifacts bundled into the Docker image."
+    enforcement_level: documented_only
+
+  - path: "docs/adr/adr-027-multi-project-support.md"
+    form: doc
+    governance_domains: [scope]
+    summary: "Extends the platform to support multiple isolated projects, each with independent pipeline and Git scope."
+    enforcement_level: documented_only
+
+  - path: "docs/adr/adr-028-project-scoped-git-lifecycle.md"
+    form: doc
+    governance_domains: [lifecycle]
+    summary: "Scopes all Git branch and commit operations to the owning project to prevent cross-project contamination."
+    enforcement_level: documented_only
+
+  - path: "docs/adr/adr-029-llm-provider-abstraction.md"
+    form: doc
+    governance_domains: [other]
+    summary: "Defines the provider-agnostic LLM interface allowing governance roles to swap underlying models."
+    enforcement_level: documented_only
+
+  - path: "docs/adr/adr-030-autonomous-sprint-execution.md"
+    form: doc
+    governance_domains: [lifecycle]
+    summary: "Specifies the full-sprint pipeline mode enabling autonomous task iteration within approved governance bounds."
+    enforcement_level: documented_only
+
+  # ── Architecture & Design Docs ────────────────────────────────────────────
+
+  - path: "docs/architecture/system_overview.md"
+    form: doc
+    governance_domains: [other]
+    summary: "Describes the high-level architecture of all governed system components and their interaction boundaries."
+    enforcement_level: documented_only
+
+  - path: "docs/architecture/helper_script_system.md"
+    form: doc
+    governance_domains: [lifecycle]
+    summary: "Defines the deterministic helper-script model that wraps LLM role calls with strict input/output contracts."
+    enforcement_level: documented_only
+
+  - path: "docs/design/governance_manifest.md"
+    form: doc
+    governance_domains: [context_loading]
+    summary: "Documents the structure and purpose of the manifest.json runtime contract linking roles, rules, and schemas."
+    enforcement_level: documented_only
+
+  - path: "docs/design/state_machine.md"
+    form: doc
+    governance_domains: [lifecycle]
+    summary: "Specifies all valid pipeline lifecycle stages, allowed transitions, and failure handling paths."
+    enforcement_level: documented_only
+
+  - path: "docs/design/execution_model.md"
+    form: doc
+    governance_domains: [lifecycle, validation]
+    summary: "Authoritative design doc covering how work flows through roles, how artifacts drive state, and how validation enforces governance."
+    enforcement_level: documented_only
+
+  - path: "docs/design/planner_flow.md"
+    form: doc
+    governance_domains: [lifecycle]
+    summary: "End-to-end walkthrough of the planner role flow from Slack input through artifact creation."
+    enforcement_level: documented_only
+
+  - path: "docs/design/n8n_workflows.md"
+    form: doc
+    governance_domains: [lifecycle]
+    summary: "Defines the n8n orchestration pattern for governed execution-service interactions."
+    enforcement_level: documented_only
+
+  - path: "docs/design/slack_interface.md"
+    form: doc
+    governance_domains: [handoff]
+    summary: "Defines how humans interact with the pipeline via Slack and how actions map to execution contracts."
+    enforcement_level: documented_only
+
+  - path: "docs/design/execution_service_api.md"
+    form: doc
+    governance_domains: [validation]
+    summary: "Canonical API contract between the orchestration layer and the execution service."
+    enforcement_level: documented_only
+
+  - path: "docs/design/api-layer-execution-state-managment.md"
+    form: doc
+    governance_domains: [lifecycle, validation]
+    summary: "Design document for the API layer that manages governed execution and shared coordination context."
+    enforcement_level: documented_only
+
+  # ── Functional Requirements & Rule Catalog ────────────────────────────────
+
+  - path: "docs/functional_requirements/functional_requirements.md"
+    form: doc
+    governance_domains: [scope, validation, lifecycle]
+    summary: "Enumerates all functional requirements the governed orchestration system must satisfy."
+    enforcement_level: documented_only
+
+  - path: "docs/functional_requirements/rule_registry.yml"
+    form: config
+    governance_domains: [scope, validation, lifecycle, handoff]
+    summary: "Machine-readable catalog of all agent anti-drift rules keyed by role, category, and severity."
+    enforcement_level: documented_only
+
+  # ── Runbooks ──────────────────────────────────────────────────────────────
+
+  - path: "docs/runbook/governance-operator-runbook.md"
+    form: doc
+    governance_domains: [context_loading, other]
+    summary: "Operator guide for managing governance content, adding roles, and maintaining the governance layer."
+    enforcement_level: documented_only
+
+  - path: "docs/runbook/user-flow-runbook.md"
+    form: doc
+    governance_domains: [handoff, lifecycle]
+    summary: "Developer runbook covering day-to-day pipeline operations via Slack, including override and approval flows."
+    enforcement_level: documented_only
+
+  # ── Governance Manifest ───────────────────────────────────────────────────
+
+  - path: "platform/governance/manifest.json"
+    form: config
+    governance_domains: [context_loading]
+    summary: "Runtime registry binding role names to prompts, rules, and schemas loaded by the governance service."
+    enforcement_level: code_enforced
+
+  # ── Agent Prompts ─────────────────────────────────────────────────────────
+
+  - path: "platform/governance/prompts/role-planner.md"
+    form: agent_prompt
+    governance_domains: [scope, artifacts]
+    summary: "System prompt constraining the Planner AI to produce only structured phase-plan JSON within task-size limits."
+    enforcement_level: agent_enforced
+
+  - path: "platform/governance/prompts/role-sprint-controller.md"
+    form: agent_prompt
+    governance_domains: [lifecycle, scope, context_loading]
+    summary: "System prompt directing the Sprint Controller to decompose phases into atomic tasks and emit task flags for conditional loading."
+    enforcement_level: agent_enforced
+
+  - path: "platform/governance/prompts/role-implementer.md"
+    form: agent_prompt
+    governance_domains: [scope, validation, artifacts]
+    summary: "System prompt constraining the Implementer to produce traceable, schema-valid implementation summaries within file and line limits."
+    enforcement_level: agent_enforced
+
+  - path: "platform/governance/prompts/role-verifier.md"
+    form: agent_prompt
+    governance_domains: [validation, handoff]
+    summary: "System prompt directing the Verifier to evaluate implementation evidence against acceptance criteria and emit a PASS/FAIL verdict."
+    enforcement_level: agent_enforced
+
+  - path: "platform/governance/prompts/role-fixer.md"
+    form: agent_prompt
+    governance_domains: [validation, scope, handoff]
+    summary: "System prompt constraining the Fixer to address only listed verification failures and produce a handoff contract."
+    enforcement_level: agent_enforced
+
+  # ── Governance Rules ──────────────────────────────────────────────────────
+
+  - path: "platform/governance/rules/global_rules.md"
+    form: agent_prompt
+    governance_domains: [scope, validation]
+    summary: "Universal constraints applying to all pipeline roles — role boundaries, safety limits, file/line caps, and code quality rules."
+    enforcement_level: agent_enforced
+
+  - path: "platform/governance/rules/handoff_contract.md"
+    form: agent_prompt
+    governance_domains: [handoff]
+    summary: "Canonical schema for the compact handoff object exchanged between verifier, fixer, and sprint-controller on lifecycle transitions."
+    enforcement_level: agent_enforced
+
+  - path: "platform/governance/rules/runtime_gates.md"
+    form: agent_prompt
+    governance_domains: [validation, scope]
+    summary: "Defines required execution gates (lint, typecheck, tests) and scope limits that the Verifier must confirm before passing a task."
+    enforcement_level: agent_enforced
+
+  - path: "platform/governance/rules/runtime_loading_rules.md"
+    form: agent_prompt
+    governance_domains: [context_loading]
+    summary: "Specifies the three-stage (A/B/C) document loading protocol controlling which governance artifacts agents retrieve per task."
+    enforcement_level: agent_enforced
+
+  - path: "platform/governance/rules/task_flags_contract.md"
+    form: agent_prompt
+    governance_domains: [context_loading, scope]
+    summary: "Defines the required and optional task-flag schema emitted by the Sprint Controller to drive Stage B conditional loading."
+    enforcement_level: agent_enforced
+
+  # ── Schemas ───────────────────────────────────────────────────────────────
+
+  - path: "platform/governance/schemas/phase_plan.schema.json"
+    form: config
+    governance_domains: [artifacts, validation]
+    summary: "JSON Schema constraining the structure of Planner output — required fields, objectives, and deliverables."
+    enforcement_level: code_enforced
+
+  - path: "platform/governance/schemas/sprint_plan.schema.json"
+    form: config
+    governance_domains: [artifacts, validation]
+    summary: "JSON Schema constraining the structure of Sprint Controller output — sprint and task identity fields."
+    enforcement_level: code_enforced
+
+  - path: "platform/governance/schemas/task.schema.json"
+    form: config
+    governance_domains: [artifacts, validation]
+    summary: "JSON Schema constraining the structure of individual task records — required identity, status, and flag fields."
+    enforcement_level: code_enforced
+
+  # ── Code — Enforcement Layer ──────────────────────────────────────────────
+
+  - path: "platform/backend-api/src/middleware/api-key.middleware.ts"
+    form: code
+    governance_domains: [other]
+    summary: "Enforces API key authentication on all execution endpoints, blocking unauthenticated pipeline invocations."
+    enforcement_level: code_enforced
+
+  - path: "platform/backend-api/src/services/governance.service.ts"
+    form: code
+    governance_domains: [context_loading]
+    summary: "Runtime loader that resolves and delivers prompts, rules, and schemas from the governance manifest to executing roles."
+    enforcement_level: code_enforced
+
+  - path: "platform/backend-api/src/services/validation.service.ts"
+    form: code
+    governance_domains: [validation]
+    summary: "AJV-backed service that validates execution request envelopes and script output against registered JSON schemas."
+    enforcement_level: code_enforced
+
+  - path: "platform/backend-api/src/services/script-registry.service.ts"
+    form: code
+    governance_domains: [lifecycle]
+    summary: "Maintains the authoritative registry of versioned role scripts and resolves execution targets at request time."
+    enforcement_level: code_enforced
+
+  - path: "platform/backend-api/src/services/script-runner.service.ts"
+    form: code
+    governance_domains: [validation, lifecycle]
+    summary: "Executes resolved scripts and enforces post-run output schema validation before returning results."
+    enforcement_level: code_enforced
+
+  - path: "platform/backend-api/src/services/artifact.service.ts"
+    form: code
+    governance_domains: [artifacts]
+    summary: "Manages read/write of pipeline artifacts to the persistent filesystem mount, enforcing path isolation per pipeline."
+    enforcement_level: code_enforced
+
+  - path: "platform/backend-api/src/services/pipeline.service.ts"
+    form: code
+    governance_domains: [lifecycle, handoff]
+    summary: "Enforces pipeline state transitions, approval gates, human-override handling, and role-chaining sequencing."
+    enforcement_level: code_enforced
+
+  - path: "platform/backend-api/src/scripts/script.interface.ts"
+    form: code
+    governance_domains: [lifecycle, validation]
+    summary: "Defines the ScriptDescriptor and Script interface contracts that all role scripts must implement."
+    enforcement_level: code_enforced
+
+  - path: "platform/backend-api/src/scripts/role-planner.script.ts"
+    form: code
+    governance_domains: [scope, artifacts]
+    summary: "Wires governance prompt and phase-plan schema into the LLM call for the Planner role execution."
+    enforcement_level: code_enforced
+
+  - path: "platform/backend-api/src/scripts/role-sprint-controller.script.ts"
+    form: code
+    governance_domains: [lifecycle, artifacts]
+    summary: "Wires governance prompt and sprint-plan schema into the LLM call for the Sprint Controller role execution."
+    enforcement_level: code_enforced
+
+  - path: "platform/backend-api/src/scripts/role-implementer.script.ts"
+    form: code
+    governance_domains: [scope, artifacts]
+    summary: "Wires governance prompt and implementation-summary schema into the LLM call for the Implementer role execution."
+    enforcement_level: code_enforced
+
+  - path: "platform/backend-api/src/scripts/role-verifier.script.ts"
+    form: code
+    governance_domains: [validation, handoff]
+    summary: "Wires governance prompt and verification-result schema into the LLM call for the Verifier role execution."
+    enforcement_level: code_enforced
+
+  - path: "platform/backend-api/src/domain/execution.types.ts"
+    form: code
+    governance_domains: [validation]
+    summary: "TypeScript type definitions for the canonical execution request/response envelope enforced at all API boundaries."
+    enforcement_level: code_enforced
+
+  - path: "platform/backend-api/src/domain/pipeline.types.ts"
+    form: code
+    governance_domains: [lifecycle]
+    summary: "Type definitions for pipeline roles, run modes (next/next-flow/full-sprint), and all valid pipeline status states."
+    enforcement_level: code_enforced
+
+  - path: "platform/backend-api/src/domain/execution.model.ts"
+    form: code
+    governance_domains: [lifecycle, artifacts]
+    summary: "Persistence model for execution records, providing the auditable append-only log of all role invocations."
+    enforcement_level: code_enforced
+
+  # ── n8n Workflow Definitions ──────────────────────────────────────────────
+
+  - path: "platform/workflow/Execution + State Pattern.json"
+    form: config
+    governance_domains: [lifecycle, validation]
+    summary: "n8n workflow implementing the governed execution-and-state-update pattern for pipeline step sequencing."
+    enforcement_level: code_enforced
+
+  - path: "platform/workflow/pipeline-notifier.json"
+    form: config
+    governance_domains: [handoff]
+    summary: "n8n workflow that routes pipeline status notifications and approval requests to the correct Slack thread."
+    enforcement_level: code_enforced
+
+  - path: "platform/workflow/slack-action-handler.json"
+    form: config
+    governance_domains: [handoff]
+    summary: "n8n workflow that processes Slack button actions (approve, override, skip) and translates them into pipeline API calls."
+    enforcement_level: code_enforced
+
+  - path: "platform/workflow/slack-ingress.json"
+    form: config
+    governance_domains: [handoff, lifecycle]
+    summary: "n8n workflow that ingests raw Slack messages and routes them to the correct pipeline entry point."
+    enforcement_level: code_enforced
+
+  - path: "platform/workflow/slack-app-manifest.json"
+    form: config
+    governance_domains: [handoff]
+    summary: "Slack app manifest defining the bot scopes and interactive-component endpoints used by the governed pipeline interface."
+    enforcement_level: code_enforced
+
+  - path: "platform/workflow/slack-app-manifest.yaml"
+    form: config
+    governance_domains: [handoff]
+    summary: "YAML equivalent of the Slack app manifest, maintained as a human-readable companion to the JSON form."
+    enforcement_level: code_enforced
