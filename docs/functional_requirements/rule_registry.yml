@@ -1,0 +1,613 @@
+rule_registry:
+  version: "1.0"
+  system: "AI Coding Agent Anti-Drift Governance"
+  rules:
+
+    - rule_id: PLN-001
+      agent: Planner
+      category: scope
+      rule: Must not implement code
+      enforcement_point: planning
+      severity: critical
+
+    - rule_id: PLN-002
+      agent: Planner
+      category: requirements
+      rule: Must not create tasks without valid FR IDs
+      enforcement_point: planning
+      severity: critical
+
+    - rule_id: PLN-003
+      agent: Planner
+      category: task_design
+      rule: Must ensure each task is atomic and testable
+      enforcement_point: planning
+      severity: high
+
+    - rule_id: PLN-004
+      agent: Planner
+      category: traceability
+      rule: Must include explicit FR mapping for each task
+      enforcement_point: planning
+      severity: critical
+
+    - rule_id: PLN-005
+      agent: Planner
+      category: acceptance
+      rule: Must include acceptance checks for each task
+      enforcement_point: planning
+      severity: critical
+
+    - rule_id: PLN-006
+      agent: Planner
+      category: scope
+      rule: Must not include implementation-level detail in task definitions
+      enforcement_point: planning
+      severity: high
+
+    - rule_id: PLN-007
+      agent: Planner
+      category: dependencies
+      rule: Must not create circular dependencies between tasks
+      enforcement_point: planning
+      severity: high
+
+    - rule_id: PLN-008
+      agent: Planner
+      category: retrieval
+      rule: Must set task flags accurately for each task
+      enforcement_point: planning
+      severity: critical
+
+    - rule_id: PLN-009
+      agent: Planner
+      category: sprint_governance
+      rule: Must not stage a new sprint while another sprint is still open
+      enforcement_point: planning
+      severity: critical
+
+    - rule_id: PLN-010
+      agent: Planner
+      category: phase_governance
+      rule: Must not advance a phase without required design artifacts approved
+      enforcement_point: planning
+      severity: critical
+
+    - rule_id: PLN-011
+      agent: Planner
+      category: ux_gate
+      rule: Must create user_flow.md for every feature that introduces or changes user-facing behavior before Sprint 1 is staged
+      enforcement_point: planning
+      severity: critical
+
+    - rule_id: PLN-012
+      agent: Planner
+      category: ux_gate
+      rule: Must not advance Planning to Active until user_flow.md is approved for user-facing features
+      enforcement_point: planning
+      severity: critical
+
+    - rule_id: PLN-013
+      agent: Planner
+      category: ux_gate
+      rule: Must include at least one failure-state row in every user_flow.md
+      enforcement_point: planning
+      severity: high
+
+    - rule_id: PLN-014
+      agent: Planner
+      category: closeout
+      rule: Must not close a sprint without explicit operator confirmation that the documenter has run and sprint documentation is complete
+      enforcement_point: closeout
+      severity: critical
+
+    - rule_id: PLN-015
+      agent: Planner
+      category: closeout
+      rule: Must archive the active sprint plan before setting sprint_state.json.status to closed
+      enforcement_point: closeout
+      severity: critical
+
+    - rule_id: CTL-001
+      agent: SprintController
+      category: scope
+      rule: Must not implement code
+      enforcement_point: lifecycle
+      severity: critical
+
+    - rule_id: CTL-002
+      agent: SprintController
+      category: pre_stage_gate
+      rule: Must not stage a task when current_task.json.status is active, in-progress, or ready_for_verification
+      enforcement_point: pre-stage
+      severity: critical
+
+    - rule_id: CTL-003
+      agent: SprintController
+      category: pre_stage_gate
+      rule: Must require explicit operator confirmation that the most recently completed task PR is merged before staging proceeds
+      enforcement_point: pre-stage
+      severity: critical
+
+    - rule_id: CTL-004
+      agent: SprintController
+      category: pre_stage_gate
+      rule: Must not infer PR status from task state
+      enforcement_point: pre-stage
+      severity: critical
+
+    - rule_id: CTL-005
+      agent: SprintController
+      category: staging
+      rule: Must stage the next incomplete task only when explicitly instructed by the operator
+      enforcement_point: staging
+      severity: critical
+
+    - rule_id: CTL-006
+      agent: SprintController
+      category: staging
+      rule: Must always write the implementation brief to ai_dev_stack/ai_project_tasks/active/AI_IMPLEMENTATION_BRIEF.md
+      enforcement_point: staging
+      severity: critical
+
+    - rule_id: CTL-007
+      agent: SprintController
+      category: artifact_lifecycle
+      rule: Must not create task-suffixed brief filenames in active/
+      enforcement_point: artifact
+      severity: high
+
+    - rule_id: CTL-008
+      agent: SprintController
+      category: closeout
+      rule: Must execute the close-out protocol in the defined phase order whenever a verifier PASS is received
+      enforcement_point: closeout
+      severity: critical
+
+    - rule_id: CTL-009
+      agent: SprintController
+      category: closeout
+      rule: Must STOP after Phase 1 task close until explicit operator action
+      enforcement_point: closeout
+      severity: critical
+
+    - rule_id: CTL-010
+      agent: SprintController
+      category: closeout
+      rule: Must STOP after Phase 2 PR confirmation until explicit operator action
+      enforcement_point: closeout
+      severity: critical
+
+    - rule_id: CTL-011
+      agent: SprintController
+      category: fast_track
+      rule: Must enforce fast-track lane metadata and controls before staging a fast-track task
+      enforcement_point: staging
+      severity: critical
+
+    - rule_id: IMP-001
+      agent: Implementer
+      category: scope
+      rule: Must implement assigned task only
+      enforcement_point: execution
+      severity: critical
+
+    - rule_id: IMP-002
+      agent: Implementer
+      category: scope
+      rule: Must not stage, verify, or close out tasks
+      enforcement_point: execution
+      severity: critical
+
+    - rule_id: IMP-003
+      agent: Implementer
+      category: scope
+      rule: Must implement only deliverables listed in the brief checklist
+      enforcement_point: execution
+      severity: critical
+
+    - rule_id: IMP-004
+      agent: Implementer
+      category: scope
+      rule: Must keep scope minimal and avoid unrelated refactor
+      enforcement_point: execution
+      severity: critical
+
+    - rule_id: IMP-005
+      agent: Implementer
+      category: retrieval
+      rule: Must read the Task Flags block from the implementation brief before exploring additional documents
+      enforcement_point: retrieval
+      severity: high
+
+    - rule_id: IMP-006
+      agent: Implementer
+      category: design_contract
+      rule: Must not invent schemas, field names, or algorithms not specified by an approved TDN governing the task component
+      enforcement_point: execution
+      severity: critical
+
+    - rule_id: IMP-007
+      agent: Implementer
+      category: ux_gate
+      rule: Must load user_flow.md before writing any user-facing code if it exists
+      enforcement_point: execution
+      severity: critical
+
+    - rule_id: IMP-008
+      agent: Implementer
+      category: ux_gate
+      rule: Must stop and report that the UX Gate is not satisfied if user_flow.md is missing for a user-facing task
+      enforcement_point: execution
+      severity: critical
+
+    - rule_id: IMP-009
+      agent: Implementer
+      category: ux_contract
+      rule: Must implement the exact steps, inputs, outputs, and failure states defined in user_flow.md
+      enforcement_point: execution
+      severity: critical
+
+    - rule_id: IMP-010
+      agent: Implementer
+      category: ux_contract
+      rule: Must not invent alternative flows or skip failure handling defined in user_flow.md
+      enforcement_point: execution
+      severity: critical
+
+    - rule_id: IMP-011
+      agent: Implementer
+      category: ux_contract
+      rule: Must load wireframe.md and ui_spec.md before implementing UI when they exist
+      enforcement_point: execution
+      severity: high
+
+    - rule_id: IMP-012
+      agent: Implementer
+      category: ux_contract
+      rule: Must ensure user-facing error messages match the failure-state descriptions in user_flow.md
+      enforcement_point: execution
+      severity: high
+
+    - rule_id: IMP-013
+      agent: Implementer
+      category: testing
+      rule: Must run required gates and tests
+      enforcement_point: execution
+      severity: critical
+
+    - rule_id: IMP-014
+      agent: Implementer
+      category: testing
+      rule: Must write real results to ai_dev_stack/ai_project_tasks/active/test_results.json
+      enforcement_point: execution
+      severity: critical
+
+    - rule_id: IMP-015
+      agent: Implementer
+      category: testing
+      rule: Must run validate_test_results.py
+      enforcement_point: execution
+      severity: critical
+
+    - rule_id: IMP-016
+      agent: Implementer
+      category: state
+      rule: Must set current_task.json status to ready_for_verification
+      enforcement_point: execution
+      severity: critical
+
+    - rule_id: IMP-017
+      agent: Implementer
+      category: source_control
+      rule: Must commit and push feature/{task_id} and then stop
+      enforcement_point: execution
+      severity: critical
+
+    - rule_id: VER-001
+      agent: Verifier
+      category: scope
+      rule: Must validate only
+      enforcement_point: verification
+      severity: critical
+
+    - rule_id: VER-002
+      agent: Verifier
+      category: output
+      rule: Must return PASS or FAIL
+      enforcement_point: verification
+      severity: critical
+
+    - rule_id: VER-003
+      agent: Verifier
+      category: deliverables
+      rule: Must verify that every create deliverable exists
+      enforcement_point: verification
+      severity: critical
+
+    - rule_id: VER-004
+      agent: Verifier
+      category: deliverables
+      rule: Must verify that every modify deliverable was actually changed in scope
+      enforcement_point: verification
+      severity: critical
+
+    - rule_id: VER-005
+      agent: Verifier
+      category: testing
+      rule: Must verify required tests are present and appropriate
+      enforcement_point: verification
+      severity: critical
+
+    - rule_id: VER-006
+      agent: Verifier
+      category: testing
+      rule: Must verify CI and test_results status are pass and non-placeholder
+      enforcement_point: verification
+      severity: critical
+
+    - rule_id: VER-007
+      agent: Verifier
+      category: scope
+      rule: Must fail verification if unrelated scope expansion is detected
+      enforcement_point: verification
+      severity: critical
+
+    - rule_id: VER-008
+      agent: Verifier
+      category: design_contract
+      rule: Must verify TDN input and output field names and types match the approved TDN when one governs the task component
+      enforcement_point: verification
+      severity: critical
+
+    - rule_id: VER-009
+      agent: Verifier
+      category: design_contract
+      rule: Must verify component interfaces match the approved TDN when one governs the task component
+      enforcement_point: verification
+      severity: critical
+
+    - rule_id: VER-010
+      agent: Verifier
+      category: design_contract
+      rule: Must verify retry behavior, abort thresholds, and logging match the TDN error model when one governs the task component
+      enforcement_point: verification
+      severity: critical
+
+    - rule_id: VER-011
+      agent: Verifier
+      category: design_contract
+      rule: Must flag any TDN deviation as a required correction even if tests pass
+      enforcement_point: verification
+      severity: critical
+
+    - rule_id: VER-012
+      agent: Verifier
+      category: fast_track
+      rule: Must verify checkpoint evidence exists at the required cadence for fast-track tasks
+      enforcement_point: verification
+      severity: critical
+
+    - rule_id: VER-013
+      agent: Verifier
+      category: fast_track
+      rule: Must verify each required fast-track checkpoint includes lint, typecheck, and focused tests
+      enforcement_point: verification
+      severity: critical
+
+    - rule_id: VER-014
+      agent: Verifier
+      category: fast_track
+      rule: Must verify final full validation gates ran before close recommendation on fast-track tasks
+      enforcement_point: verification
+      severity: critical
+
+    - rule_id: VER-015
+      agent: Verifier
+      category: ux_gate
+      rule: Must verify ai_dev_stack/ai_project_tasks/active/ux/user_flow.md exists and is Status Approved for any user-facing task
+      enforcement_point: verification
+      severity: critical
+
+    - rule_id: VER-016
+      agent: Verifier
+      category: ux_flow
+      rule: Must verify the happy path defined in user_flow.md is reachable end-to-end
+      enforcement_point: verification
+      severity: critical
+
+    - rule_id: VER-017
+      agent: Verifier
+      category: ux_flow
+      rule: Must verify at least one documented failure state produces the correct user-visible error message
+      enforcement_point: verification
+      severity: critical
+
+    - rule_id: VER-018
+      agent: Verifier
+      category: ux_quality
+      rule: Must verify CLI output is human-readable and not a raw JSON dump unless explicitly specified in the flow
+      enforcement_point: verification
+      severity: high
+
+    - rule_id: VER-019
+      agent: Verifier
+      category: ux_quality
+      rule: Must verify all UI status, error, and loading states defined in the flow are visually distinct
+      enforcement_point: verification
+      severity: high
+
+    - rule_id: VER-020
+      agent: Verifier
+      category: ux_quality
+      rule: Must verify chat responses match the tone and format described in the flow
+      enforcement_point: verification
+      severity: high
+
+    - rule_id: VER-021
+      agent: Verifier
+      category: ux_flow
+      rule: Must fail if any step in user_flow.md is broken or silently skipped
+      enforcement_point: verification
+      severity: critical
+
+    - rule_id: VER-022
+      agent: Verifier
+      category: handoff
+      rule: Must emit compact handoff fields from AI_HANDOFF_CONTRACT.md on FAIL
+      enforcement_point: verification
+      severity: high
+
+    - rule_id: VER-023
+      agent: Verifier
+      category: artifact
+      rule: Must write ai_dev_stack/ai_project_tasks/active/verification_result.json with the required fields
+      enforcement_point: verification
+      severity: critical
+
+    - rule_id: FIX-001
+      agent: Fixer
+      category: scope
+      rule: Must repair only the verified failure scope
+      enforcement_point: fix
+      severity: critical
+
+    - rule_id: FIX-002
+      agent: Fixer
+      category: retrieval
+      rule: Must use task flags to load only the same conditional documents that applied to the failing task
+      enforcement_point: fix
+      severity: high
+
+    - rule_id: FIX-003
+      agent: Fixer
+      category: design_contract
+      rule: Must load the governing TDN when the fix touches a component governed by a TDN
+      enforcement_point: fix
+      severity: high
+
+    - rule_id: FIX-004
+      agent: Fixer
+      category: design_contract
+      rule: Must ensure the fix conforms to the approved TDN contracts and must not introduce contradictory field names, error handling, or interface shapes
+      enforcement_point: fix
+      severity: critical
+
+    - rule_id: FIX-005
+      agent: Fixer
+      category: retrieval
+      rule: Must add Stage C files only when verifier corrections or CI output cite them
+      enforcement_point: fix
+      severity: high
+
+    - rule_id: FIX-006
+      agent: Fixer
+      category: handoff
+      rule: Must consume the structured verifier handoff from AI_HANDOFF_CONTRACT.md instead of narrative summaries
+      enforcement_point: fix
+      severity: critical
+
+    - rule_id: FIX-007
+      agent: Fixer
+      category: handoff
+      rule: Must treat changed_scope, open_risks, and next_role_action as the authoritative repair inputs
+      enforcement_point: fix
+      severity: critical
+
+    - rule_id: FIX-008
+      agent: Fixer
+      category: artifact
+      rule: Must produce ai_dev_stack/ai_guidance/AI_FIX_REQUEST.md
+      enforcement_point: fix
+      severity: high
+
+    - rule_id: FIX-009
+      agent: Fixer
+      category: artifact
+      rule: Must produce ai_dev_stack/ai_project_tasks/active/fix_state.json
+      enforcement_point: fix
+      severity: high
+
+    - rule_id: FIX-010
+      agent: Fixer
+      category: scope
+      rule: Must keep corrections minimal and evidence-linked
+      enforcement_point: fix
+      severity: critical
+
+    - rule_id: DOC-001
+      agent: Documenter
+      category: timing
+      rule: Must sync documentation only after verified delivery
+      enforcement_point: documentation
+      severity: critical
+
+    - rule_id: DOC-002
+      agent: Documenter
+      category: scope
+      rule: Must use task flags from the archived brief to constrain documentation sync to delivered scope
+      enforcement_point: documentation
+      severity: high
+
+    - rule_id: DOC-003
+      agent: Documenter
+      category: retrieval
+      rule: Must load architecture, UI, or incident documents only when archived task flags require them
+      enforcement_point: documentation
+      severity: high
+
+    - rule_id: DOC-004
+      agent: Documenter
+      category: design_contract
+      rule: Must flag the relevant TDN in docs/design/ as requiring an update if delivered implementation deviates from the approved TDN
+      enforcement_point: documentation
+      severity: critical
+
+    - rule_id: DOC-005
+      agent: Documenter
+      category: design_contract
+      rule: Must note delivered TDN deviation in documentation_sync_report.md and must not silently accept drift
+      enforcement_point: documentation
+      severity: critical
+
+    - rule_id: DOC-006
+      agent: Documenter
+      category: scope
+      rule: Must not change runtime code
+      enforcement_point: documentation
+      severity: critical
+
+    - rule_id: SYS-001
+      agent: System
+      category: traceability
+      rule: Every planned task must map to FR scope
+      enforcement_point: global
+      severity: critical
+
+    - rule_id: SYS-002
+      agent: System
+      category: traceability
+      rule: Every implementation must map to the assigned task
+      enforcement_point: global
+      severity: critical
+
+    - rule_id: SYS-003
+      agent: System
+      category: scope
+      rule: No agent may expand scope beyond its governing inputs and contracts
+      enforcement_point: global
+      severity: critical
+
+    - rule_id: SYS-004
+      agent: System
+      category: lifecycle
+      rule: No task may be treated as complete without verification PASS
+      enforcement_point: global
+      severity: critical
+
+    - rule_id: SYS-005
+      agent: System
+      category: artifact_lifecycle
+      rule: Active-slot artifacts must use overwrite-only lifecycle behavior and historical detail must be preserved in history
+      enforcement_point: global
+      severity: critical
