@@ -27,9 +27,21 @@ export type SlackCommandResult =
     }
   | {
       type: "pipeline_action";
-      action: "approve" | "takeover" | "handoff" | "status";
+      action:
+        | "approve"
+        | "cancel"
+        | "takeover"
+        | "handoff"
+        | "status"
+        | "project-register"
+        | "project-assign";
       pipeline_id: string;
       artifact_path: string;
+      project_name?: string;
+      repo_url?: string;
+      default_branch?: string;
+      project_id?: string;
+      target_channel_id?: string;
       channel_id: string;
       user_id: string;
       user_name: string;
@@ -48,9 +60,11 @@ const CREATE_MAP: Record<string, "planner" | "sprint-controller" | "implementer"
   "/adp-verify": "verifier",
 };
 
-const ACTION_MAP: Record<string, "approve" | "takeover" | "handoff" | "status"> = {
+const ACTION_MAP: Record<string, "approve" | "cancel" | "takeover" | "handoff" | "status"> = {
   "/approve": "approve",
   "/adp-approve": "approve",
+  "/cancel": "cancel",
+  "/adp-cancel": "cancel",
   "/takeover": "takeover",
   "/adp-takeover": "takeover",
   "/handoff": "handoff",
@@ -109,6 +123,47 @@ export function parseSlackCommand(body: Record<string, unknown>): SlackCommandRe
   const userId = String(payload["user_id"] ?? "");
   const userName = String(payload["user_name"] ?? "");
   const responseUrl = String(payload["response_url"] ?? "");
+
+  if (command === "/project" || command === "/adp-project") {
+    const parts = rawText.split(/\s+/).filter(Boolean);
+    const subcommand = (parts[0] ?? "").toLowerCase();
+
+    if (subcommand === "register") {
+      const projectName = parts[1] ?? "";
+      const repoUrl = parts[2] ?? "";
+      const defaultBranch = parts[3] ?? "";
+      return {
+        type: "pipeline_action",
+        action: "project-register",
+        pipeline_id: "",
+        artifact_path: "",
+        project_name: projectName,
+        repo_url: repoUrl,
+        default_branch: defaultBranch,
+        channel_id: channelId,
+        user_id: userId,
+        user_name: userName,
+        response_url: responseUrl,
+      };
+    }
+
+    if (subcommand === "assign") {
+      const projectId = parts[1] ?? "";
+      const targetChannelId = parts[2] ?? channelId;
+      return {
+        type: "pipeline_action",
+        action: "project-assign",
+        pipeline_id: "",
+        artifact_path: "",
+        project_id: projectId,
+        target_channel_id: targetChannelId,
+        channel_id: channelId,
+        user_id: userId,
+        user_name: userName,
+        response_url: responseUrl,
+      };
+    }
+  }
 
   if (CREATE_MAP[command]) {
     const parts = rawText.split(/\s+/).filter(Boolean);

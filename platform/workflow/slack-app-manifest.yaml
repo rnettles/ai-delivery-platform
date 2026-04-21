@@ -51,10 +51,20 @@ features:
       description: "Hand off a human-completed step back to pipeline"
       usage_hint: "<pipeline-id> [artifact-path]"
       should_escape: false
+    - command: "/adp-cancel"
+      url: "https://isdev-ai-orchestrator-dev-n8n.delightfulpebble-d0e68b9c.centralus.azurecontainerapps.io/webhook/slack-events"
+      description: "Cancel a pipeline"
+      usage_hint: "<pipeline-id>"
+      should_escape: false
     - command: "/adp-status"
       url: "https://isdev-ai-orchestrator-dev-n8n.delightfulpebble-d0e68b9c.centralus.azurecontainerapps.io/webhook/slack-events"
       description: "Get pipeline status"
       usage_hint: "<pipeline-id>"
+      should_escape: false
+    - command: "/adp-project"
+      url: "https://isdev-ai-orchestrator-dev-n8n.delightfulpebble-d0e68b9c.centralus.azurecontainerapps.io/webhook/slack-events"
+      description: "Project admin: register or assign"
+      usage_hint: "register <name> <repo_url> [default_branch] | assign <project_id> [channel_id]"
       should_escape: false
 
 oauth_config:

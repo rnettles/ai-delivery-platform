@@ -4,6 +4,7 @@ import executionRoutes from "./routes/execution.routes";
 import coordinationRoutes from "./routes/coordination.routes";
 import gitSyncRoutes from "./routes/git-sync.routes";
 import pipelineRoutes from "./routes/pipeline.routes";
+import projectRoutes from "./routes/project.routes";
 import { requestIdMiddleware } from "./middleware/request-id.middleware";
 import { errorMiddleware } from "./middleware/error.middleware";
 import { apiKeyMiddleware } from "./middleware/api-key.middleware";
@@ -23,6 +24,7 @@ app.use(apiKeyMiddleware);
 app.use(executionRoutes);
 app.use(coordinationRoutes);
 app.use(gitSyncRoutes);
+app.use(projectRoutes);
 app.use(pipelineRoutes);
 
 app.use(errorMiddleware);

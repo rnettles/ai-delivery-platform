@@ -198,6 +198,18 @@ describe("parseSlackCommand (slack-ingress Guard & Parse node)", () => {
     });
   });
 
+  describe("/cancel", () => {
+    it("returns pipeline_action with cancel action", () => {
+      const result = parseSlackCommand({ command: "/cancel", text: "pipe-2026-04-19-abc12345" });
+      expect(result).toMatchObject({ type: "pipeline_action", action: "cancel" });
+    });
+
+    it("maps /adp-cancel to cancel action", () => {
+      const result = parseSlackCommand({ command: "/adp-cancel", text: "pipe-2026-04-19-abc12345" });
+      expect(result).toMatchObject({ type: "pipeline_action", action: "cancel" });
+    });
+  });
+
   describe("/status", () => {
     it("returns pipeline_action with status action", () => {
       const result = parseSlackCommand({ command: "/status", text: "pipe-2026-04-19-abc12345" });
@@ -207,6 +219,38 @@ describe("parseSlackCommand (slack-ingress Guard & Parse node)", () => {
     it("maps /adp-status to status action", () => {
       const result = parseSlackCommand({ command: "/adp-status", text: "pipe-2026-04-19-abc12345" });
       expect(result).toMatchObject({ type: "pipeline_action", action: "status" });
+    });
+  });
+
+  describe("/adp-project", () => {
+    it("parses register action with name, repo URL, and optional branch", () => {
+      const result = parseSlackCommand({
+        command: "/adp-project",
+        text: "register sample https://github.com/acme/sample.git main",
+        channel_id: "C123",
+      });
+      expect(result).toMatchObject({
+        type: "pipeline_action",
+        action: "project-register",
+        project_name: "sample",
+        repo_url: "https://github.com/acme/sample.git",
+        default_branch: "main",
+        channel_id: "C123",
+      });
+    });
+
+    it("parses assign action and defaults target channel to current channel", () => {
+      const result = parseSlackCommand({
+        command: "/adp-project",
+        text: "assign 11111111-1111-1111-1111-111111111111",
+        channel_id: "C999",
+      });
+      expect(result).toMatchObject({
+        type: "pipeline_action",
+        action: "project-assign",
+        project_id: "11111111-1111-1111-1111-111111111111",
+        target_channel_id: "C999",
+      });
     });
   });
 

@@ -2,6 +2,7 @@ import { app } from "./app";
 import { config } from "./config";
 import { logger } from "./services/logger.service";
 import { pipelineService } from "./services/pipeline.service";
+import { prMergePollerService } from "./services/pr-merge-poller.service";
 import { projectService } from "./services/project.service";
 
 app.listen(config.port, () => {
@@ -19,4 +20,7 @@ app.listen(config.port, () => {
   projectService.bootstrapDefault().catch((err) => {
     logger.error("Failed to bootstrap default project", { error: String(err) });
   });
+
+  // Poll PR merge state every 60s until webhook integration is wired.
+  prMergePollerService.start();
 });

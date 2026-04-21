@@ -47,6 +47,12 @@ export interface PipelineStatusChoice {
   wait_state?: string;
 }
 
+export interface AwaitingPrReviewRun {
+  pipeline_id: string;
+  project_id?: string;
+  pr_number?: number;
+}
+
 export type CurrentPipelineStatusResult =
   | { kind: "none"; message: string }
   | { kind: "single"; run: PipelineStatusSummary }
@@ -531,6 +537,23 @@ export class PipelineService {
     this.assertStatus(run, ["awaiting_pr_review"]);
     logger.info("Pipeline PR merged — marking complete", { pipeline_id: pipelineId, pr_number: run.pr_number });
     return this.save(run, { status: "complete" });
+  }
+
+  async listAwaitingPrReviewRuns(): Promise<AwaitingPrReviewRun[]> {
+    const rows = await db
+      .select({
+        pipeline_id: pipelineRuns.pipeline_id,
+        project_id: pipelineRuns.project_id,
+        pr_number: pipelineRuns.pr_number,
+      })
+      .from(pipelineRuns)
+      .where(eq(pipelineRuns.status, "awaiting_pr_review"));
+
+    return rows.map((row) => ({
+      pipeline_id: row.pipeline_id,
+      project_id: row.project_id ?? undefined,
+      pr_number: row.pr_number ?? undefined,
+    }));
   }
 
   // ─── SKIP ─────────────────────────────────────────────────────────────────
