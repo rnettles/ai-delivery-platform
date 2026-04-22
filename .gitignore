@@ -9,3 +9,6 @@ platform/backend-api/docker/.cache
 # REST Client private env (contains API keys)
 **/http-client.private.env.json
 
+# VS Code workspace settings (contains API keys)
+.vscode/settings.json
+
