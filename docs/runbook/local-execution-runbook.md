@@ -2,7 +2,7 @@
 ## AI Delivery Platform — Local Development and Debug Guide
 
 **Audience:** Developers running and debugging the execution service outside containers  
-**Last updated:** 2026-04-22  
+**Last updated:** 2026-04-22 (REST Client section added)  
 **See also:** [governance-operator-runbook.md](governance-operator-runbook.md) | [user-flow-runbook.md](user-flow-runbook.md)
 
 ---
@@ -23,7 +23,7 @@ The repository already supports local execution through `npm run dev`, dotenv lo
 ```
 Local dev flow (backend-only):
 
-  curl / REST client
+  REST Client (.http files)  or  PowerShell (Invoke-RestMethod)
        │
        ▼
   Execution Service  (npm run dev, localhost:3000)
@@ -233,7 +233,42 @@ Invoke-RestMethod http://localhost:3000/pipeline/<pipeline_id> | ConvertTo-Json 
 
 ---
 
-## 6. API Key Behavior in Local Dev
+## 6. REST Client Quick Reference
+
+The repository includes a VS Code [REST Client](https://marketplace.visualstudio.com/items?itemName=humao.rest-client) collection under `platform/backend-api/requests/`. This is the recommended approach for interactive API testing — requests are version-controlled and serve as living documentation.
+
+### 6.1 Setup
+
+1. Install the **REST Client** extension (`humao.rest-client`) in VS Code.
+2. Open `platform/backend-api/requests/http-client.private.env.json` and fill in your API key for each environment. This file is gitignored and never committed.
+3. Open any `.http` file. Use `Ctrl+Shift+P` → **Rest Client: Switch Environment** to choose `local` or `dev`.
+4. Click **Send Request** above any request block.
+
+### 6.2 Environment configuration files
+
+| File | Committed | Purpose |
+|---|---|---|
+| `http-client.env.json` | Yes | Base URLs and shared vars per environment (`local`, `dev`) |
+| `http-client.private.env.json` | **No (gitignored)** | API keys — never commit this file |
+
+After creating a pipeline, copy the returned `pipeline_id` into `http-client.env.json` → `pipelineId` so all downstream requests (approve, cancel, status, handoff) pick it up automatically.
+
+### 6.3 Request file inventory
+
+| File | Endpoints covered |
+|---|---|
+| `01-health-execution.http` | `GET /health`, `GET /scripts`, `POST /execute`, `GET /executions`, `GET /executions/:id`, `POST /executions/:id/replay` |
+| `02-pipeline.http` | `POST /pipeline` (all entry points), `GET /pipeline/:id`, status-summary, approve, cancel, takeover, handoff, skip |
+| `03-coordination.http` | Create, get, patch, query, archive coordination entries |
+| `04-projects.http` | Register project, assign Slack channel |
+
+### 6.4 Switching between local and dev
+
+The `local` environment targets `http://localhost:3000` with no API key (pass-through mode). The `dev` environment targets the Azure Container App URL with the full API key. Switch environments without changing any request files.
+
+---
+
+## 7. API Key Behavior in Local Dev
 
 | `API_KEY` set? | Behavior |
 |---|---|
@@ -248,13 +283,15 @@ Invoke-RestMethod http://localhost:3000/pipeline/<id> `
   ConvertTo-Json -Depth 10
 ```
 
+When using the REST Client, the API key is read from `http-client.private.env.json` automatically — no header changes needed when switching environments.
+
 ---
 
-## 7. Optional: Full Local Orchestration with n8n
+## 8. Optional: Full Local Orchestration with n8n
 
 If you want pipeline notifications and want to test the orchestration layer locally:
 
-### 7.1 Start local n8n
+### 8.1 Start local n8n
 
 ```powershell
 npx n8n
@@ -262,13 +299,13 @@ npx n8n
 
 n8n runs on `http://localhost:5678` by default.
 
-### 7.2 Set the callback URL in `.env`
+### 8.2 Set the callback URL in `.env`
 
 ```dotenv
 N8N_CALLBACK_URL=http://localhost:5678/webhook
 ```
 
-### 7.3 Import and activate workflows
+### 8.3 Import and activate workflows
 
 In the n8n UI, import and activate:
 
@@ -276,7 +313,7 @@ In the n8n UI, import and activate:
 - `platform/workflow/slack-action-handler.json`
 - `platform/workflow/pipeline-notifier.json`
 
-### 7.4 Set required n8n env vars
+### 8.4 Set required n8n env vars
 
 n8n reads `EXECUTION_API_BASE_URL` and `EXECUTION_API_KEY` via `$env` expressions in workflow nodes. Set these in the n8n environment or `.env` before starting n8n:
 
@@ -289,7 +326,7 @@ n8n reads `EXECUTION_API_BASE_URL` and `EXECUTION_API_KEY` via `$env` expression
 
 ---
 
-## 8. Optional: Slack End-to-End
+## 9. Optional: Slack End-to-End
 
 For slash commands and interactive buttons pointing at local n8n:
 
@@ -300,7 +337,7 @@ For slash commands and interactive buttons pointing at local n8n:
 
 ---
 
-## 9. Debugging Reference
+## 10. Debugging Reference
 
 ### Service starts but requests fail with 401 or 403
 
@@ -332,9 +369,9 @@ Confirm `GOVERNANCE_PATH=../governance` (relative to `platform/backend-api/`). V
 
 ---
 
-## 10. Local Profile Reference
+## 11. Local Profile Reference
 
-### Profile A — Fast backend debug
+### 11.1 Profile A — Fast backend debug
 
 Use when developing API logic, role scripts, or execution pipeline behavior.
 
@@ -351,7 +388,7 @@ Test with `test.echo` script. No LLM, no n8n, no Slack needed.
 
 ---
 
-### Profile B — Role execution debug
+### 11.2 Profile B — Role execution debug
 
 Use when testing Planner, Sprint Controller, Implementer, or Verifier role behavior end-to-end.
 
@@ -371,7 +408,7 @@ AZURE_OPENAI_DEPLOYMENT=gpt-4.1
 
 ---
 
-### Profile C — Full local orchestration
+### 11.3 Profile C — Full local orchestration
 
 Use when testing pipeline notifications, n8n workflow logic, or Slack integration without Azure.
 
