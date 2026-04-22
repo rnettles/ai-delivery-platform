@@ -1,6 +1,20 @@
 # Project & Channel Endpoints
 # Select environment: View > Command Palette > "Rest Client: Switch Environment" -> local | dev
 
+### List projects
+GET {{baseUrl}}/projects
+x-api-key: {{apiKey}}
+
+
+### List projects including channel mappings
+GET {{baseUrl}}/projects?include_channels=true
+x-api-key: {{apiKey}}
+
+
+### Get a single project (includes channel mappings)
+GET {{baseUrl}}/projects/{{projectId}}
+x-api-key: {{apiKey}}
+
 ### Register a project
 # @name createProject
 POST {{baseUrl}}/projects

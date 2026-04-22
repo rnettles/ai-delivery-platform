@@ -16,6 +16,10 @@ export interface Project {
   updated_at: string;
 }
 
+export interface ProjectWithChannels extends Project {
+  channel_ids?: string[];
+}
+
 function rowToProject(row: typeof projects.$inferSelect): Project {
   return {
     project_id: row.project_id,
@@ -39,12 +43,55 @@ function clonePathFor(name: string): string {
 }
 
 class ProjectService {
+  async list(opts?: { includeChannels?: boolean }): Promise<ProjectWithChannels[]> {
+    const rows = await db
+      .select()
+      .from(projects);
+
+    const base = rows.map((row) => rowToProject(row));
+
+    if (!opts?.includeChannels || base.length === 0) {
+      return base;
+    }
+
+    const channelRows = await db
+      .select({ channel_id: projectChannels.channel_id, project_id: projectChannels.project_id })
+      .from(projectChannels);
+
+    const channelsByProjectId = new Map<string, string[]>();
+    for (const row of channelRows) {
+      const existing = channelsByProjectId.get(row.project_id) ?? [];
+      existing.push(row.channel_id);
+      channelsByProjectId.set(row.project_id, existing);
+    }
+
+    return base.map((project) => ({
+      ...project,
+      channel_ids: channelsByProjectId.get(project.project_id) ?? [],
+    }));
+  }
+
   async getById(projectId: string): Promise<Project | null> {
     const [row] = await db
       .select()
       .from(projects)
       .where(eq(projects.project_id, projectId));
     return row ? rowToProject(row) : null;
+  }
+
+  async getByIdWithChannels(projectId: string): Promise<ProjectWithChannels | null> {
+    const project = await this.getById(projectId);
+    if (!project) return null;
+
+    const channelRows = await db
+      .select({ channel_id: projectChannels.channel_id })
+      .from(projectChannels)
+      .where(eq(projectChannels.project_id, projectId));
+
+    return {
+      ...project,
+      channel_ids: channelRows.map((row) => row.channel_id),
+    };
   }
 
   async getByChannel(channelId: string): Promise<Project | null> {

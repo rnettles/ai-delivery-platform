@@ -2,7 +2,7 @@
 ## AI Delivery Platform — Local Development and Debug Guide
 
 **Audience:** Developers running and debugging the execution service outside containers  
-**Last updated:** 2026-04-22 (REST Client section added)  
+**Last updated:** 2026-04-22 (REST Client + API surface + project create syntax)  
 **See also:** [governance-operator-runbook.md](governance-operator-runbook.md) | [user-flow-runbook.md](user-flow-runbook.md)
 
 ---
@@ -240,7 +240,7 @@ The repository includes a VS Code [REST Client](https://marketplace.visualstudio
 ### 6.1 Setup
 
 1. Install the **REST Client** extension (`humao.rest-client`) in VS Code.
-2. Open `platform/backend-api/requests/http-client.private.env.json` and fill in your API key for each environment. This file is gitignored and never committed.
+2. Open `.vscode/settings.json` and set `rest-client.environmentVariables` values for `local` and `dev`.
 3. Open any `.http` file. Use `Ctrl+Shift+P` → **Rest Client: Switch Environment** to choose `local` or `dev`.
 4. Click **Send Request** above any request block.
 
@@ -248,10 +248,10 @@ The repository includes a VS Code [REST Client](https://marketplace.visualstudio
 
 | File | Committed | Purpose |
 |---|---|---|
-| `http-client.env.json` | Yes | Base URLs and shared vars per environment (`local`, `dev`) |
-| `http-client.private.env.json` | **No (gitignored)** | API keys — never commit this file |
+| `.vscode/settings.json` | **No (gitignored in this repo)** | REST Client environment variables (`baseUrl`, `apiKey`, `pipelineId`, etc.) |
+| `platform/backend-api/requests/*.http` | Yes | Request collections by domain (execution, pipeline, coordination, projects) |
 
-After creating a pipeline, copy the returned `pipeline_id` into `http-client.env.json` → `pipelineId` so all downstream requests (approve, cancel, status, handoff) pick it up automatically.
+After creating a pipeline, copy the returned `pipeline_id` into `.vscode/settings.json` → `rest-client.environmentVariables.<env>.pipelineId` so downstream requests (approve, cancel, status, handoff) pick it up automatically.
 
 ### 6.3 Request file inventory
 
@@ -265,6 +265,124 @@ After creating a pipeline, copy the returned `pipeline_id` into `http-client.env
 ### 6.4 Switching between local and dev
 
 The `local` environment targets `http://localhost:3000` with no API key (pass-through mode). The `dev` environment targets the Azure Container App URL with the full API key. Switch environments without changing any request files.
+
+### 6.5 API Surface (current endpoints)
+
+| Area | Method | Path |
+|---|---|---|
+| Health | GET | `/health` |
+| Script catalog | GET | `/scripts` |
+| Execute script/role | POST | `/execute` |
+| Execution query | GET | `/executions` |
+| Execution detail | GET | `/executions/:executionId` |
+| Replay execution | POST | `/executions/:executionId/replay` |
+| Pipeline create | POST | `/pipeline` |
+| Pipeline detail | GET | `/pipeline/:pipelineId` |
+| Pipeline status summary | GET | `/pipeline/:pipelineId/status-summary` |
+| Current pipeline summary | GET | `/pipeline/status-summary/current` |
+| Pipeline approve | POST | `/pipeline/:pipelineId/approve` |
+| Pipeline cancel | POST | `/pipeline/:pipelineId/cancel` |
+| Pipeline takeover | POST | `/pipeline/:pipelineId/takeover` |
+| Pipeline handoff | POST | `/pipeline/:pipelineId/handoff` |
+| Pipeline skip | POST | `/pipeline/:pipelineId/skip` |
+| Project list | GET | `/projects` |
+| Project detail | GET | `/projects/:projectId` |
+| Project create | POST | `/projects` |
+| Project channel assign | POST | `/projects/:projectId/channels` |
+| Git sync trigger | POST | `/git/sync` |
+| Git status | GET | `/git/status` |
+| Coordination create | POST | `/coordination` |
+| Coordination detail | GET | `/coordination/:coordinationId` |
+| Coordination patch | PATCH | `/coordination/:coordinationId` |
+| Coordination query | POST | `/coordination/query` |
+| Coordination archive | DELETE | `/coordination/:coordinationId` |
+
+### 6.6 Create Project Syntax
+
+`POST /projects`
+
+Required body fields:
+
+- `name`
+- `repo_url`
+
+Optional fields:
+
+- `default_branch` (defaults to `main` if omitted)
+- `channel_id` (registers Slack channel mapping during create)
+
+REST Client example:
+
+```http
+POST {{baseUrl}}/projects
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "name": "my-service",
+  "repo_url": "https://github.com/your-org/my-service",
+  "default_branch": "main",
+  "channel_id": "C12345678"
+}
+```
+
+PowerShell example:
+
+```powershell
+Invoke-RestMethod -Method POST http://localhost:3000/projects `
+  -ContentType "application/json" `
+  -Headers @{ "x-api-key" = "<your_key_if_API_KEY_is_set>" } `
+  -Body '{"name":"my-service","repo_url":"https://github.com/your-org/my-service","default_branch":"main","channel_id":"C12345678"}' |
+  ConvertTo-Json -Depth 10
+```
+
+Expected response: `201 Created` with project data (`project_id`, `name`, `repo_url`, `default_branch`, `clone_path`, timestamps) and `channel_id` when provided.
+
+Common errors:
+
+- `400 PROJECT_NAME_REQUIRED`
+- `400 PROJECT_REPO_URL_REQUIRED`
+- `409 PROJECT_ALREADY_EXISTS`
+
+### 6.7 Project Read Endpoints
+
+List all projects:
+
+```http
+GET {{baseUrl}}/projects
+x-api-key: {{apiKey}}
+```
+
+List all projects with channel mappings:
+
+```http
+GET {{baseUrl}}/projects?include_channels=true
+x-api-key: {{apiKey}}
+```
+
+Get one project by id (always includes `channel_ids`):
+
+```http
+GET {{baseUrl}}/projects/{{projectId}}
+x-api-key: {{apiKey}}
+```
+
+PowerShell examples:
+
+```powershell
+Invoke-RestMethod -Method GET http://localhost:3000/projects |
+  ConvertTo-Json -Depth 10
+```
+
+```powershell
+Invoke-RestMethod -Method GET "http://localhost:3000/projects?include_channels=true" |
+  ConvertTo-Json -Depth 10
+```
+
+```powershell
+Invoke-RestMethod -Method GET http://localhost:3000/projects/<project_id> |
+  ConvertTo-Json -Depth 10
+```
 
 ---
 
@@ -283,7 +401,7 @@ Invoke-RestMethod http://localhost:3000/pipeline/<id> `
   ConvertTo-Json -Depth 10
 ```
 
-When using the REST Client, the API key is read from `http-client.private.env.json` automatically — no header changes needed when switching environments.
+When using the REST Client, the API key is read from `.vscode/settings.json` automatically — no header changes needed when switching environments.
 
 ---
 

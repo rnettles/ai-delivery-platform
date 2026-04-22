@@ -13,6 +13,40 @@ interface AssignChannelRequest {
   channel_id?: string;
 }
 
+function parseBooleanQueryValue(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
+export async function listProjects(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const includeChannels = parseBooleanQueryValue(req.query.include_channels);
+    const projects = await projectService.list({ includeChannels });
+    res.status(200).json(projects);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function getProject(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const projectId = String(req.params.projectId ?? "");
+    if (!projectId) {
+      throw new HttpError(400, "PROJECT_ID_REQUIRED", "projectId path parameter is required");
+    }
+
+    const project = await projectService.getByIdWithChannels(projectId);
+    if (!project) {
+      throw new HttpError(404, "PROJECT_NOT_FOUND", `Project not found: ${projectId}`);
+    }
+
+    res.status(200).json(project);
+  } catch (error) {
+    next(error);
+  }
+}
+
 export async function createProject(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const body = req.body as CreateProjectRequest;
