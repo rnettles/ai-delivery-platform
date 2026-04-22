@@ -5,6 +5,7 @@ param(
 
   [string]$BaseUrl = "",
   [string]$ApiKey = "",
+  [string]$EnvFile = ".env.local",
 
   # Generic request mode
   [string]$Method = "GET",
@@ -107,6 +108,7 @@ Project commands:
   project-assign-channel
 
 Other commands:
+  env-load
   git-sync
   git-status
   coord-create
@@ -122,6 +124,8 @@ Quick examples:
   ./api-cli.ps1 pipeline-create -Description "Add health endpoint" -EntryPoint planner -ExecutionMode next-flow
   ./api-cli.ps1 projects
   ./api-cli.ps1 projects -ExcludeChannels
+  ./api-cli.ps1 env-load
+  ./api-cli.ps1 env-load -EnvFile .env.dev
   ./api-cli.ps1 project-create -ProjectName my-service -RepoUrl https://github.com/org/repo -DefaultBranch main -ChannelId C12345678
   ./api-cli.ps1 request -Method GET -Path /pipeline/status-summary/current
 
@@ -154,6 +158,11 @@ Details by command:
 
   project-assign-channel:
     Require: -ProjectId, -ChannelId
+
+  env-load:
+    Optional: -EnvFile (default .env.local)
+    Note: dot-source to persist in your current shell:
+          . ./api-cli.ps1 env-load
 
   coordination commands:
     coord-create, coord-patch, coord-query expect -BodyJson
@@ -211,6 +220,73 @@ function Build-Uri {
   }
 
   return $uri
+}
+
+function Load-EnvFile {
+  param([string]$FilePath)
+
+  if ([string]::IsNullOrWhiteSpace($FilePath)) {
+    throw "Missing env file path. Use -EnvFile <path>."
+  }
+
+  $candidatePaths = New-Object System.Collections.Generic.List[string]
+
+  if ([System.IO.Path]::IsPathRooted($FilePath)) {
+    $candidatePaths.Add($FilePath)
+  } else {
+    $candidatePaths.Add((Join-Path (Get-Location) $FilePath))
+    if (-not [string]::IsNullOrWhiteSpace($PSScriptRoot)) {
+      $candidatePaths.Add((Join-Path $PSScriptRoot $FilePath))
+      if ($FilePath -eq ".env.local") {
+        $candidatePaths.Add((Join-Path $PSScriptRoot "platform/backend-api/.env.local"))
+      }
+    }
+  }
+
+  $resolvedPath = $candidatePaths | Where-Object { Test-Path -Path $_ -PathType Leaf } | Select-Object -First 1
+  if ([string]::IsNullOrWhiteSpace($resolvedPath)) {
+    $tried = $candidatePaths -join "; "
+    throw "Env file not found: $FilePath. Tried: $tried"
+  }
+
+  $loaded = New-Object System.Collections.Generic.List[string]
+  $lines = Get-Content -Path $resolvedPath
+
+  foreach ($raw in $lines) {
+    $line = $raw.Trim()
+    if ([string]::IsNullOrWhiteSpace($line)) { continue }
+    if ($line.StartsWith("#")) { continue }
+
+    if ($line.StartsWith("export ")) {
+      $line = $line.Substring(7).Trim()
+    }
+
+    $eq = $line.IndexOf("=")
+    if ($eq -le 0) { continue }
+
+    $key = $line.Substring(0, $eq).Trim()
+    if ([string]::IsNullOrWhiteSpace($key)) { continue }
+
+    $value = $line.Substring($eq + 1).Trim()
+
+    # Keep parsing simple and deterministic for standard dotenv files.
+    if (($value.StartsWith('"') -and $value.EndsWith('"')) -or ($value.StartsWith("'") -and $value.EndsWith("'"))) {
+      $value = $value.Substring(1, $value.Length - 2)
+    }
+
+    Set-Item -Path "Env:$key" -Value $value
+    $loaded.Add($key)
+  }
+
+  $count = $loaded.Count
+  Write-Host "Loaded $count environment variable(s) from $resolvedPath"
+
+  if ($count -gt 0) {
+    $preview = $loaded | Sort-Object | Select-Object -First 10
+    Write-Host ("Keys: " + ($preview -join ", "))
+  }
+
+  Write-Host "Tip: to keep variables in your current shell, dot-source this command: . ./api-cli.ps1 env-load"
 }
 
 function Write-Result {
@@ -272,6 +348,11 @@ if ($Help -or $Command -eq "help") {
 $commandName = $Command.Trim().ToLowerInvariant()
 
 switch ($commandName) {
+  "env-load" {
+    Load-EnvFile -FilePath $EnvFile
+    break
+  }
+
   "health" {
     Invoke-Adp -HttpMethod "GET" -RelativePath "/health"
     break
