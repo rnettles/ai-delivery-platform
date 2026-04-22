@@ -1,0 +1,74 @@
+# AI Delivery Platform — Local Development Environment
+#
+# Manual verification steps:
+# 1. docker compose up -d
+# 2. docker compose ps (all services healthy)
+# 3. docker exec <postgres_container> psql -U $POSTGRES_USER -d $POSTGRES_DB -c '\l'
+# 4. http://localhost:5678 (n8n login)
+# 5. http://localhost:9001 (MinIO console)
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: adp_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-adp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-adp-local}
+      POSTGRES_DB: ${POSTGRES_DB:-ai_orchestrator_dev_state}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-adp} -d ${POSTGRES_DB:-ai_orchestrator_dev_state}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  n8n:
+    build:
+      context: ..
+      dockerfile: local-db-n8n/n8n.dockerfile
+    # image: n8nio/n8n:latest  # (commented out, using build instead)
+    container_name: adp_n8n
+    restart: unless-stopped
+    environment:
+      N8N_BASIC_AUTH_ACTIVE: 'true'
+      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER:-admin}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD:-changeme}
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${N8N_DB_NAME:-ai_orchestrator_dev_n8n}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER:-adp}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:-adp-local}
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: 'true'
+    ports:
+      - "5678:5678"
+    volumes:
+      - ../:/home/node
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  minio:
+    image: minio/minio:latest
+    container_name: adp_minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-adp-local}
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
+volumes:
+  postgres_data:
+  n8n_data:
+  minio_data:

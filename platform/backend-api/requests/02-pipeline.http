@@ -1,0 +1,123 @@
+# Pipeline Endpoints
+# Select environment: View > Command Palette > "Rest Client: Switch Environment" -> local | dev
+#
+# Tip: After "Create pipeline", copy the pipeline_id from the response into
+# http-client.env.json > pipelineId so all subsequent requests use it automatically.
+
+### Create pipeline — planner entry
+# @name createPipeline
+POST {{baseUrl}}/pipeline
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "entry_point": "planner",
+  "execution_mode": "next-flow",
+  "input": {
+    "description": "Add a health check endpoint that returns the current timestamp and version"
+  },
+  "metadata": {
+    "source": "rest-client"
+  }
+}
+
+
+### Create pipeline — sprint-controller entry
+POST {{baseUrl}}/pipeline
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "entry_point": "sprint-controller",
+  "execution_mode": "next-flow",
+  "input": {
+    "description": "Implement phase 2 tasks from the plan"
+  },
+  "metadata": {
+    "source": "rest-client"
+  }
+}
+
+
+### Create pipeline — implementer entry (full-sprint mode)
+POST {{baseUrl}}/pipeline
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "entry_point": "implementer",
+  "execution_mode": "full-sprint",
+  "input": {
+    "description": "Implement task: Add input validation to POST /pipeline"
+  },
+  "metadata": {
+    "source": "rest-client"
+  }
+}
+
+
+### Get pipeline detail
+GET {{baseUrl}}/pipeline/{{pipelineId}}
+x-api-key: {{apiKey}}
+
+
+### Get pipeline status summary
+GET {{baseUrl}}/pipeline/{{pipelineId}}/status-summary
+x-api-key: {{apiKey}}
+
+
+### Get current active pipeline (optionally filter by channel)
+GET {{baseUrl}}/pipeline/status-summary/current
+x-api-key: {{apiKey}}
+
+
+### Approve current gate
+POST {{baseUrl}}/pipeline/{{pipelineId}}/approve
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "actor": "operator"
+}
+
+
+### Cancel pipeline
+POST {{baseUrl}}/pipeline/{{pipelineId}}/cancel
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "actor": "operator"
+}
+
+
+### Takeover current step (human takes over from AI)
+POST {{baseUrl}}/pipeline/{{pipelineId}}/takeover
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "actor": "operator"
+}
+
+
+### Handoff step back to pipeline (human finished, resume AI)
+POST {{baseUrl}}/pipeline/{{pipelineId}}/handoff
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "actor": "operator",
+  "artifact_path": ""
+}
+
+
+### Skip current step
+POST {{baseUrl}}/pipeline/{{pipelineId}}/skip
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "actor": "operator",
+  "reason": "skipping for test"
+}

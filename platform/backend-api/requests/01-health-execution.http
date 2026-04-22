@@ -1,0 +1,46 @@
+# Health & Execution Endpoints
+# Select environment: View > Command Palette > "Rest Client: Switch Environment" -> local | dev
+
+### Health check (no auth required)
+GET {{baseUrl}}/health
+
+
+### List available scripts
+GET {{baseUrl}}/scripts
+x-api-key: {{apiKey}}
+
+
+### Execute a script
+# @name execute
+POST {{baseUrl}}/execute
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "target": {
+    "type": "script",
+    "name": "test.echo",
+    "version": "2026.04.18"
+  },
+  "input": {
+    "message": "hello from REST Client"
+  }
+}
+
+
+### Get a specific execution record
+GET {{baseUrl}}/executions/{{executionId}}
+x-api-key: {{apiKey}}
+
+
+### Query execution records (optional filters: script_name, status, limit)
+GET {{baseUrl}}/executions?limit=20
+x-api-key: {{apiKey}}
+
+
+### Replay a previous execution
+POST {{baseUrl}}/executions/{{executionId}}/replay
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{}

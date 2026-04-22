@@ -1,0 +1,51 @@
+# Coordination Endpoints
+# Select environment: View > Command Palette > "Rest Client: Switch Environment" -> local | dev
+
+### Create coordination entry
+# @name createCoord
+POST {{baseUrl}}/coordination
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "pipeline_id": "{{pipelineId}}",
+  "role": "planner",
+  "key": "handoff-notes",
+  "value": {
+    "summary": "Phase 1 planning complete",
+    "next_action": "sprint-controller"
+  }
+}
+
+
+### Get a coordination entry by ID
+GET {{baseUrl}}/coordination/{{coordinationId}}
+x-api-key: {{apiKey}}
+
+
+### Patch (update) a coordination entry
+PATCH {{baseUrl}}/coordination/{{coordinationId}}
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "value": {
+    "summary": "Updated notes",
+    "next_action": "implementer"
+  }
+}
+
+
+### Query coordination entries (filter by pipeline_id, role, key)
+POST {{baseUrl}}/coordination/query
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "pipeline_id": "{{pipelineId}}"
+}
+
+
+### Archive (soft-delete) a coordination entry
+DELETE {{baseUrl}}/coordination/{{coordinationId}}
+x-api-key: {{apiKey}}

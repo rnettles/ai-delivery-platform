@@ -2,7 +2,7 @@
 ## AI Delivery Platform — Local Development and Debug Guide
 
 **Audience:** Developers running and debugging the execution service outside containers  
-**Last updated:** 2026-04-21  
+**Last updated:** 2026-04-22  
 **See also:** [governance-operator-runbook.md](governance-operator-runbook.md) | [user-flow-runbook.md](user-flow-runbook.md)
 
 ---
@@ -66,10 +66,11 @@ Install the following on your local machine:
 
 ### 2.1 Copy the env template
 
-From `platform/backend-api/`:
+From PowerShell at the repo root:
 
-```bat
-copy .env.example .env
+```powershell
+Set-Location platform/backend-api
+Copy-Item .env.example .env
 ```
 
 ### 2.2 Edit `.env` for local dev
@@ -125,7 +126,7 @@ LLM_GITHUB_MODELS_API_KEY=
 
 ### 3.1 Create the local database
 
-```bat
+```powershell
 createdb ai_orchestrator_dev_state
 ```
 
@@ -137,9 +138,10 @@ CREATE DATABASE ai_orchestrator_dev_state;
 
 ### 3.2 Run migrations
 
-From `platform/backend-api/`:
+From PowerShell at the repo root:
 
-```bat
+```powershell
+Set-Location platform/backend-api
 npm install
 npm run db:migrate
 ```
@@ -150,9 +152,10 @@ This applies all versioned Drizzle migrations from `platform/backend-api/drizzle
 
 ## 4. Start the Backend
 
-From `platform/backend-api/`:
+From PowerShell at the repo root:
 
-```bat
+```powershell
+Set-Location platform/backend-api
 npm run dev
 ```
 
@@ -168,10 +171,12 @@ Execution service started { port: 3000, environment: "development" }
 
 ## 5. Smoke Tests
 
+PowerShell note: prefer `Invoke-RestMethod` for JSON API calls. In many Windows environments, `curl` maps to a PowerShell alias and can mis-handle quoted JSON request bodies.
+
 ### 5.1 Health check
 
-```bat
-curl http://localhost:3000/health
+```powershell
+Invoke-RestMethod http://localhost:3000/health | ConvertTo-Json -Depth 10
 ```
 
 Expected:
@@ -184,8 +189,8 @@ The `/health` endpoint is unauthenticated and exempt from API key middleware.
 
 ### 5.2 List registered scripts and role bindings
 
-```bat
-curl http://localhost:3000/scripts
+```powershell
+Invoke-RestMethod http://localhost:3000/scripts | ConvertTo-Json -Depth 10
 ```
 
 Returns all registered scripts and role-to-script bindings. Confirm `test.echo`, `role.planner`, `role.sprint-controller`, `role.implementer`, and `role.verifier` appear.
@@ -194,10 +199,11 @@ Returns all registered scripts and role-to-script bindings. Confirm `test.echo`,
 
 Use this first to verify the full execution pipeline — request validation, script runner, DB write — without needing LLM credentials:
 
-```bat
-curl -X POST http://localhost:3000/execute ^
-  -H "Content-Type: application/json" ^
-  -d "{\"target\":{\"type\":\"script\",\"name\":\"test.echo\",\"version\":\"2026.04.18\"},\"input\":{\"message\":\"hello-local\"}}"
+```powershell
+Invoke-RestMethod -Method POST http://localhost:3000/execute `
+  -ContentType "application/json" `
+  -Body '{"target":{"type":"script","name":"test.echo","version":"2026.04.18"},"input":{"message":"hello-local"}}' |
+  ConvertTo-Json -Depth 10
 ```
 
 Expected response contains `"ok": true` and an echoed copy of the input.
@@ -206,22 +212,23 @@ Expected response contains `"ok": true` and an echoed copy of the input.
 
 Copy the `execution_id` from the previous response and query it:
 
-```bat
-curl http://localhost:3000/executions/<execution_id>
+```powershell
+Invoke-RestMethod http://localhost:3000/executions/<execution_id> | ConvertTo-Json -Depth 10
 ```
 
 ### 5.5 Create a pipeline run (requires LLM credentials for role execution)
 
-```bat
-curl -X POST http://localhost:3000/pipeline ^
-  -H "Content-Type: application/json" ^
-  -d "{\"entry_point\":\"planner\",\"execution_mode\":\"next\",\"input\":{\"description\":\"local test feature\"},\"metadata\":{\"source\":\"api\"}}"
+```powershell
+Invoke-RestMethod -Method POST http://localhost:3000/pipeline `
+  -ContentType "application/json" `
+  -Body '{"entry_point":"planner","execution_mode":"next","input":{"description":"local test feature"},"metadata":{"source":"api"}}' |
+  ConvertTo-Json -Depth 10
 ```
 
 Returns `202 Accepted` with a `pipeline_id`. Role execution is asynchronous — check status with:
 
-```bat
-curl http://localhost:3000/pipeline/<pipeline_id>
+```powershell
+Invoke-RestMethod http://localhost:3000/pipeline/<pipeline_id> | ConvertTo-Json -Depth 10
 ```
 
 ---
@@ -235,9 +242,10 @@ curl http://localhost:3000/pipeline/<pipeline_id>
 
 When `API_KEY` is set, include the header:
 
-```bat
-curl http://localhost:3000/pipeline/<id> ^
-  -H "x-api-key: <your_key>"
+```powershell
+Invoke-RestMethod http://localhost:3000/pipeline/<id> `
+  -Headers @{ "x-api-key" = "<your_key>" } |
+  ConvertTo-Json -Depth 10
 ```
 
 ---
@@ -248,7 +256,7 @@ If you want pipeline notifications and want to test the orchestration layer loca
 
 ### 7.1 Start local n8n
 
-```bat
+```powershell
 npx n8n
 ```
 

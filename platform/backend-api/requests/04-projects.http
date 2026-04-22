@@ -1,0 +1,24 @@
+# Project & Channel Endpoints
+# Select environment: View > Command Palette > "Rest Client: Switch Environment" -> local | dev
+
+### Register a project
+# @name createProject
+POST {{baseUrl}}/projects
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "name": "my-service",
+  "repo_url": "https://github.com/rnettles/my-service",
+  "default_branch": "main"
+}
+
+
+### Assign a Slack channel to a project
+POST {{baseUrl}}/projects/{{projectId}}/channels
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "channel_id": "C12345678"
+}
