@@ -5,6 +5,7 @@ import {
   createPipeline,
   getCurrentPipelineStatusSummary,
   getPipeline,
+  getPipelineArtifact,
   getPipelineStatusSummary,
   handoffPipeline,
   skipPipeline,
@@ -15,6 +16,7 @@ const router = Router();
 
 router.post("/pipeline", createPipeline);
 router.get("/pipeline/:pipelineId", getPipeline);
+router.get("/pipeline/:pipelineId/artifact", getPipelineArtifact);
 router.get("/pipeline/:pipelineId/status-summary", getPipelineStatusSummary);
 router.get("/pipeline/status-summary/current", getCurrentPipelineStatusSummary);
 router.post("/pipeline/:pipelineId/cancel", cancelPipeline);

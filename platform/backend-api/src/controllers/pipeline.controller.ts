@@ -1,4 +1,6 @@
 import { Request, Response, NextFunction } from "express";
+import * as fs from "fs";
+import * as path from "path";
 import { pipelineService } from "../services/pipeline.service";
 import { pipelineNotifierService } from "../services/pipeline-notifier.service";
 import { executionService } from "../services/execution.service";
@@ -9,6 +11,7 @@ import {
   PipelineSkipRequest,
 } from "../domain/pipeline.types";
 import { HttpError } from "../utils/http-error";
+import { config } from "../config";
 
 function getSlackActor(req: Request): string {
   // Actor identity from Slack metadata or a fallback header
@@ -305,5 +308,44 @@ async function executeCurrentStep(
       // If this also fails, the pipeline is in an inconsistent state — log only
       logger.error("Failed to mark pipeline step as failed", { pipeline_id: pipelineId, role });
     }
+  }
+}
+
+export async function getPipelineArtifact(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const pipelineId = String(req.params.pipelineId);
+    const artifactPath = String(req.query.path ?? "");
+
+    if (!artifactPath) {
+      throw new HttpError(400, "ARTIFACT_PATH_REQUIRED", "Query param 'path' is required");
+    }
+
+    // Resolve and validate the path stays within the artifact base directory
+    const base = path.resolve(config.artifactBasePath);
+    const resolved = path.resolve(base, artifactPath);
+    if (!resolved.startsWith(base + path.sep) && resolved !== base) {
+      throw new HttpError(400, "INVALID_ARTIFACT_PATH", "Artifact path must be within the artifact base directory");
+    }
+
+    // Verify the artifact belongs to this pipeline
+    const pipelinePrefix = path.join("artifacts", pipelineId);
+    if (!artifactPath.startsWith(pipelinePrefix)) {
+      throw new HttpError(403, "ARTIFACT_PIPELINE_MISMATCH", "Artifact does not belong to the specified pipeline");
+    }
+
+    if (!fs.existsSync(resolved)) {
+      throw new HttpError(404, "ARTIFACT_NOT_FOUND", `Artifact not found: ${artifactPath}`);
+    }
+
+    const content = fs.readFileSync(resolved, "utf-8");
+    const ext = path.extname(resolved).toLowerCase();
+
+    if (ext === ".json") {
+      res.status(200).json(JSON.parse(content));
+    } else {
+      res.status(200).type("text/plain").send(content);
+    }
+  } catch (error) {
+    next(error);
   }
 }

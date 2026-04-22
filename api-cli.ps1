@@ -98,6 +98,7 @@ Pipeline commands:
   pipeline-takeover
   pipeline-handoff
   pipeline-skip
+  sprint                     # sprint plan + task list for a pipeline
 
 Project commands:
   projects
@@ -362,6 +363,101 @@ switch ($commandName) {
 
   "pipeline-current" {
     Invoke-Adp -HttpMethod "GET" -RelativePath "/pipeline/status-summary/current"
+    break
+  }
+
+  "sprint" {
+    # Resolve pipeline: explicit -PipelineId or fall back to the current active pipeline
+    $resolvedPipelineId = $PipelineId
+    if ([string]::IsNullOrWhiteSpace($resolvedPipelineId)) {
+      $current = Invoke-RestMethod `
+        -Method GET `
+        -Uri (Build-Uri "/pipeline/status-summary/current") `
+        -Headers (Build-Headers) `
+        -UseBasicParsing
+      if ($current.kind -eq "none") {
+        Write-Host "No active pipeline. Provide -PipelineId to inspect a specific pipeline."
+        break
+      }
+      $resolvedPipelineId = $current.pipeline_id
+    }
+
+    # Fetch sprint controller execution for this pipeline
+    $executions = Invoke-RestMethod `
+      -Method GET `
+      -Uri (Build-Uri "/executions" @{ limit = 100 }) `
+      -Headers (Build-Headers) `
+      -UseBasicParsing
+
+    $sprintExec = $executions.records | Where-Object {
+      $_.target.name -in @("role.sprint-controller", "sprint-controller") -and
+      $_.metadata.pipeline_id -eq $resolvedPipelineId -and
+      $_.status -eq "completed"
+    } | Select-Object -First 1
+
+    if (-not $sprintExec) {
+      Write-Host "No completed sprint-controller execution found for pipeline: $resolvedPipelineId"
+      break
+    }
+
+    $out = $sprintExec.output
+    $sprintId  = $out.sprint_id
+    $phaseId   = $out.phase_id
+
+    # Try to fetch full sprint plan from artifact endpoint
+    $sprintPlanPath = $out.sprint_plan_path
+    $tasks = $null
+    if (-not [string]::IsNullOrWhiteSpace($sprintPlanPath)) {
+      try {
+        $planText = Invoke-RestMethod `
+          -Method GET `
+          -Uri (Build-Uri "/pipeline/$resolvedPipelineId/artifact" @{ path = $sprintPlanPath }) `
+          -Headers (Build-Headers) `
+          -UseBasicParsing
+        # Parse tasks from markdown table: | TASK-ID | description | status |
+        $taskLines = $planText -split "`n" | Where-Object { $_ -match '\|\s*[A-Z0-9]+-\d+' }
+        $tasks = $taskLines | ForEach-Object {
+          $cols = ($_ -split '\|') | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
+          if ($cols.Count -ge 3) {
+            [PSCustomObject]@{ task_id = $cols[0]; description = $cols[1]; status = $cols[2] }
+          }
+        }
+      } catch {
+        # Artifact not accessible (container restart or remote env) — fall back to first_task only
+        $tasks = $null
+      }
+    }
+
+    # Determine task statuses from implementer execution history
+    $implExecs = $executions.records | Where-Object {
+      $_.target.name -in @("role.implementer", "implementer") -and
+      $_.metadata.pipeline_id -eq $resolvedPipelineId
+    }
+    $completedTaskIds = $implExecs | Where-Object { $_.status -eq "completed" } |
+      ForEach-Object { $_.output.task_id } | Where-Object { $_ } | Select-Object -Unique
+
+    Write-Host ""
+    Write-Host "=== Sprint: $sprintId  (Phase: $phaseId)  Pipeline: $resolvedPipelineId ==="
+    Write-Host ""
+
+    if ($tasks) {
+      Write-Host "Tasks:"
+      $tasks | ForEach-Object {
+        $tid    = $_.task_id
+        $status = $_.status
+        # Upgrade status from execution history if possible
+        if ($completedTaskIds -contains $tid) { $status = "completed" }
+        Write-Host "  $tid  $($_.description)  [$status]"
+      }
+    } else {
+      # Fallback: show first_task from execution output
+      Write-Host "Tasks (first task only — full plan artifact not accessible):"
+      $ft     = $out.first_task
+      $ftStat = if ($completedTaskIds -contains $ft.task_id) { "completed" } else { $ft.status }
+      Write-Host "  $($ft.task_id)  $($ft.title)  [$ftStat]"
+    }
+
+    Write-Host ""
     break
   }
 
