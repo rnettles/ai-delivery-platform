@@ -16,11 +16,21 @@ import {
 } from "../domain/pipeline.types";
 import { HttpError } from "../utils/http-error";
 import { logger } from "./logger.service";
-import { projectService } from "./project.service";
+import { artifactService } from "./artifact.service";
+import { projectGitService } from "./project-git.service";
+import { Project, projectService } from "./project.service";
 import { executionRecordModel } from "../domain/execution.model";
 
 export interface PipelineStatusSummary extends PipelineRun {
   repo_url?: string;
+  control_state?: {
+    refreshed_at: string;
+    source: "artifacts";
+    git_head_commit?: string;
+    current_task?: Record<string, unknown>;
+    verification?: Record<string, unknown>;
+    closeout?: Record<string, unknown>;
+  };
   last_error?: { code: string; message: string; details?: unknown };
   prior_step_detail?: PipelineStepRecord;
   current_step_detail?: PipelineStepRecord;
@@ -190,6 +200,96 @@ function buildExecutionSignals(run: PipelineRun, summary: PipelineStatusSummary)
 }
 
 export class PipelineService {
+  private async refreshGitForStatus(run: PipelineRun): Promise<{ project: Project | null; headCommit?: string }> {
+    if (!run.project_id) {
+      return { project: null };
+    }
+
+    try {
+      const project = await projectService.getById(run.project_id);
+      if (!project) {
+        return { project: null };
+      }
+
+      const git = await projectGitService.ensureReady(project, { forcePull: true });
+      return { project, headCommit: git.head_commit };
+    } catch (err) {
+      logger.info("Status git refresh skipped", {
+        pipeline_id: run.pipeline_id,
+        project_id: run.project_id,
+        error: String(err),
+      });
+      return { project: null };
+    }
+  }
+
+  private latestArtifactPath(run: PipelineRun, matcher: (path: string) => boolean): string | undefined {
+    const all = run.steps
+      .slice()
+      .reverse()
+      .flatMap((s) => s.artifact_paths ?? []);
+    return all.find((p) => matcher(p));
+  }
+
+  private async readArtifactJson(run: PipelineRun, matcher: (path: string) => boolean): Promise<Record<string, unknown> | undefined> {
+    const artifactPath = this.latestArtifactPath(run, matcher);
+    if (!artifactPath) {
+      return undefined;
+    }
+
+    try {
+      const content = await artifactService.read(artifactPath);
+      return JSON.parse(content) as Record<string, unknown>;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async reconcileRunFromControlArtifacts(run: PipelineRun): Promise<PipelineRun> {
+    const closeout = await this.readArtifactJson(run, (p) => p.endsWith("sprint_closeout.json"));
+    if (!closeout) {
+      return run;
+    }
+
+    const nextPatch: {
+      status?: PipelineStatus;
+      current_step?: PipelineRole | "complete";
+      pr_number?: number;
+      pr_url?: string;
+      sprint_branch?: string;
+    } = {};
+
+    if (run.status !== "awaiting_pr_review" && run.status !== "complete") {
+      nextPatch.status = "awaiting_pr_review";
+      nextPatch.current_step = "complete";
+    }
+
+    const prNumber = closeout.pr_number;
+    const prUrl = closeout.pr_url;
+    const sprintBranch = closeout.sprint_branch;
+
+    if (typeof prNumber === "number" && run.pr_number !== prNumber) {
+      nextPatch.pr_number = prNumber;
+    }
+    if (typeof prUrl === "string" && run.pr_url !== prUrl) {
+      nextPatch.pr_url = prUrl;
+    }
+    if (typeof sprintBranch === "string" && run.sprint_branch !== sprintBranch) {
+      nextPatch.sprint_branch = sprintBranch;
+    }
+
+    if (Object.keys(nextPatch).length === 0) {
+      return run;
+    }
+
+    logger.info("Status reconciled from control artifacts", {
+      pipeline_id: run.pipeline_id,
+      patch: nextPatch,
+    });
+
+    return this.save(run, nextPatch);
+  }
+
   // ─── CREATE ───────────────────────────────────────────────────────────────
 
   async create(req: CreatePipelineRequest): Promise<PipelineRun> {
@@ -629,7 +729,7 @@ export class PipelineService {
 
   private async save(
     run: PipelineRun,
-    patch: Partial<Pick<PipelineRun, "current_step" | "status" | "steps" | "sprint_branch" | "pr_number" | "pr_url" | "implementer_attempts">>
+    patch: Partial<Pick<PipelineRun, "current_step" | "status" | "steps" | "sprint_branch" | "pr_number" | "pr_url" | "implementer_attempts" | "metadata">>
   ): Promise<PipelineRun> {
     const [row] = await db
       .update(pipelineRuns)
@@ -637,6 +737,7 @@ export class PipelineService {
         current_step: patch.current_step ?? run.current_step,
         status: patch.status ?? run.status,
         steps: (patch.steps ?? run.steps) as object[],
+        ...(patch.metadata !== undefined ? { metadata: patch.metadata as Record<string, unknown> } : {}),
         ...(patch.sprint_branch !== undefined ? { sprint_branch: patch.sprint_branch } : {}),
         ...(patch.pr_number !== undefined ? { pr_number: patch.pr_number } : {}),
         ...(patch.pr_url !== undefined ? { pr_url: patch.pr_url } : {}),
@@ -658,20 +759,55 @@ export class PipelineService {
   // ─── STATUS SUMMARY ───────────────────────────────────────────────────────
 
   async getStatusSummary(pipelineId: string): Promise<PipelineStatusSummary> {
-    const run = await this.get(pipelineId);
+    let run = await this.get(pipelineId);
+
+    // 1) Fresh git refresh before computing status.
+    // 2) Reconcile DB drift from control artifacts if needed.
+    const gitRefresh = await this.refreshGitForStatus(run);
+
+    if (gitRefresh.headCommit) {
+      const priorHead = typeof run.metadata?.last_status_git_head === "string"
+        ? run.metadata.last_status_git_head
+        : undefined;
+      if (priorHead !== gitRefresh.headCommit) {
+        run = await this.save(run, {
+          metadata: {
+            ...run.metadata,
+            last_status_git_head: gitRefresh.headCommit,
+            last_status_git_refresh_at: new Date().toISOString(),
+          },
+        });
+      }
+    }
+
+    run = await this.reconcileRunFromControlArtifacts(run);
+
     const summary: PipelineStatusSummary = { ...run };
 
-    // Enrich with repo URL from linked project
-    if (run.project_id) {
+    // Enrich with repo URL from linked project (prefer git-refresh project lookup)
+    if (gitRefresh.project) {
+      summary.repo_url = gitRefresh.project.repo_url;
+    } else if (run.project_id) {
       try {
         const project = await projectService.getById(run.project_id);
-        if (project) {
-          summary.repo_url = project.repo_url;
-        }
+        if (project) summary.repo_url = project.repo_url;
       } catch {
         // non-fatal — project may be unavailable
       }
     }
+
+    const currentTask = await this.readArtifactJson(run, (p) => p.endsWith("current_task.json"));
+    const verification = await this.readArtifactJson(run, (p) => p.endsWith("verification_result.json"));
+    const closeout = await this.readArtifactJson(run, (p) => p.endsWith("sprint_closeout.json"));
+
+    summary.control_state = {
+      refreshed_at: new Date().toISOString(),
+      source: "artifacts",
+      git_head_commit: gitRefresh.headCommit,
+      ...(currentTask ? { current_task: currentTask } : {}),
+      ...(verification ? { verification } : {}),
+      ...(closeout ? { closeout } : {}),
+    };
 
     // Identify current and prior step records (use last occurrence of each role)
     const activeSteps = run.steps.filter((s) => s.status !== "not_applicable");
@@ -765,35 +901,17 @@ export class PipelineService {
 
     const runs: PipelineStatusChoice[] = await Promise.all(
       rows.map(async (row) => {
-        const run = rowToRun(row);
-
-        let repoUrl: string | undefined;
-        if (run.project_id) {
-          try {
-            const project = await projectService.getById(run.project_id);
-            repoUrl = project?.repo_url;
-          } catch {
-            // non-fatal
-          }
-        }
-
-        const currentStepDetail = run.steps
-          .slice()
-          .reverse()
-          .find((s) =>
-            s.role === run.current_step || s.status === "running" || s.status === "failed"
-          );
-
+        const summary = await this.getStatusSummary(row.pipeline_id);
         return {
-          pipeline_id: run.pipeline_id,
-          status: run.status,
-          current_step: run.current_step,
-          current_actor: currentStepDetail?.actor,
-          project_id: run.project_id,
-          repo_url: repoUrl,
-          sprint_branch: run.sprint_branch,
-          updated_at: run.updated_at,
-          wait_state: summarizeWaitState(run),
+          pipeline_id: summary.pipeline_id,
+          status: summary.status,
+          current_step: summary.current_step,
+          current_actor: summary.current_step_detail?.actor,
+          project_id: summary.project_id,
+          repo_url: summary.repo_url,
+          sprint_branch: summary.sprint_branch,
+          updated_at: summary.updated_at,
+          wait_state: summarizeWaitState(summary),
         };
       })
     );

@@ -33,8 +33,8 @@ class ProjectGitService {
    * Ensure the project repo is cloned and up-to-date (within TTL).
    * Serialises concurrent callers for the same project via mutex.
    */
-  async ensureReady(project: Project): Promise<GitSyncContext> {
-    return this.withLock(project.project_id, () => this.doEnsureReady(project));
+  async ensureReady(project: Project, opts?: { forcePull?: boolean }): Promise<GitSyncContext> {
+    return this.withLock(project.project_id, () => this.doEnsureReady(project, opts?.forcePull ?? false));
   }
 
   /**
@@ -110,10 +110,10 @@ class ProjectGitService {
 
   // ─── PRIVATE ─────────────────────────────────────────────────────────────
 
-  private async doEnsureReady(project: Project): Promise<GitSyncContext> {
+  private async doEnsureReady(project: Project, forcePull: boolean): Promise<GitSyncContext> {
     const state = this.getState(project.project_id);
     const now = Date.now();
-    const needsSync = now - state.lastSyncAt > SYNC_TTL_MS;
+    const needsSync = forcePull || (now - state.lastSyncAt > SYNC_TTL_MS);
 
     const repoUrl = this.authedUrl(project.repo_url);
     const clonePath = project.clone_path;
