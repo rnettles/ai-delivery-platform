@@ -766,18 +766,13 @@ export class PipelineService {
     const gitRefresh = await this.refreshGitForStatus(run);
 
     if (gitRefresh.headCommit) {
-      const priorHead = typeof run.metadata?.last_status_git_head === "string"
-        ? run.metadata.last_status_git_head
-        : undefined;
-      if (priorHead !== gitRefresh.headCommit) {
-        run = await this.save(run, {
-          metadata: {
-            ...run.metadata,
-            last_status_git_head: gitRefresh.headCommit,
-            last_status_git_refresh_at: new Date().toISOString(),
-          },
-        });
-      }
+      run = await this.save(run, {
+        metadata: {
+          ...run.metadata,
+          last_status_git_head: gitRefresh.headCommit,
+          last_status_git_refresh_at: new Date().toISOString(),
+        },
+      });
     }
 
     run = await this.reconcileRunFromControlArtifacts(run);
