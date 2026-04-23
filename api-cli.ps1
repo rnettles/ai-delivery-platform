@@ -574,6 +574,47 @@ function Build-CliNotificationMessage {
   return ($parts -join "`n")
 }
 
+function Send-LocalCommandNotification {
+  param(
+    [string]$CommandName,
+    [string]$Detail = ""
+  )
+
+  if (-not (Test-ShouldNotifyCommand -Name $CommandName)) {
+    return
+  }
+
+  $message = Build-CliNotificationMessage `
+    -Status "INFO" `
+    -CommandName $CommandName `
+    -HttpMethod "LOCAL" `
+    -RelativePath "/cli/$CommandName" `
+    -Reason $Detail
+
+  Send-CliNotification `
+    -Status "INFO" `
+    -Message $message `
+    -CommandName $CommandName `
+    -HttpMethod "LOCAL" `
+    -RelativePath "/cli/$CommandName"
+}
+
+function Resolve-NotificationChannelId {
+  if (-not [string]::IsNullOrWhiteSpace($ChannelId)) {
+    return $ChannelId
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($SlackChannel)) {
+    return $SlackChannel
+  }
+
+  if ($null -ne $script:activeState -and -not [string]::IsNullOrWhiteSpace([string]($script:activeState["channel_id"] ?? ""))) {
+    return [string]$script:activeState["channel_id"]
+  }
+
+  return ""
+}
+
 function Send-CliNotification {
   param(
     [string]$Status,
@@ -601,6 +642,11 @@ function Send-CliNotification {
       path = $RelativePath
       cli_source = "api-cli.ps1"
     }
+  }
+
+  $targetChannel = Resolve-NotificationChannelId
+  if (-not [string]::IsNullOrWhiteSpace($targetChannel)) {
+    $payload.channel_id = $targetChannel
   }
 
   try {
@@ -1028,6 +1074,7 @@ switch ($commandName) {
     Save-ActiveState -State $next
     $script:activeState = $next
     Write-Result -Result @{ ok = $true; active = $next }
+    Send-LocalCommandNotification -CommandName $script:commandName -Detail "Active context updated."
     break
   }
 
@@ -1036,6 +1083,7 @@ switch ($commandName) {
       channel_id = [string]($script:activeState["channel_id"] ?? "")
       pipeline_id = [string]($script:activeState["pipeline_id"] ?? "")
     }}
+    Send-LocalCommandNotification -CommandName $script:commandName -Detail "Active context retrieved."
     break
   }
 
@@ -1045,6 +1093,7 @@ switch ($commandName) {
     }
     $script:activeState = @{}
     Write-Result -Result @{ ok = $true; message = "Active defaults cleared." }
+    Send-LocalCommandNotification -CommandName $script:commandName -Detail "Active context cleared."
     break
   }
 
