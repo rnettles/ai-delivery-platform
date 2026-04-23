@@ -12,3 +12,6 @@ platform/backend-api/docker/.cache
 # VS Code workspace settings (contains API keys)
 .vscode/settings.json
 
+# Local CLI active context cache
+.api-cli.state.json
+

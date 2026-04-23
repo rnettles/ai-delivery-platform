@@ -5,7 +5,7 @@ param(
 
   [string]$BaseUrl = "",
   [string]$ApiKey = "",
-  [string]$EnvFile = ".env.local",
+  [string]$EnvFile = "platform/backend-api/.env.local",
 
   # Generic request mode
   [string]$Method = "GET",
@@ -54,6 +54,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+$script:StateFile = Join-Path $PSScriptRoot ".api-cli.state.json"
 
 if ([string]::IsNullOrWhiteSpace($BaseUrl)) {
   if (-not [string]::IsNullOrWhiteSpace($env:ADP_API_BASE_URL)) {
@@ -82,6 +83,9 @@ Global options:
 
 Core commands:
   help
+  active-set
+  active-show
+  active-clear
   health
   scripts
   execute
@@ -120,6 +124,8 @@ Other commands:
 
 Quick examples:
   ./api-cli.ps1 health
+  ./api-cli.ps1 active-set -ChannelId C12345678 -PipelineId pipe-2026-04-22-abc12345
+  ./api-cli.ps1 active-show
   ./api-cli.ps1 execute -ScriptName test.echo -Message "hello-local"
   ./api-cli.ps1 pipeline-create -Description "Add health endpoint" -EntryPoint planner -ExecutionMode next-flow
   ./api-cli.ps1 projects
@@ -130,6 +136,16 @@ Quick examples:
   ./api-cli.ps1 request -Method GET -Path /pipeline/status-summary/current
 
 Details by command:
+  active-set:
+    Set active defaults used by other commands.
+    Optional: -ChannelId, -PipelineId (provide at least one)
+
+  active-show:
+    Display active ChannelId and PipelineId (if set)
+
+  active-clear:
+    Clear active defaults
+
   execute:
     Optional: -TargetType script|role, -ScriptName, -ScriptVersion, -Message, -BodyJson
 
@@ -160,7 +176,7 @@ Details by command:
     Require: -ProjectId, -ChannelId
 
   env-load:
-    Optional: -EnvFile (default .env.local)
+    Optional: -EnvFile (default platform/backend-api/.env.local)
     Note: dot-source to persist in your current shell:
           . ./api-cli.ps1 env-load
 
@@ -183,6 +199,77 @@ function Require-Value {
   if ([string]::IsNullOrWhiteSpace($Value)) {
     throw "Missing required option: -$Name"
   }
+}
+
+function Load-ActiveState {
+  if (-not (Test-Path -Path $script:StateFile -PathType Leaf)) {
+    return @{}
+  }
+
+  try {
+    $raw = Get-Content -Path $script:StateFile -Raw
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+      return @{}
+    }
+    $obj = $raw | ConvertFrom-Json
+    return @{
+      channel_id = [string]($obj.channel_id ?? "")
+      pipeline_id = [string]($obj.pipeline_id ?? "")
+    }
+  } catch {
+    return @{}
+  }
+}
+
+function Save-ActiveState {
+  param([hashtable]$State)
+
+  $dir = Split-Path -Path $script:StateFile -Parent
+  if (-not (Test-Path -Path $dir -PathType Container)) {
+    New-Item -ItemType Directory -Path $dir | Out-Null
+  }
+
+  $payload = @{
+    channel_id = [string]($State["channel_id"] ?? "")
+    pipeline_id = [string]($State["pipeline_id"] ?? "")
+  }
+
+  $payload | ConvertTo-Json -Depth 5 | Set-Content -Path $script:StateFile -Encoding UTF8
+}
+
+function Resolve-ChannelId {
+  param([string]$ExplicitChannelId)
+
+  if (-not [string]::IsNullOrWhiteSpace($ExplicitChannelId)) {
+    return $ExplicitChannelId
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($script:activeState["channel_id"])) {
+    return [string]$script:activeState["channel_id"]
+  }
+
+  return ""
+}
+
+function Resolve-PipelineId {
+  param(
+    [string]$ExplicitPipelineId,
+    [switch]$Required
+  )
+
+  if (-not [string]::IsNullOrWhiteSpace($ExplicitPipelineId)) {
+    return $ExplicitPipelineId
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($script:activeState["pipeline_id"])) {
+    return [string]$script:activeState["pipeline_id"]
+  }
+
+  if ($Required) {
+    throw "Missing required option: -PipelineId (or set one via active-set)"
+  }
+
+  return ""
 }
 
 function Build-Headers {
@@ -346,8 +433,49 @@ if ($Help -or $Command -eq "help") {
 }
 
 $commandName = $Command.Trim().ToLowerInvariant()
+$script:activeState = Load-ActiveState
 
 switch ($commandName) {
+  "active-set" {
+    if ([string]::IsNullOrWhiteSpace($ChannelId) -and [string]::IsNullOrWhiteSpace($PipelineId)) {
+      throw "active-set requires -ChannelId and/or -PipelineId"
+    }
+
+    $next = @{
+      channel_id = [string]($script:activeState["channel_id"] ?? "")
+      pipeline_id = [string]($script:activeState["pipeline_id"] ?? "")
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($ChannelId)) {
+      $next["channel_id"] = $ChannelId
+    }
+    if (-not [string]::IsNullOrWhiteSpace($PipelineId)) {
+      $next["pipeline_id"] = $PipelineId
+    }
+
+    Save-ActiveState -State $next
+    $script:activeState = $next
+    Write-Result -Result @{ ok = $true; active = $next }
+    break
+  }
+
+  "active-show" {
+    Write-Result -Result @{ ok = $true; active = @{
+      channel_id = [string]($script:activeState["channel_id"] ?? "")
+      pipeline_id = [string]($script:activeState["pipeline_id"] ?? "")
+    }}
+    break
+  }
+
+  "active-clear" {
+    if (Test-Path -Path $script:StateFile -PathType Leaf) {
+      Remove-Item -Path $script:StateFile -Force
+    }
+    $script:activeState = @{}
+    Write-Result -Result @{ ok = $true; message = "Active defaults cleared." }
+    break
+  }
+
   "env-load" {
     Load-EnvFile -FilePath $EnvFile
     break
@@ -409,8 +537,9 @@ switch ($commandName) {
       $BodyJson
     } else {
       $metadata = @{ source = "api" }
-      if (-not [string]::IsNullOrWhiteSpace($SlackChannel)) {
-        $metadata.slack_channel = $SlackChannel
+      $effectiveChannelId = Resolve-ChannelId -ExplicitChannelId $SlackChannel
+      if (-not [string]::IsNullOrWhiteSpace($effectiveChannelId)) {
+        $metadata.slack_channel = $effectiveChannelId
       }
 
       $obj = @{
@@ -431,29 +560,39 @@ switch ($commandName) {
   }
 
   "pipeline" {
-    Require-Value -Value $PipelineId -Name "PipelineId"
-    Invoke-Adp -HttpMethod "GET" -RelativePath "/pipeline/$PipelineId"
+    $effectivePipelineId = Resolve-PipelineId -ExplicitPipelineId $PipelineId -Required
+    Invoke-Adp -HttpMethod "GET" -RelativePath "/pipeline/$effectivePipelineId"
     break
   }
 
   "pipeline-summary" {
-    Require-Value -Value $PipelineId -Name "PipelineId"
-    Invoke-Adp -HttpMethod "GET" -RelativePath "/pipeline/$PipelineId/status-summary"
+    $effectivePipelineId = Resolve-PipelineId -ExplicitPipelineId $PipelineId -Required
+    Invoke-Adp -HttpMethod "GET" -RelativePath "/pipeline/$effectivePipelineId/status-summary"
     break
   }
 
   "pipeline-current" {
-    Invoke-Adp -HttpMethod "GET" -RelativePath "/pipeline/status-summary/current"
+    $query = @{}
+    $effectiveChannelId = Resolve-ChannelId -ExplicitChannelId $ChannelId
+    if (-not [string]::IsNullOrWhiteSpace($effectiveChannelId)) {
+      $query.channel_id = $effectiveChannelId
+    }
+    Invoke-Adp -HttpMethod "GET" -RelativePath "/pipeline/status-summary/current" -Query $query
     break
   }
 
   "sprint" {
     # Resolve pipeline: explicit -PipelineId or fall back to the current active pipeline
-    $resolvedPipelineId = $PipelineId
+    $resolvedPipelineId = Resolve-PipelineId -ExplicitPipelineId $PipelineId
     if ([string]::IsNullOrWhiteSpace($resolvedPipelineId)) {
+      $currentQuery = @{}
+      $currentChannelId = Resolve-ChannelId -ExplicitChannelId $ChannelId
+      if (-not [string]::IsNullOrWhiteSpace($currentChannelId)) {
+        $currentQuery.channel_id = $currentChannelId
+      }
       $current = Invoke-RestMethod `
         -Method GET `
-        -Uri (Build-Uri "/pipeline/status-summary/current") `
+        -Uri (Build-Uri "/pipeline/status-summary/current" $currentQuery) `
         -Headers (Build-Headers) `
         -UseBasicParsing
       if ($current.kind -eq "none") {
@@ -543,37 +682,37 @@ switch ($commandName) {
   }
 
   "pipeline-approve" {
-    Require-Value -Value $PipelineId -Name "PipelineId"
-    Invoke-Adp -HttpMethod "POST" -RelativePath "/pipeline/$PipelineId/approve" -BodyObject @{ actor = $Actor }
+    $effectivePipelineId = Resolve-PipelineId -ExplicitPipelineId $PipelineId -Required
+    Invoke-Adp -HttpMethod "POST" -RelativePath "/pipeline/$effectivePipelineId/approve" -BodyObject @{ actor = $Actor }
     break
   }
 
   "pipeline-cancel" {
-    Require-Value -Value $PipelineId -Name "PipelineId"
-    Invoke-Adp -HttpMethod "POST" -RelativePath "/pipeline/$PipelineId/cancel" -BodyObject @{ actor = $Actor }
+    $effectivePipelineId = Resolve-PipelineId -ExplicitPipelineId $PipelineId -Required
+    Invoke-Adp -HttpMethod "POST" -RelativePath "/pipeline/$effectivePipelineId/cancel" -BodyObject @{ actor = $Actor }
     break
   }
 
   "pipeline-takeover" {
-    Require-Value -Value $PipelineId -Name "PipelineId"
-    Invoke-Adp -HttpMethod "POST" -RelativePath "/pipeline/$PipelineId/takeover" -BodyObject @{ actor = $Actor }
+    $effectivePipelineId = Resolve-PipelineId -ExplicitPipelineId $PipelineId -Required
+    Invoke-Adp -HttpMethod "POST" -RelativePath "/pipeline/$effectivePipelineId/takeover" -BodyObject @{ actor = $Actor }
     break
   }
 
   "pipeline-handoff" {
-    Require-Value -Value $PipelineId -Name "PipelineId"
+    $effectivePipelineId = Resolve-PipelineId -ExplicitPipelineId $PipelineId -Required
     $payload = @{ actor = $Actor }
     if (-not [string]::IsNullOrWhiteSpace($ArtifactPath)) {
       $payload.artifact_path = $ArtifactPath
     }
 
-    Invoke-Adp -HttpMethod "POST" -RelativePath "/pipeline/$PipelineId/handoff" -BodyObject $payload
+    Invoke-Adp -HttpMethod "POST" -RelativePath "/pipeline/$effectivePipelineId/handoff" -BodyObject $payload
     break
   }
 
   "pipeline-skip" {
-    Require-Value -Value $PipelineId -Name "PipelineId"
-    Invoke-Adp -HttpMethod "POST" -RelativePath "/pipeline/$PipelineId/skip" -BodyObject @{
+    $effectivePipelineId = Resolve-PipelineId -ExplicitPipelineId $PipelineId -Required
+    Invoke-Adp -HttpMethod "POST" -RelativePath "/pipeline/$effectivePipelineId/skip" -BodyObject @{
       actor = $Actor
       justification = $Justification
     }
@@ -668,8 +807,19 @@ switch ($commandName) {
     Require-Value -Value $Method -Name "Method"
     Require-Value -Value $Path -Name "Path"
 
+    $effectivePath = $Path
+    $effectiveChannelId = Resolve-ChannelId -ExplicitChannelId $ChannelId
+    if (-not [string]::IsNullOrWhiteSpace($effectiveChannelId)) {
+      $isCurrentSummary = $effectivePath -match "^/pipeline/status-summary/current(\?.*)?$"
+      $alreadyHasChannel = $effectivePath -match "[?&]channel_id="
+      if ($isCurrentSummary -and -not $alreadyHasChannel) {
+        $sep = if ($effectivePath.Contains("?")) { "&" } else { "?" }
+        $effectivePath = "$effectivePath${sep}channel_id=$([uri]::EscapeDataString($effectiveChannelId))"
+      }
+    }
+
     $body = if ([string]::IsNullOrWhiteSpace($BodyJson)) { $null } else { $BodyJson }
-    Invoke-Adp -HttpMethod $Method.ToUpperInvariant() -RelativePath $Path -BodyObject $body
+    Invoke-Adp -HttpMethod $Method.ToUpperInvariant() -RelativePath $effectivePath -BodyObject $body
     break
   }
 
