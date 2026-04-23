@@ -3,18 +3,7 @@ import { PipelineNotification } from "../domain/pipeline.types";
 import { logger } from "./logger.service";
 
 function getAgentCaller(step: PipelineNotification["step"]): string {
-  switch (step) {
-    case "planner":
-      return "Planner";
-    case "sprint-controller":
-      return "Sprint-Controller";
-    case "implementer":
-      return "Implementer";
-    case "verifier":
-      return "Verifier";
-    default:
-      return "Complete";
-  }
+  return "System";
 }
 
 export class PipelineNotifierService {

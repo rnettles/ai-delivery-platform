@@ -28,6 +28,7 @@ app.listen(config.port, () => {
       },
       event: "progress",
       message: `Execution service started on port ${config.port}`,
+      agent_caller: "System",
     })
     .catch((err) => {
       logger.error("Startup notification failed", { error: String(err) });

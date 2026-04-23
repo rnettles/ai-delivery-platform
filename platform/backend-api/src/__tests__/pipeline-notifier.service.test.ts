@@ -53,15 +53,15 @@ describe("PipelineNotifierService", () => {
     expect(JSON.parse(options.body as string)).toMatchObject({
       pipeline_id: "pipe-2026-04-19-test1234",
       step: "planner",
-      agent_caller: "Planner",
+      agent_caller: "System",
       gate_required: true,
     });
   });
 
-  it("uses canonical agent caller labels in the payload", async () => {
+  it("uses explicit agent caller labels in the payload", async () => {
     mockFetch.mockResolvedValueOnce({ ok: true });
 
-    await service.notify({ ...baseNotification, step: "sprint-controller" });
+    await service.notify({ ...baseNotification, step: "sprint-controller", agent_caller: "Sprint-Controller" });
 
     const [, options] = mockFetch.mock.calls[0] as [string, RequestInit];
     expect(JSON.parse(options.body as string)).toMatchObject({
@@ -70,10 +70,10 @@ describe("PipelineNotifierService", () => {
     });
   });
 
-  it("includes canonical agent caller labels in success logs", async () => {
+  it("includes explicit agent caller labels in success logs", async () => {
     mockFetch.mockResolvedValueOnce({ ok: true });
 
-    await service.notify({ ...baseNotification, step: "verifier" });
+    await service.notify({ ...baseNotification, step: "verifier", agent_caller: "Verifier" });
 
     expect(logger.info).toHaveBeenCalledWith(
       "Pipeline notification sent",
