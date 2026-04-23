@@ -24,7 +24,7 @@ app.listen(config.port, () => {
         source: "api",
         event: "server_startup",
         environment: config.nodeEnv,
-        ...(config.startupSlackChannel ? { slack_channel: config.startupSlackChannel } : {}),
+        ...(config.cliNotificationChannel ? { slack_channel: config.cliNotificationChannel } : {}),
       },
       event: "progress",
       message: `Execution service started on port ${config.port}`,

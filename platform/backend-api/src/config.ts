@@ -13,7 +13,7 @@ export const config = {
   logLevel: process.env.LOG_LEVEL || "info",
   n8nCallbackUrl: cleanEnvValue(process.env.N8N_CALLBACK_URL),
   n8nWebhookPath: cleanEnvValue(process.env.N8N_WEBHOOK_PATH) || "/webhook/pipeline-notify",
-  startupSlackChannel: cleanEnvValue(process.env.STARTUP_SLACK_CHANNEL),
+  pipelineSlackChannel: cleanEnvValue(process.env.PIPELINE_SLACK_CHANNEL),
   cliNotificationChannel: cleanEnvValue(process.env.CLI_NOTIFICATION_CHANNEL),
   cliVerboseMode: cleanEnvValue(process.env.CLI_VERBOSE_MODE).toLowerCase() === "true",
   azureOpenAiEndpoint: process.env.AZURE_OPENAI_ENDPOINT ?? "",
