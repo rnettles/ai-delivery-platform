@@ -21,6 +21,7 @@ import type {
   StagedTasksResult,
   CreatePipelineRequest,
 } from "../types";
+import type { ExecutionListResponse } from "../types";
 
 function resolveChannelId(explicit?: string): string {
   return explicit ?? loadState().channel_id ?? "";
@@ -115,6 +116,40 @@ export function registerPipelineCommands(program: Command): void {
         method: "GET",
         path: `/pipeline/${pipelineId}`,
         formatterSummary: formatPipeline(res),
+      });
+    });
+
+  // ── pipelines (alias for pipeline-list) ────────────────────────────────────
+  program
+    .command("pipelines")
+    .description("List pipelines for a channel (alias for pipeline-list)")
+    .option("--channel-id <id>", "Channel ID (falls back to active)")
+    .option("--limit <n>", "Max results", "20")
+    .option("--json", "Output raw JSON")
+    .action(async (opts) => {
+      const channelId = resolveChannelId(opts.channelId);
+      if (!channelId) {
+        console.error("Missing required --channel-id (or set via: adp active-set --channel-id <id>)");
+        process.exit(1);
+      }
+
+      const res = await request<ChannelPipelineStatusListResult>({
+        path: "/pipeline/status-summary/by-channel",
+        query: { channel_id: channelId, limit: opts.limit },
+      });
+
+      if (opts.json) {
+        console.log(JSON.stringify(res, null, 2));
+      } else {
+        console.log(formatPipelineList(res));
+      }
+
+      await sendNotification({
+        status: "INFO",
+        command: "pipelines",
+        method: "GET",
+        path: "/pipeline/status-summary/by-channel",
+        formatterSummary: formatPipelineList(res),
       });
     });
 
@@ -315,6 +350,127 @@ export function registerPipelineCommands(program: Command): void {
         formatterSummary: formatStagedTasks(res),
         channelId,
       });
+    });
+
+  // ── sprint ─────────────────────────────────────────────────────────────────
+  program
+    .command("sprint")
+    .description("Show sprint plan and task list for a pipeline")
+    .option("--pipeline-id <id>", "Pipeline ID (falls back to active, then current)")
+    .option("--channel-id <id>", "Channel ID used when resolving current pipeline")
+    .action(async (opts) => {
+      // Resolve pipeline ID: explicit > active state > current for channel
+      let pipelineId = resolvePipelineId(opts.pipelineId);
+
+      if (!pipelineId) {
+        const channelId = resolveChannelId(opts.channelId);
+        const query: Record<string, string> = {};
+        if (channelId) query.channel_id = channelId;
+
+        const current = await request<CurrentPipelineStatusResult>({
+          path: "/pipeline/status-summary/current",
+          query,
+        });
+
+        if (current.kind === "none") {
+          console.log("No active pipeline. Provide --pipeline-id to inspect a specific pipeline.");
+          return;
+        }
+        if (current.kind === "multiple") {
+          console.log("Multiple active pipelines — provide --pipeline-id to select one.");
+          return;
+        }
+        pipelineId = current.run.pipeline_id;
+      }
+
+      // Fetch executions to find sprint-controller + implementer runs
+      const executions = await request<ExecutionListResponse>({
+        path: "/executions",
+        query: { limit: 100 },
+      });
+
+      const sprintExec = executions.records.find(
+        (r) =>
+          ["role.sprint-controller", "sprint-controller"].includes(r.target.name) &&
+          (r.metadata as Record<string, unknown>).pipeline_id === pipelineId &&
+          r.status === "completed"
+      );
+
+      if (!sprintExec) {
+        console.log(`No completed sprint-controller execution found for pipeline: ${pipelineId}`);
+        return;
+      }
+
+      const out = sprintExec.output as Record<string, unknown>;
+      const sprintId = String(out.sprint_id ?? "");
+      const phaseId = String(out.phase_id ?? "");
+      const sprintPlanPath = String(out.sprint_plan_path ?? "");
+
+      // Find completed task IDs from implementer executions
+      const completedTaskIds = new Set(
+        executions.records
+          .filter(
+            (r) =>
+              ["role.implementer", "implementer"].includes(r.target.name) &&
+              (r.metadata as Record<string, unknown>).pipeline_id === pipelineId &&
+              r.status === "completed"
+          )
+          .map((r) => String((r.output as Record<string, unknown>)?.task_id ?? ""))
+          .filter(Boolean)
+      );
+
+      // Try to fetch the full sprint plan artifact for the complete task list
+      let tasks: Array<{ task_id: string; description: string; status: string }> | null = null;
+      if (sprintPlanPath) {
+        try {
+          const planText = await request<string>({
+            path: `/pipeline/${pipelineId}/artifact`,
+            query: { path: sprintPlanPath },
+          });
+
+          // Parse markdown table rows: | TASK-ID | description | status |
+          tasks = String(planText)
+            .split("\n")
+            .filter((line) => /\|\s*[A-Z0-9]+-\d+/.test(line))
+            .map((line) => {
+              const cols = line
+                .split("|")
+                .map((c) => c.trim())
+                .filter(Boolean);
+              return cols.length >= 3
+                ? { task_id: cols[0], description: cols[1], status: cols[2] }
+                : null;
+            })
+            .filter((t): t is NonNullable<typeof t> => t !== null);
+
+          if (tasks.length === 0) tasks = null;
+        } catch {
+          // Artifact not accessible — fall back to first_task
+          tasks = null;
+        }
+      }
+
+      console.log("");
+      console.log(`=== Sprint: ${sprintId}  (Phase: ${phaseId})  Pipeline: ${pipelineId} ===`);
+      console.log("");
+
+      if (tasks) {
+        console.log("Tasks:");
+        for (const t of tasks) {
+          const status = completedTaskIds.has(t.task_id) ? "completed" : t.status;
+          console.log(`  ${t.task_id.padEnd(16)}  ${t.description}  [${status}]`);
+        }
+      } else {
+        console.log("Tasks (first task only — full plan artifact not accessible):");
+        const ft = out.first_task as Record<string, unknown> | undefined;
+        if (ft) {
+          const ftId = String(ft.task_id ?? "");
+          const ftStatus = completedTaskIds.has(ftId) ? "completed" : String(ft.status ?? "unknown");
+          console.log(`  ${ftId.padEnd(16)}  ${String(ft.title ?? "")}  [${ftStatus}]`);
+        }
+      }
+
+      console.log("");
     });
 
   // ── pipeline-approve ───────────────────────────────────────────────────────
