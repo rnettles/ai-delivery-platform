@@ -299,6 +299,15 @@ async function executeCurrentStep(
 ): Promise<void> {
   const { logger } = await import("../services/logger.service");
 
+  const callerLabel =
+    role === "planner"
+      ? "Planner"
+      : role === "sprint-controller"
+      ? "Sprint-Controller"
+      : role === "implementer"
+      ? "Implementer"
+      : "Verifier";
+
   try {
     logger.info("Pipeline step executing", { pipeline_id: pipelineId, role });
 
@@ -325,7 +334,7 @@ async function executeCurrentStep(
         artifact_paths: [],
         metadata: currentRun.metadata,
         event: "progress",
-        message,
+        message: `${callerLabel}: ${message}`,
       }).catch(() => { /* best-effort */ });
     };
 

@@ -63,7 +63,8 @@ export function buildSlackMessage(n: PipelineNotification): { channel: string | 
 
   if (event === "progress" && message) {
     // Lightweight progress update — thread message only, no buttons
-    text = `${label}: ${message}`;
+    const expectedPrefix = `${label}: `;
+    text = message.startsWith(expectedPrefix) ? message : `${label}: ${message}`;
     blocks = [
       {
         type: "context",

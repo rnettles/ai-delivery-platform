@@ -174,6 +174,17 @@ describe("buildSlackMessage (pipeline-notifier Build Slack Message node)", () =>
       });
       expect(result.slack_payload?.thread_ts).toBe("1776378304.943649");
     });
+
+    it("does not duplicate caller prefix when message already includes it", () => {
+      const result = buildSlackMessage({
+        ...base,
+        step: "sprint-controller",
+        status: "running",
+        event: "progress",
+        message: "Sprint-Controller: 🗂️ Breaking phase plan into sprint tasks",
+      });
+      expect(result.slack_payload?.text).toBe("Sprint-Controller: 🗂️ Breaking phase plan into sprint tasks");
+    });
   });
 
   // ── thread_ts ─────────────────────────────────────────────────────────────
