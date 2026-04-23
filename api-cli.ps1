@@ -468,9 +468,20 @@ function Test-ShouldNotifyCommand {
     return $true
   }
 
-  $stateChanging = @(
+  $notifiableCommands = @(
+    "health",
+    "scripts",
     "execute",
+    "executions",
+    "execution",
     "replay",
+    "pipeline",
+    "pipeline-list",
+    "staged-phases",
+    "staged-sprints",
+    "staged-tasks",
+    "pipeline-summary",
+    "pipeline-current",
     "pipeline-create",
     "pipeline-approve",
     "pipeline-cancel",
@@ -478,15 +489,21 @@ function Test-ShouldNotifyCommand {
     "pipeline-retry",
     "pipeline-handoff",
     "pipeline-skip",
+    "projects",
+    "project",
     "project-create",
     "project-assign-channel",
     "git-sync",
+    "git-status",
     "coord-create",
+    "coord-get",
     "coord-patch",
-    "coord-archive"
+    "coord-query",
+    "coord-archive",
+    "request"
   )
 
-  return $stateChanging -contains $Name
+  return $notifiableCommands -contains $Name
 }
 
 function Get-ResponsePrimaryId {
@@ -505,6 +522,52 @@ function Get-ResponsePrimaryId {
   }
 
   return ""
+}
+
+function Normalize-NotificationText {
+  param(
+    [string]$Text,
+    [int]$MaxLength = 220
+  )
+
+  if ([string]::IsNullOrWhiteSpace($Text)) {
+    return ""
+  }
+
+  $flat = ($Text -replace "\r?\n", " " -replace "\s+", " ").Trim()
+  if ($flat.Length -le $MaxLength) {
+    return $flat
+  }
+
+  return ($flat.Substring(0, $MaxLength - 1) + "…")
+}
+
+function Build-CliNotificationMessage {
+  param(
+    [string]$Status,
+    [string]$CommandName,
+    [string]$HttpMethod,
+    [string]$RelativePath,
+    [string]$ResponseId = "",
+    [string]$Reason = ""
+  )
+
+  $normalizedStatus = ([string]$Status).Trim().ToUpperInvariant()
+  $verb = if ($normalizedStatus -eq "ERROR") { "failed" } else { "succeeded" }
+  $summary = "CLI command '{0}' {1}." -f $CommandName, $verb
+  $endpoint = "Endpoint: {0} {1}" -f $HttpMethod, $RelativePath
+
+  $parts = @($summary, $endpoint)
+
+  if (-not [string]::IsNullOrWhiteSpace($ResponseId)) {
+    $parts += ("Reference: {0}" -f $ResponseId)
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($Reason)) {
+    $parts += ("Reason: {0}" -f (Normalize-NotificationText -Text $Reason))
+  }
+
+  return ($parts -join "`n")
 }
 
 function Send-CliNotification {
@@ -575,10 +638,15 @@ function Invoke-Adp {
 
     if (Test-ShouldNotifyCommand -Name $script:commandName) {
       $id = Get-ResponsePrimaryId -Response $response
-      $suffix = if ([string]::IsNullOrWhiteSpace($id)) { "" } else { " (id: $id)" }
+      $message = Build-CliNotificationMessage `
+        -Status "INFO" `
+        -CommandName $script:commandName `
+        -HttpMethod $HttpMethod `
+        -RelativePath $RelativePath `
+        -ResponseId $id
       Send-CliNotification `
         -Status "INFO" `
-        -Message ("$($script:commandName) succeeded: $HttpMethod $RelativePath$suffix") `
+        -Message $message `
         -CommandName $script:commandName `
         -HttpMethod $HttpMethod `
         -RelativePath $RelativePath
@@ -598,9 +666,15 @@ function Invoke-Adp {
 
     if (Test-ShouldNotifyCommand -Name $script:commandName) {
       $detailText = if (-not [string]::IsNullOrWhiteSpace($details)) { $details } else { $errorMessage }
+      $message = Build-CliNotificationMessage `
+        -Status "ERROR" `
+        -CommandName $script:commandName `
+        -HttpMethod $HttpMethod `
+        -RelativePath $RelativePath `
+        -Reason $detailText
       Send-CliNotification `
         -Status "ERROR" `
-        -Message ("$($script:commandName) failed: $HttpMethod $RelativePath :: $detailText") `
+        -Message $message `
         -CommandName $script:commandName `
         -HttpMethod $HttpMethod `
         -RelativePath $RelativePath
