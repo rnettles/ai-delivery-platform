@@ -5,6 +5,7 @@ import { pipelineService } from "./services/pipeline.service";
 import { pipelineNotifierService } from "./services/pipeline-notifier.service";
 import { prMergePollerService } from "./services/pr-merge-poller.service";
 import { projectService } from "./services/project.service";
+import { artifactService } from "./services/artifact.service";
 
 app.listen(config.port, () => {
   logger.info("Execution service started", {
@@ -46,4 +47,17 @@ app.listen(config.port, () => {
 
   // Poll PR merge state every 60s until webhook integration is wired.
   prMergePollerService.start();
+
+  // Sweep stale artifact directories every 6 hours.
+  // Removes dirs for failed/cancelled pipelines older than ARTIFACT_RETENTION_DAYS, and orphans.
+  const GC_INTERVAL_MS = 6 * 60 * 60 * 1000;
+  const runArtifactGc = () => {
+    artifactService
+      .cleanupStale((pipelineId) => pipelineService.isTerminalFailureOrOrphan(pipelineId))
+      .catch((err) => {
+        logger.error("Artifact GC sweep failed", { error: String(err) });
+      });
+  };
+  runArtifactGc(); // run once at startup to clear any backlog
+  setInterval(runArtifactGc, GC_INTERVAL_MS);
 });

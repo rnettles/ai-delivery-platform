@@ -6,11 +6,13 @@ const mocks = vi.hoisted(() => {
   const selectWhere = vi.fn();
   const insertReturning = vi.fn();
   const updateReturning = vi.fn();
+  const artifactCleanup = vi.fn().mockResolvedValue(undefined);
 
   return {
     selectWhere,
     insertReturning,
     updateReturning,
+    artifactCleanup,
     db: {
       select: vi.fn(() => ({ from: vi.fn(() => ({ where: selectWhere })) })),
       insert: vi.fn(() => ({ values: vi.fn(() => ({ returning: insertReturning })) })),
@@ -24,6 +26,9 @@ const mocks = vi.hoisted(() => {
 vi.mock("../db/client", () => ({ db: mocks.db }));
 vi.mock("../services/logger.service", () => ({
   logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },
+}));
+vi.mock("../services/artifact.service", () => ({
+  artifactService: { cleanup: mocks.artifactCleanup },
 }));
 
 import { PipelineService } from "../services/pipeline.service";
@@ -486,6 +491,75 @@ describe("PipelineService", () => {
       await expect(
         service.completeStep("pipe-2026-04-19-test1234", "planner", "exec-001", [], false)
       ).rejects.toMatchObject({ statusCode: 409, code: "STEP_NOT_RUNNING" });
+    });
+  });
+
+  // ── artifact cleanup triggers ──────────────────────────────────────────────
+
+  describe("artifact cleanup triggering", () => {
+    it("triggers artifact cleanup when pipeline reaches status=complete", async () => {
+      const row = makeRow({ metadata: { source: "slack", execution_mode: "next" } });
+      mocks.selectWhere.mockResolvedValueOnce([row]);
+      const savedRow = makeRow({ current_step: "complete", status: "complete" });
+      mocks.updateReturning.mockResolvedValueOnce([savedRow]);
+
+      await service.completeStep(
+        "pipe-2026-04-19-test1234",
+        "planner",
+        "exec-cleanup-1",
+        [],
+        false
+      );
+
+      // Allow the fire-and-forget cleanup promise to settle
+      await new Promise((r) => setTimeout(r, 0));
+      expect(mocks.artifactCleanup).toHaveBeenCalledWith("pipe-2026-04-19-test1234");
+    });
+
+    it("does NOT trigger artifact cleanup when pipeline transitions to status=failed", async () => {
+      mocks.selectWhere.mockResolvedValueOnce([makeRow()]);
+      const savedRow = makeRow({ status: "failed" });
+      mocks.updateReturning.mockResolvedValueOnce([savedRow]);
+
+      await service.completeStep(
+        "pipe-2026-04-19-test1234",
+        "planner",
+        "exec-cleanup-2",
+        [],
+        true // failed=true
+      );
+
+      await new Promise((r) => setTimeout(r, 0));
+      expect(mocks.artifactCleanup).not.toHaveBeenCalled();
+    });
+
+    it("does NOT trigger artifact cleanup on verifier FAIL (implementer retry)", async () => {
+      const verifierRow = makeRow({
+        current_step: "verifier",
+        status: "running",
+        steps: [
+          { role: "planner", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T00:00:00.000Z", completed_at: "2026-04-19T01:00:00.000Z" },
+          { role: "sprint-controller", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T01:00:00.000Z", completed_at: "2026-04-19T02:00:00.000Z" },
+          { role: "implementer", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T02:00:00.000Z", completed_at: "2026-04-19T03:00:00.000Z" },
+          { role: "verifier", status: "running", gate_outcome: null, artifact_paths: [], actor: "system", started_at: "2026-04-19T03:00:00.000Z" },
+        ],
+      });
+
+      mocks.selectWhere.mockResolvedValueOnce([verifierRow]);
+      const savedRow = makeRow({ current_step: "implementer", status: "running" });
+      mocks.updateReturning.mockResolvedValueOnce([savedRow]);
+
+      await service.completeStep(
+        "pipe-2026-04-19-test1234",
+        "verifier",
+        "exec-cleanup-3",
+        [],
+        false,
+        false // verificationPassed=false → retry
+      );
+
+      await new Promise((r) => setTimeout(r, 0));
+      expect(mocks.artifactCleanup).not.toHaveBeenCalled();
     });
   });
 

@@ -23,6 +23,8 @@ import { projectGitService } from "./project-git.service";
 import { Project, projectService } from "./project.service";
 import { executionRecordModel } from "../domain/execution.model";
 
+const TERMINAL_SUCCESS_STATUSES: PipelineStatus[] = ["complete", "awaiting_pr_review"];
+
 export interface PipelineStatusSummary extends PipelineRun {
   repo_url?: string;
   control_state?: {
@@ -723,7 +725,7 @@ export class PipelineService {
         pipeline_id: run.pipeline_id,
         role,
       });
-      return this.save(run, { current_step: "complete", status: "complete", steps });
+      return this.saveAndMaybeCleanup(run, { current_step: "complete", status: "complete", steps });
     }
 
     // Verifier FAIL: route back to Implementer with retry context (ADR-030)
@@ -754,7 +756,7 @@ export class PipelineService {
         entry_point: run.entry_point,
         execution_mode: executionMode,
       });
-      return this.save(run, { current_step: "complete", status: "complete", steps });
+      return this.saveAndMaybeCleanup(run, { current_step: "complete", status: "complete", steps });
     }
 
     // ── Execution mode: "full-sprint" ──────────────────────────────────────────
@@ -781,13 +783,13 @@ export class PipelineService {
         logger.info("Sprint Controller close-out: transitioning to awaiting_pr_review", {
           pipeline_id: run.pipeline_id,
         });
-        return this.save(run, { current_step: "complete", status: "awaiting_pr_review", steps });
+        return this.saveAndMaybeCleanup(run, { current_step: "complete", status: "awaiting_pr_review", steps });
       }
     }
 
     // Auto-advance
     if (nextStep === "complete") {
-      return this.save(run, { current_step: "complete", status: "complete", steps });
+      return this.saveAndMaybeCleanup(run, { current_step: "complete", status: "complete", steps });
     }
 
     steps.push(this.newRunningStep(nextStep, now));
@@ -809,7 +811,7 @@ export class PipelineService {
     const next = nextRoleAfter(run.current_step as PipelineRole);
 
     if (next === "complete") {
-      return this.save(run, { current_step: "complete", status: "complete", steps });
+      return this.saveAndMaybeCleanup(run, { current_step: "complete", status: "complete", steps });
     }
 
     steps.push(this.newRunningStep(next, now));
@@ -888,7 +890,7 @@ export class PipelineService {
     const next = nextRoleAfter(run.current_step as PipelineRole);
 
     if (next === "complete") {
-      return this.save(run, { current_step: "complete", status: "complete", steps });
+      return this.saveAndMaybeCleanup(run, { current_step: "complete", status: "complete", steps });
     }
 
     steps.push(this.newRunningStep(next, now));
@@ -926,7 +928,7 @@ export class PipelineService {
     const run = await this.get(pipelineId);
     this.assertStatus(run, ["awaiting_pr_review"]);
     logger.info("Pipeline PR merged — marking complete", { pipeline_id: pipelineId, pr_number: run.pr_number });
-    return this.save(run, { status: "complete" });
+    return this.saveAndMaybeCleanup(run, { status: "complete" });
   }
 
   async listAwaitingPrReviewRuns(): Promise<AwaitingPrReviewRun[]> {
@@ -948,6 +950,23 @@ export class PipelineService {
 
   // ─── SKIP ─────────────────────────────────────────────────────────────────
 
+  /**
+   * Used by the artifact GC sweep to determine whether a pipeline's artifact directory
+   * is safe to delete.  Returns true when the pipeline is in a terminal-failure state
+   * (failed / cancelled) OR when no DB row exists at all (orphaned directory).
+   */
+  async isTerminalFailureOrOrphan(pipelineId: string): Promise<boolean> {
+    try {
+      const run = await this.get(pipelineId);
+      return run.status === "failed" || run.status === "cancelled";
+    } catch (err) {
+      if (err instanceof HttpError && err.statusCode === 404) {
+        return true; // No matching row — orphaned artifact dir
+      }
+      throw err;
+    }
+  }
+
   async skip(pipelineId: string, req: PipelineSkipRequest): Promise<PipelineRun> {
     const run = await this.get(pipelineId);
     this.assertStatus(run, ["running", "awaiting_approval", "paused_takeover"]);
@@ -968,7 +987,7 @@ export class PipelineService {
     const next = nextRoleAfter(run.current_step as PipelineRole);
 
     if (next === "complete") {
-      return this.save(run, { current_step: "complete", status: "complete", steps });
+      return this.saveAndMaybeCleanup(run, { current_step: "complete", status: "complete", steps });
     }
 
     steps.push(this.newRunningStep(next, now));
@@ -1015,6 +1034,27 @@ export class PipelineService {
         `Action not allowed in status '${run.status}'. Allowed: ${allowed.join(", ")}`
       );
     }
+  }
+
+  /**
+   * Save + trigger artifact cleanup when the pipeline reaches a terminal-success state.
+   * Cleanup failure is non-fatal — logged and swallowed so it never rolls back the status update.
+   */
+  private async saveAndMaybeCleanup(
+    run: PipelineRun,
+    patch: Parameters<PipelineService["save"]>[1]
+  ): Promise<PipelineRun> {
+    const updated = await this.save(run, patch);
+    const nextStatus = patch.status ?? run.status;
+    if (TERMINAL_SUCCESS_STATUSES.includes(nextStatus as PipelineStatus)) {
+      artifactService.cleanup(run.pipeline_id).catch((err) => {
+        logger.error("Artifact cleanup failed — artifacts may remain on disk", {
+          pipeline_id: run.pipeline_id,
+          error: String(err),
+        });
+      });
+    }
+    return updated;
   }
 
   private async save(

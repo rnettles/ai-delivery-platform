@@ -48,6 +48,58 @@ export class ArtifactService {
     }
     return null;
   }
+
+  /**
+   * Removes the artifact directory for a completed pipeline.
+   * Safe to call multiple times — ENOENT is silently ignored.
+   * Must only be called after a successful git push has been confirmed.
+   */
+  async cleanup(pipelineId: string): Promise<void> {
+    const dir = path.join(this.basePath, pipelineId);
+    logger.info("Artifact cleanup: removing directory", { pipeline_id: pipelineId, path: dir });
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+
+  /**
+   * Scans all pipeline artifact directories and removes those that are stale.
+   * A directory is stale if it is older than ARTIFACT_RETENTION_DAYS AND belongs to a
+   * pipeline in a terminal-failure state (failed/cancelled), or has no matching DB row.
+   *
+   * Safe to call concurrently across multiple instances — fs.rm({ force: true }) is idempotent.
+   */
+  async cleanupStale(
+    isTerminalFailure: (pipelineId: string) => Promise<boolean>
+  ): Promise<void> {
+    const retentionMs = config.artifactRetentionDays * 24 * 60 * 60 * 1000;
+    const cutoff = Date.now() - retentionMs;
+
+    let entries: import("fs").Dirent[];
+    try {
+      entries = await fs.readdir(this.basePath, { withFileTypes: true });
+    } catch {
+      // Base path doesn't exist yet — nothing to clean up
+      return;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const pipelineId = entry.name;
+      const dir = path.join(this.basePath, pipelineId);
+
+      try {
+        const stat = await fs.stat(dir);
+        if (stat.mtimeMs > cutoff) continue;
+
+        const stale = await isTerminalFailure(pipelineId);
+        if (!stale) continue;
+
+        logger.info("Artifact GC: removing stale directory", { pipeline_id: pipelineId, path: dir });
+        await fs.rm(dir, { recursive: true, force: true });
+      } catch (err) {
+        logger.error("Artifact GC: error processing directory", { pipeline_id: pipelineId, error: String(err) });
+      }
+    }
+  }
 }
 
 export const artifactService = new ArtifactService();
