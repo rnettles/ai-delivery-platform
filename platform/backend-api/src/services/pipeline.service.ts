@@ -73,6 +73,60 @@ export interface ChannelPipelineStatusListResult {
   runs: PipelineStatusChoice[];
 }
 
+export interface StagedPhaseRecord {
+  phase_id: string;
+  name?: string;
+  status: string;
+  artifact_path: string;
+  sourced_from: PipelineRole;
+  completed_at?: string;
+}
+
+export interface StagedSprintRecord {
+  sprint_id: string;
+  phase_id?: string;
+  name?: string;
+  status: string;
+  sprint_plan_path: string;
+  sourced_from: PipelineRole;
+  completed_at?: string;
+}
+
+export interface StagedTaskRecord {
+  sprint_id: string;
+  phase_id?: string;
+  task_id: string;
+  label: string;
+  status: "staged";
+  sprint_plan_path: string;
+  sourced_from: PipelineRole;
+  completed_at?: string;
+}
+
+export interface StagedPhasesResult {
+  pipeline_id: string;
+  refreshed_at: string;
+  source: "artifacts";
+  git_head_commit?: string;
+  phases: StagedPhaseRecord[];
+}
+
+export interface StagedSprintsResult {
+  pipeline_id: string;
+  refreshed_at: string;
+  source: "artifacts";
+  git_head_commit?: string;
+  sprints: StagedSprintRecord[];
+}
+
+export interface StagedTasksResult {
+  pipeline_id: string;
+  refreshed_at: string;
+  source: "artifacts";
+  git_head_commit?: string;
+  tasks: StagedTaskRecord[];
+}
+
 // Ordered pipeline role sequence
 const ROLE_SEQUENCE: PipelineRole[] = [
   "planner",
@@ -205,6 +259,123 @@ function buildExecutionSignals(run: PipelineRun, summary: PipelineStatusSummary)
 }
 
 export class PipelineService {
+  private normalizeLimit(limit = 20): number {
+    return Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), 100) : 20;
+  }
+
+  private markdownField(markdown: string, fieldName: string): string | undefined {
+    const escaped = fieldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const match = new RegExp(`^\\*\\*${escaped}:\\*\\*\\s*(.+?)\\s*$`, "im").exec(markdown);
+    return match?.[1]?.trim() || undefined;
+  }
+
+  private parsePhasePlan(markdown: string, artifactPath: string): { phase_id: string; name?: string; status: string } {
+    const titleMatch = /^#\s*Phase\s*Plan:\s*(.+?)\s*$/im.exec(markdown);
+    const pathMatch = /phase_plan_([^/.]+)\.md$/i.exec(artifactPath);
+
+    return {
+      phase_id: titleMatch?.[1]?.trim() || pathMatch?.[1] || "",
+      name: this.markdownField(markdown, "Name"),
+      status: this.markdownField(markdown, "Status") || "staged",
+    };
+  }
+
+  private parseSprintPlan(markdown: string, artifactPath: string): { sprint_id: string; phase_id?: string; name?: string; status: string } {
+    const titleMatch = /^#\s*Sprint\s*Plan:\s*(.+?)\s*$/im.exec(markdown);
+    const pathMatch = /sprint_plan_([^/.]+)\.md$/i.exec(artifactPath);
+
+    return {
+      sprint_id: titleMatch?.[1]?.trim() || pathMatch?.[1] || "",
+      phase_id: this.markdownField(markdown, "Phase"),
+      name: this.markdownField(markdown, "Name"),
+      status: this.markdownField(markdown, "Status") || "staged",
+    };
+  }
+
+  private parseSprintTasks(markdown: string): Array<{ task_id: string; label: string; status: "staged" }> {
+    const lines = markdown.split(/\r?\n/);
+    const tasks: Array<{ task_id: string; label: string; status: "staged" }> = [];
+    let inTasks = false;
+
+    for (const line of lines) {
+      if (!inTasks && /^##\s+Tasks\b/i.test(line)) {
+        inTasks = true;
+        continue;
+      }
+
+      if (inTasks && /^##\s+/i.test(line)) {
+        break;
+      }
+
+      if (!inTasks) {
+        continue;
+      }
+
+      const match = /^\s*-\s+(.+?)\s*$/.exec(line);
+      if (!match) {
+        continue;
+      }
+
+      const label = match[1].trim();
+      const taskIdMatch = /[A-Z]{2,}-\d+/.exec(label);
+      tasks.push({
+        task_id: taskIdMatch?.[0] || label,
+        label,
+        status: "staged",
+      });
+    }
+
+    return tasks;
+  }
+
+  private collectArtifactEntries(
+    run: PipelineRun,
+    matcher: (path: string) => boolean
+  ): Array<{ artifact_path: string; sourced_from: PipelineRole; completed_at?: string }> {
+    const entries: Array<{ artifact_path: string; sourced_from: PipelineRole; completed_at?: string }> = [];
+    const seen = new Set<string>();
+
+    for (const step of [...run.steps].reverse()) {
+      for (const artifactPath of step.artifact_paths ?? []) {
+        if (!matcher(artifactPath) || seen.has(artifactPath)) {
+          continue;
+        }
+
+        seen.add(artifactPath);
+        entries.push({
+          artifact_path: artifactPath,
+          sourced_from: step.role,
+          completed_at: step.completed_at,
+        });
+      }
+    }
+
+    return entries;
+  }
+
+  private async getArtifactDrivenRun(pipelineId: string): Promise<{ run: PipelineRun; git_head_commit?: string; refreshed_at: string }> {
+    let run = await this.get(pipelineId);
+    const gitRefresh = await this.refreshGitForStatus(run);
+
+    if (gitRefresh.headCommit) {
+      run = await this.save(run, {
+        metadata: {
+          ...run.metadata,
+          last_status_git_head: gitRefresh.headCommit,
+          last_status_git_refresh_at: new Date().toISOString(),
+        },
+      });
+    }
+
+    run = await this.reconcileRunFromControlArtifacts(run);
+
+    return {
+      run,
+      git_head_commit: gitRefresh.headCommit,
+      refreshed_at: new Date().toISOString(),
+    };
+  }
+
   private async refreshGitForStatus(run: PipelineRun): Promise<{ project: Project | null; headCommit?: string }> {
     if (!run.project_id) {
       return { project: null };
@@ -947,6 +1118,128 @@ export class PipelineService {
     );
 
     return { channel_id: channelId, runs };
+  }
+
+  async listStagedPhases(pipelineId: string, limit = 20): Promise<StagedPhasesResult> {
+    const { run, git_head_commit, refreshed_at } = await this.getArtifactDrivenRun(pipelineId);
+    const safeLimit = this.normalizeLimit(limit);
+
+    const phaseArtifacts = this.collectArtifactEntries(run, (p) => /phase_plan_.*\.md$/i.test(p));
+    const phases: StagedPhaseRecord[] = [];
+
+    for (const entry of phaseArtifacts) {
+      if (phases.length >= safeLimit) {
+        break;
+      }
+
+      try {
+        const markdown = await artifactService.read(entry.artifact_path);
+        const parsed = this.parsePhasePlan(markdown, entry.artifact_path);
+        phases.push({
+          phase_id: parsed.phase_id,
+          name: parsed.name,
+          status: parsed.status,
+          artifact_path: entry.artifact_path,
+          sourced_from: entry.sourced_from,
+          completed_at: entry.completed_at,
+        });
+      } catch {
+        // Skip unreadable artifacts and continue with remaining entries.
+      }
+    }
+
+    return {
+      pipeline_id: run.pipeline_id,
+      refreshed_at,
+      source: "artifacts",
+      git_head_commit,
+      phases,
+    };
+  }
+
+  async listStagedSprints(pipelineId: string, limit = 20): Promise<StagedSprintsResult> {
+    const { run, git_head_commit, refreshed_at } = await this.getArtifactDrivenRun(pipelineId);
+    const safeLimit = this.normalizeLimit(limit);
+
+    const sprintArtifacts = this.collectArtifactEntries(run, (p) => /sprint_plan_.*\.md$/i.test(p));
+    const sprints: StagedSprintRecord[] = [];
+
+    for (const entry of sprintArtifacts) {
+      if (sprints.length >= safeLimit) {
+        break;
+      }
+
+      try {
+        const markdown = await artifactService.read(entry.artifact_path);
+        const parsed = this.parseSprintPlan(markdown, entry.artifact_path);
+        sprints.push({
+          sprint_id: parsed.sprint_id,
+          phase_id: parsed.phase_id,
+          name: parsed.name,
+          status: parsed.status,
+          sprint_plan_path: entry.artifact_path,
+          sourced_from: entry.sourced_from,
+          completed_at: entry.completed_at,
+        });
+      } catch {
+        // Skip unreadable artifacts and continue with remaining entries.
+      }
+    }
+
+    return {
+      pipeline_id: run.pipeline_id,
+      refreshed_at,
+      source: "artifacts",
+      git_head_commit,
+      sprints,
+    };
+  }
+
+  async listStagedTasks(pipelineId: string, limit = 20): Promise<StagedTasksResult> {
+    const { run, git_head_commit, refreshed_at } = await this.getArtifactDrivenRun(pipelineId);
+    const safeLimit = this.normalizeLimit(limit);
+
+    const sprintArtifacts = this.collectArtifactEntries(run, (p) => /sprint_plan_.*\.md$/i.test(p));
+    const tasks: StagedTaskRecord[] = [];
+
+    for (const entry of sprintArtifacts) {
+      if (tasks.length >= safeLimit) {
+        break;
+      }
+
+      try {
+        const markdown = await artifactService.read(entry.artifact_path);
+        const parsedSprint = this.parseSprintPlan(markdown, entry.artifact_path);
+        const parsedTasks = this.parseSprintTasks(markdown);
+
+        for (const task of parsedTasks) {
+          if (tasks.length >= safeLimit) {
+            break;
+          }
+
+          tasks.push({
+            sprint_id: parsedSprint.sprint_id,
+            phase_id: parsedSprint.phase_id,
+            task_id: task.task_id,
+            label: task.label,
+            status: "staged",
+            sprint_plan_path: entry.artifact_path,
+            sourced_from: entry.sourced_from,
+            completed_at: entry.completed_at,
+          });
+        }
+      } catch {
+        // Skip unreadable artifacts and continue with remaining entries.
+      }
+    }
+
+    return {
+      pipeline_id: run.pipeline_id,
+      refreshed_at,
+      source: "artifacts",
+      git_head_commit,
+      tasks,
+    };
   }
 
   /**

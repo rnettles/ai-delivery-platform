@@ -7,6 +7,9 @@ import {
   getCurrentPipelineStatusSummary,
   getPipeline,
   getPipelineArtifact,
+  getPipelineStagedPhases,
+  getPipelineStagedSprints,
+  getPipelineStagedTasks,
   getPipelineStatusSummary,
   handoffPipeline,
   skipPipeline,
@@ -18,6 +21,9 @@ const router = Router();
 router.post("/pipeline", createPipeline);
 router.get("/pipeline/:pipelineId", getPipeline);
 router.get("/pipeline/:pipelineId/artifact", getPipelineArtifact);
+router.get("/pipeline/:pipelineId/staged/phases", getPipelineStagedPhases);
+router.get("/pipeline/:pipelineId/staged/sprints", getPipelineStagedSprints);
+router.get("/pipeline/:pipelineId/staged/tasks", getPipelineStagedTasks);
 router.get("/pipeline/:pipelineId/status-summary", getPipelineStatusSummary);
 router.get("/pipeline/status-summary/current", getCurrentPipelineStatusSummary);
 router.get("/pipeline/status-summary/by-channel", getChannelPipelineStatusList);

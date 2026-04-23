@@ -166,15 +166,15 @@ Details by command:
     Optional: -ChannelId (falls back to active channel), -Limit
 
   staged-phases:
-    Lists staged phases from planner outputs for a pipeline.
+    Refreshes git, then lists phases by reading phase_plan artifacts for a pipeline.
     Optional: -PipelineId (falls back to active pipeline or current-by-channel), -ChannelId, -Limit
 
   staged-sprints:
-    Lists staged sprints from sprint-controller setup outputs for a pipeline.
+    Refreshes git, then lists sprints by reading sprint_plan artifacts for a pipeline.
     Optional: -PipelineId (falls back to active pipeline or current-by-channel), -ChannelId, -Limit
 
   staged-tasks:
-    Lists staged tasks by reading staged sprint plan artifact(s) for a pipeline.
+    Refreshes git, then lists staged tasks from sprint_plan artifact contents.
     Optional: -PipelineId (falls back to active pipeline or current-by-channel), -ChannelId, -Limit
 
   pipeline/pipeline-summary/pipeline-approve/pipeline-cancel/pipeline-takeover/pipeline-handoff/pipeline-skip:
@@ -625,6 +625,164 @@ function Parse-SprintTasksFromMarkdown {
   return @($tasks)
 }
 
+function Get-MarkdownFieldValue {
+  param(
+    [string]$Markdown,
+    [string]$FieldName
+  )
+
+  if ([string]::IsNullOrWhiteSpace($Markdown) -or [string]::IsNullOrWhiteSpace($FieldName)) {
+    return ""
+  }
+
+  $escaped = [regex]::Escape($FieldName)
+  $match = [regex]::Match($Markdown, ("(?im)^\*\*{0}:\*\*\s*(.+?)\s*$" -f $escaped))
+  if ($match.Success) {
+    return $match.Groups[1].Value.Trim()
+  }
+
+  return ""
+}
+
+function Parse-PhasePlanFromMarkdown {
+  param(
+    [string]$Markdown,
+    [string]$ArtifactPath
+  )
+
+  $phaseId = ""
+  $name = Get-MarkdownFieldValue -Markdown $Markdown -FieldName "Name"
+  $status = Get-MarkdownFieldValue -Markdown $Markdown -FieldName "Status"
+
+  $title = [regex]::Match($Markdown, "(?im)^#\s*Phase\s*Plan:\s*(.+?)\s*$")
+  if ($title.Success) {
+    $phaseId = $title.Groups[1].Value.Trim()
+  }
+
+  if ([string]::IsNullOrWhiteSpace($phaseId)) {
+    $pathMatch = [regex]::Match($ArtifactPath, "phase_plan_([^/]+)\.md$", [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    if ($pathMatch.Success) {
+      $phaseId = $pathMatch.Groups[1].Value
+    }
+  }
+
+  if ([string]::IsNullOrWhiteSpace($status)) {
+    $status = "staged"
+  }
+
+  return [PSCustomObject]@{
+    phase_id = $phaseId
+    name = $name
+    status = $status
+  }
+}
+
+function Parse-SprintPlanFromMarkdown {
+  param(
+    [string]$Markdown,
+    [string]$ArtifactPath
+  )
+
+  $sprintId = ""
+  $phaseId = Get-MarkdownFieldValue -Markdown $Markdown -FieldName "Phase"
+  $name = Get-MarkdownFieldValue -Markdown $Markdown -FieldName "Name"
+  $status = Get-MarkdownFieldValue -Markdown $Markdown -FieldName "Status"
+
+  $title = [regex]::Match($Markdown, "(?im)^#\s*Sprint\s*Plan:\s*(.+?)\s*$")
+  if ($title.Success) {
+    $sprintId = $title.Groups[1].Value.Trim()
+  }
+
+  if ([string]::IsNullOrWhiteSpace($sprintId)) {
+    $pathMatch = [regex]::Match($ArtifactPath, "sprint_plan_([^/]+)\.md$", [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    if ($pathMatch.Success) {
+      $sprintId = $pathMatch.Groups[1].Value
+    }
+  }
+
+  if ([string]::IsNullOrWhiteSpace($status)) {
+    $status = "staged"
+  }
+
+  return [PSCustomObject]@{
+    sprint_id = $sprintId
+    phase_id = $phaseId
+    name = $name
+    status = $status
+  }
+}
+
+function Refresh-GitBeforeStagedEvaluation {
+  Show-ActiveContextIfUsed
+  Write-Host "Refreshing git repositories before staged artifact evaluation..." -ForegroundColor DarkCyan
+  Invoke-RestMethod `
+    -Method POST `
+    -Uri (Build-Uri "/git/sync" $null) `
+    -Headers (Build-Headers) `
+    -ContentType "application/json" `
+    -Body "{}" `
+    -UseBasicParsing | Out-Null
+}
+
+function Get-PipelineArtifactPaths {
+  param(
+    [object]$Run,
+    [string]$Pattern
+  )
+
+  $results = New-Object System.Collections.Generic.List[object]
+  $seen = New-Object System.Collections.Generic.HashSet[string]
+  $steps = @($Run.steps)
+
+  for ($i = $steps.Count - 1; $i -ge 0; $i--) {
+    $step = $steps[$i]
+    $paths = @($step.artifact_paths)
+    foreach ($path in $paths) {
+      if ([string]::IsNullOrWhiteSpace([string]$path)) {
+        continue
+      }
+
+      $artifactPath = [string]$path
+      if ($artifactPath -notmatch $Pattern) {
+        continue
+      }
+
+      if (-not $seen.Add($artifactPath)) {
+        continue
+      }
+
+      $results.Add([PSCustomObject]@{
+        artifact_path = $artifactPath
+        role = [string]$step.role
+        completed_at = [string]$step.completed_at
+        started_at = [string]$step.started_at
+      })
+    }
+  }
+
+  return @($results.ToArray())
+}
+
+function Get-PipelineRunAfterGitRefresh {
+  param(
+    [string]$ExplicitPipelineId,
+    [string]$ExplicitChannelId
+  )
+
+  $effectivePipelineId = Get-ContextPipelineId -ExplicitPipelineId $ExplicitPipelineId -ExplicitChannelId $ExplicitChannelId -Required
+  Refresh-GitBeforeStagedEvaluation
+  $run = Invoke-RestMethod `
+    -Method GET `
+    -Uri (Build-Uri "/pipeline/$effectivePipelineId" $null) `
+    -Headers (Build-Headers) `
+    -UseBasicParsing
+
+  return [PSCustomObject]@{
+    pipeline_id = $effectivePipelineId
+    run = $run
+  }
+}
+
 if ($Help -or $Command -eq "help") {
   Show-Usage
   exit 0
@@ -778,146 +936,19 @@ switch ($commandName) {
 
   "staged-phases" {
     $effectivePipelineId = Get-ContextPipelineId -ExplicitPipelineId $PipelineId -ExplicitChannelId $ChannelId -Required
-    $executions = Get-PipelineExecutions -PipelineId $effectivePipelineId -Max $Limit
-
-    $phaseRows = @(
-      $executions |
-      Where-Object {
-        $_.status -eq "completed" -and
-        $_.target.name -in @("role.planner", "planner") -and
-        $null -ne $_.output -and
-        -not [string]::IsNullOrWhiteSpace([string]$_.output.phase_id)
-      } |
-      Sort-Object -Property @{ Expression = { Get-ExecutionSortTime $_ }; Descending = $true } |
-      ForEach-Object {
-        $phasePlan = $_.output.phase_plan
-        $phaseName = ""
-        $phaseStatus = "staged"
-        $artifactPath = ""
-
-        if ($null -ne $phasePlan) {
-          if ($null -ne $phasePlan.PSObject.Properties["name"]) {
-            $phaseName = [string]$phasePlan.name
-          }
-          if ($null -ne $phasePlan.PSObject.Properties["status"] -and -not [string]::IsNullOrWhiteSpace([string]$phasePlan.status)) {
-            $phaseStatus = [string]$phasePlan.status
-          }
-        }
-        if ($null -ne $_.output.PSObject.Properties["artifact_path"]) {
-          $artifactPath = [string]$_.output.artifact_path
-        }
-
-        [PSCustomObject]@{
-          phase_id = [string]$_.output.phase_id
-          name = $phaseName
-          status = $phaseStatus
-          artifact_path = $artifactPath
-          execution_id = [string]$_.execution_id
-        }
-      }
-    )
-
-    Write-Result -Result @{
-      pipeline_id = $effectivePipelineId
-      phases = $phaseRows
-    }
+    Invoke-Adp -HttpMethod "GET" -RelativePath "/pipeline/$effectivePipelineId/staged/phases" -Query @{ limit = $Limit }
     break
   }
 
   "staged-sprints" {
     $effectivePipelineId = Get-ContextPipelineId -ExplicitPipelineId $PipelineId -ExplicitChannelId $ChannelId -Required
-    $executions = Get-PipelineExecutions -PipelineId $effectivePipelineId -Max $Limit
-
-    $sprintRows = @(
-      $executions |
-      Where-Object {
-        $_.status -eq "completed" -and
-        $_.target.name -in @("role.sprint-controller", "sprint-controller") -and
-        $null -ne $_.output -and
-        -not [string]::IsNullOrWhiteSpace([string]$_.output.sprint_id) -and
-        -not [string]::IsNullOrWhiteSpace([string]$_.output.sprint_plan_path)
-      } |
-      Sort-Object -Property @{ Expression = { Get-ExecutionSortTime $_ }; Descending = $true } |
-      ForEach-Object {
-        $phaseIdValue = ""
-        $briefPath = ""
-        $currentTaskPath = ""
-        if ($null -ne $_.output.PSObject.Properties["phase_id"]) {
-          $phaseIdValue = [string]$_.output.phase_id
-        }
-        if ($null -ne $_.output.PSObject.Properties["brief_path"]) {
-          $briefPath = [string]$_.output.brief_path
-        }
-        if ($null -ne $_.output.PSObject.Properties["current_task_path"]) {
-          $currentTaskPath = [string]$_.output.current_task_path
-        }
-
-        [PSCustomObject]@{
-          sprint_id = [string]$_.output.sprint_id
-          phase_id = $phaseIdValue
-          status = "staged"
-          sprint_plan_path = [string]$_.output.sprint_plan_path
-          brief_path = $briefPath
-          current_task_path = $currentTaskPath
-          execution_id = [string]$_.execution_id
-        }
-      }
-    )
-
-    Write-Result -Result @{
-      pipeline_id = $effectivePipelineId
-      sprints = $sprintRows
-    }
+    Invoke-Adp -HttpMethod "GET" -RelativePath "/pipeline/$effectivePipelineId/staged/sprints" -Query @{ limit = $Limit }
     break
   }
 
   "staged-tasks" {
     $effectivePipelineId = Get-ContextPipelineId -ExplicitPipelineId $PipelineId -ExplicitChannelId $ChannelId -Required
-    $executions = Get-PipelineExecutions -PipelineId $effectivePipelineId -Max $Limit
-
-    $sprintExecs = @(
-      $executions |
-      Where-Object {
-        $_.status -eq "completed" -and
-        $_.target.name -in @("role.sprint-controller", "sprint-controller") -and
-        $null -ne $_.output -and
-        -not [string]::IsNullOrWhiteSpace([string]$_.output.sprint_id) -and
-        -not [string]::IsNullOrWhiteSpace([string]$_.output.sprint_plan_path)
-      } |
-      Sort-Object -Property @{ Expression = { Get-ExecutionSortTime $_ }; Descending = $true }
-    )
-
-    $tasks = New-Object System.Collections.Generic.List[object]
-    foreach ($exec in $sprintExecs) {
-      $sprintId = [string]$exec.output.sprint_id
-      $phaseId = ""
-      if ($null -ne $exec.output.PSObject.Properties["phase_id"]) {
-        $phaseId = [string]$exec.output.phase_id
-      }
-      $planPath = [string]$exec.output.sprint_plan_path
-
-      try {
-        $planText = Read-PipelineArtifactText -PipelineId $effectivePipelineId -ArtifactPath $planPath
-        $parsed = Parse-SprintTasksFromMarkdown -Markdown $planText
-        foreach ($task in $parsed) {
-          $tasks.Add([PSCustomObject]@{
-            sprint_id = $sprintId
-            phase_id = $phaseId
-            task_id = [string]$task.task_id
-            label = [string]$task.label
-            status = [string]$task.status
-            sprint_plan_path = $planPath
-          })
-        }
-      } catch {
-        continue
-      }
-    }
-
-    Write-Result -Result @{
-      pipeline_id = $effectivePipelineId
-      tasks = @($tasks.ToArray())
-    }
+    Invoke-Adp -HttpMethod "GET" -RelativePath "/pipeline/$effectivePipelineId/staged/tasks" -Query @{ limit = $Limit }
     break
   }
 

@@ -98,6 +98,39 @@ export async function getChannelPipelineStatusList(req: Request, res: Response, 
   }
 }
 
+export async function getPipelineStagedPhases(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const pipelineId = String(req.params.pipelineId);
+    const limit = typeof req.query.limit === "string" ? Number(req.query.limit) : undefined;
+    const result = await pipelineService.listStagedPhases(pipelineId, limit);
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function getPipelineStagedSprints(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const pipelineId = String(req.params.pipelineId);
+    const limit = typeof req.query.limit === "string" ? Number(req.query.limit) : undefined;
+    const result = await pipelineService.listStagedSprints(pipelineId, limit);
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function getPipelineStagedTasks(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const pipelineId = String(req.params.pipelineId);
+    const limit = typeof req.query.limit === "string" ? Number(req.query.limit) : undefined;
+    const result = await pipelineService.listStagedTasks(pipelineId, limit);
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+}
+
 export async function approvePipeline(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const pipelineId = String(req.params.pipelineId);
