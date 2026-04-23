@@ -125,10 +125,10 @@ export function formatPipelineSummary(r: PipelineStatusSummary): string {
 
 export function formatPipelineList(r: ChannelPipelineStatusListResult): string {
   if (!r.runs?.length) return `No pipelines found for channel ${r.channel_id}.`;
-  const lines = r.runs.map(
-    (run) =>
-      `  ${run.pipeline_id}  ${run.status.padEnd(20)}  step=${run.current_step.padEnd(16)}  ${fmt(run.updated_at)}`
-  );
+  const lines = r.runs.map((run) => {
+    const project = run.project_id ? `  project=${run.project_id}` : "";
+    return `  ${run.pipeline_id}  ${run.status.padEnd(20)}  step=${run.current_step.padEnd(16)}  ${fmt(run.updated_at)}${project}`;
+  });
   return `${r.runs.length} pipeline(s) for channel ${r.channel_id}:\n${lines.join("\n")}`;
 }
 
@@ -137,8 +137,10 @@ export function formatPipelineCurrent(r: CurrentPipelineStatusResult): string {
   if (r.kind === "single") return formatPipelineSummary(r.run);
   // multiple
   const lines = r.runs.map(
-    (run: PipelineStatusChoice) =>
-      `  ${run.pipeline_id}  ${run.status.padEnd(20)}  step=${run.current_step}`
+    (run: PipelineStatusChoice) => {
+      const project = run.project_id ? `  project=${run.project_id}` : "";
+      return `  ${run.pipeline_id}  ${run.status.padEnd(20)}  step=${run.current_step}${project}`;
+    }
   );
   return `Multiple active pipelines:\n${lines.join("\n")}`;
 }
