@@ -19,6 +19,75 @@ function getSlackActor(req: Request): string {
   return String(slackUser);
 }
 
+function getCliLevelEmoji(level: string): string {
+  switch (level) {
+    case "ERROR":
+      return "❌";
+    case "WARNING":
+      return "⚠️";
+    default:
+      return "ℹ️";
+  }
+}
+
+export async function notifyCliCommand(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const body = req.body as {
+      status?: string;
+      command?: string;
+      message?: string;
+      channel_id?: string;
+      metadata?: Record<string, unknown>;
+    };
+
+    const status = String(body.status ?? "INFO").trim().toUpperCase();
+    const normalizedStatus = status === "ERROR" || status === "WARNING" ? status : "INFO";
+    const command = String(body.command ?? "unknown").trim() || "unknown";
+    const rawMessage = String(body.message ?? "CLI command update").trim() || "CLI command update";
+
+    const metadata =
+      body.metadata && typeof body.metadata === "object" && !Array.isArray(body.metadata)
+        ? body.metadata
+        : {};
+
+    const channel =
+      (typeof body.channel_id === "string" && body.channel_id.trim()) ||
+      config.cliNotificationChannel;
+
+    if (!channel) {
+      res.status(202).json({
+        ok: true,
+        skipped: true,
+        reason: "CLI_NOTIFICATION_CHANNEL is not configured",
+      });
+      return;
+    }
+
+    await pipelineNotifierService.notify({
+      pipeline_id: `cli-${Date.now()}`,
+      step: "planner",
+      status: "running",
+      gate_required: false,
+      artifact_paths: [],
+      metadata: {
+        source: "api",
+        slack_channel: channel,
+        notification_kind: "cli_command",
+        command,
+        cli_status: normalizedStatus,
+        ...metadata,
+      },
+      event: "progress",
+      message: `${getCliLevelEmoji(normalizedStatus)} ${rawMessage}`,
+      agent_caller: "CLI",
+    });
+
+    res.status(202).json({ ok: true, notified: true, channel });
+  } catch (error) {
+    next(error);
+  }
+}
+
 export async function createPipeline(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const body = req.body as Partial<CreatePipelineRequest>;

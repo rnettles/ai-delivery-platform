@@ -439,6 +439,113 @@ function Write-Result {
   $Result | ConvertTo-Json -Depth 30
 }
 
+function Get-BoolEnv {
+  param(
+    [string]$Name,
+    [bool]$Default = $false
+  )
+
+  $raw = [string]([Environment]::GetEnvironmentVariable($Name, "Process") ?? "")
+  if ([string]::IsNullOrWhiteSpace($raw)) {
+    $raw = [string]([Environment]::GetEnvironmentVariable($Name, "User") ?? "")
+  }
+  if ([string]::IsNullOrWhiteSpace($raw)) {
+    return $Default
+  }
+
+  $text = $raw.Trim().ToLowerInvariant()
+  return $text -in @("1", "true", "yes", "y", "on")
+}
+
+function Test-ShouldNotifyCommand {
+  param([string]$Name)
+
+  if ([string]::IsNullOrWhiteSpace($Name)) {
+    return $false
+  }
+
+  if (Get-BoolEnv -Name "CLI_VERBOSE_MODE") {
+    return $true
+  }
+
+  $stateChanging = @(
+    "execute",
+    "replay",
+    "pipeline-create",
+    "pipeline-approve",
+    "pipeline-cancel",
+    "pipeline-takeover",
+    "pipeline-retry",
+    "pipeline-handoff",
+    "pipeline-skip",
+    "project-create",
+    "project-assign-channel",
+    "git-sync",
+    "coord-create",
+    "coord-patch",
+    "coord-archive"
+  )
+
+  return $stateChanging -contains $Name
+}
+
+function Get-ResponsePrimaryId {
+  param([object]$Response)
+
+  if ($null -eq $Response) { return "" }
+
+  foreach ($name in @("pipeline_id", "execution_id", "project_id", "coordination_id", "id")) {
+    $prop = $Response.PSObject.Properties[$name]
+    if ($null -ne $prop) {
+      $value = [string]$prop.Value
+      if (-not [string]::IsNullOrWhiteSpace($value)) {
+        return $value
+      }
+    }
+  }
+
+  return ""
+}
+
+function Send-CliNotification {
+  param(
+    [string]$Status,
+    [string]$Message,
+    [string]$CommandName,
+    [string]$HttpMethod,
+    [string]$RelativePath
+  )
+
+  if ([string]::IsNullOrWhiteSpace($Message)) {
+    return
+  }
+
+  # Prevent accidental recursion if users call the notification endpoint directly.
+  if ($CommandName -eq "request" -and $RelativePath -match "^/pipeline/cli-notify(\?.*)?$") {
+    return
+  }
+
+  $payload = @{
+    status = $Status
+    command = $CommandName
+    message = $Message
+    metadata = @{
+      method = $HttpMethod
+      path = $RelativePath
+      cli_source = "api-cli.ps1"
+    }
+  }
+
+  try {
+    $headers = Build-Headers
+    $uri = Build-Uri -RelativePath "/pipeline/cli-notify" -Query $null
+    $body = $payload | ConvertTo-Json -Depth 10
+    Invoke-RestMethod -Method "POST" -Uri $uri -Headers $headers -ContentType "application/json" -Body $body | Out-Null
+  } catch {
+    # Non-blocking by design: notifications should never fail a CLI command.
+  }
+}
+
 function Invoke-Adp {
   param(
     [string]$HttpMethod,
@@ -465,6 +572,19 @@ function Invoke-Adp {
     }
 
     Write-Result -Result $response
+
+    if (Test-ShouldNotifyCommand -Name $script:commandName) {
+      $id = Get-ResponsePrimaryId -Response $response
+      $suffix = if ([string]::IsNullOrWhiteSpace($id)) { "" } else { " (id: $id)" }
+      Send-CliNotification `
+        -Status "INFO" `
+        -Message ("$($script:commandName) succeeded: $HttpMethod $RelativePath$suffix") `
+        -CommandName $script:commandName `
+        -HttpMethod $HttpMethod `
+        -RelativePath $RelativePath
+    }
+
+    return $response
   } catch {
     $errorMessage = $_.Exception.Message
     $details = $_.ErrorDetails.Message
@@ -474,6 +594,16 @@ function Invoke-Adp {
       Write-Host $details -ForegroundColor Yellow
     } else {
       Write-Host $errorMessage -ForegroundColor Yellow
+    }
+
+    if (Test-ShouldNotifyCommand -Name $script:commandName) {
+      $detailText = if (-not [string]::IsNullOrWhiteSpace($details)) { $details } else { $errorMessage }
+      Send-CliNotification `
+        -Status "ERROR" `
+        -Message ("$($script:commandName) failed: $HttpMethod $RelativePath :: $detailText") `
+        -CommandName $script:commandName `
+        -HttpMethod $HttpMethod `
+        -RelativePath $RelativePath
     }
 
     throw

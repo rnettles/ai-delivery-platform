@@ -15,6 +15,7 @@ import {
   getPipelineStagedTasks,
   getPipelineStatusSummary,
   handoffPipeline,
+  notifyCliCommand,
   retryPipeline,
   skipPipeline,
   takeoverPipeline,
@@ -34,6 +35,7 @@ router.get("/pipeline/:pipelineId/staged/tasks", getPipelineStagedTasks);
 router.get("/pipeline/:pipelineId/status-summary", getPipelineStatusSummary);
 router.get("/pipeline/status-summary/current", getCurrentPipelineStatusSummary);
 router.get("/pipeline/status-summary/by-channel", getChannelPipelineStatusList);
+router.post("/pipeline/cli-notify", notifyCliCommand);
 router.post("/pipeline/:pipelineId/cancel", cancelPipeline);
 router.post("/pipeline/:pipelineId/approve", approvePipeline);
 router.post("/pipeline/:pipelineId/takeover", takeoverPipeline);
