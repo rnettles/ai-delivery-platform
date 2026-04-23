@@ -251,6 +251,7 @@ function Resolve-ChannelId {
   }
 
   if (-not [string]::IsNullOrWhiteSpace($script:activeState["channel_id"])) {
+    $script:activeUsage["channel"] = $true
     return [string]$script:activeState["channel_id"]
   }
 
@@ -268,6 +269,7 @@ function Resolve-PipelineId {
   }
 
   if (-not [string]::IsNullOrWhiteSpace($script:activeState["pipeline_id"])) {
+    $script:activeUsage["pipeline"] = $true
     return [string]$script:activeState["pipeline_id"]
   }
 
@@ -276,6 +278,29 @@ function Resolve-PipelineId {
   }
 
   return ""
+}
+
+function Show-ActiveContextIfUsed {
+  if ($script:activeBannerShown) {
+    return
+  }
+
+  $usedChannel = [bool]($script:activeUsage["channel"])
+  $usedPipeline = [bool]($script:activeUsage["pipeline"])
+  if (-not ($usedChannel -or $usedPipeline)) {
+    return
+  }
+
+  $parts = @()
+  if ($usedChannel) {
+    $parts += ("channel_id={0}" -f [string]($script:activeState["channel_id"] ?? ""))
+  }
+  if ($usedPipeline) {
+    $parts += ("pipeline_id={0}" -f [string]($script:activeState["pipeline_id"] ?? ""))
+  }
+
+  Write-Host ("Using active context: " + ($parts -join ", ")) -ForegroundColor Cyan
+  $script:activeBannerShown = $true
 }
 
 function Build-Headers {
@@ -403,6 +428,7 @@ function Invoke-Adp {
 
   $uri = Build-Uri -RelativePath $RelativePath -Query $Query
   $headers = Build-Headers
+  Show-ActiveContextIfUsed
 
   try {
     if ($null -ne $BodyObject) {
@@ -440,6 +466,8 @@ if ($Help -or $Command -eq "help") {
 
 $commandName = $Command.Trim().ToLowerInvariant()
 $script:activeState = Load-ActiveState
+$script:activeUsage = @{ channel = $false; pipeline = $false }
+$script:activeBannerShown = $false
 
 switch ($commandName) {
   "active-set" {
@@ -607,6 +635,7 @@ switch ($commandName) {
       if (-not [string]::IsNullOrWhiteSpace($currentChannelId)) {
         $currentQuery.channel_id = $currentChannelId
       }
+      Show-ActiveContextIfUsed
       $current = Invoke-RestMethod `
         -Method GET `
         -Uri (Build-Uri "/pipeline/status-summary/current" $currentQuery) `
@@ -825,11 +854,11 @@ switch ($commandName) {
     Require-Value -Value $Path -Name "Path"
 
     $effectivePath = $Path
-    $effectiveChannelId = Resolve-ChannelId -ExplicitChannelId $ChannelId
-    if (-not [string]::IsNullOrWhiteSpace($effectiveChannelId)) {
-      $isCurrentSummary = $effectivePath -match "^/pipeline/status-summary/current(\?.*)?$"
-      $alreadyHasChannel = $effectivePath -match "[?&]channel_id="
-      if ($isCurrentSummary -and -not $alreadyHasChannel) {
+    $isCurrentSummary = $effectivePath -match "^/pipeline/status-summary/current(\?.*)?$"
+    $alreadyHasChannel = $effectivePath -match "[?&]channel_id="
+    if ($isCurrentSummary -and -not $alreadyHasChannel) {
+      $effectiveChannelId = Resolve-ChannelId -ExplicitChannelId $ChannelId
+      if (-not [string]::IsNullOrWhiteSpace($effectiveChannelId)) {
         $sep = if ($effectivePath.Contains("?")) { "&" } else { "?" }
         $effectivePath = "$effectivePath${sep}channel_id=$([uri]::EscapeDataString($effectiveChannelId))"
       }
