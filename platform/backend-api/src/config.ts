@@ -7,14 +7,23 @@ function cleanEnvValue(value: string | undefined): string {
   return value.replace(/\s+#.*$/, "").trim();
 }
 
+function cleanChannelValue(value: string | undefined, key: string): string {
+  const cleaned = cleanEnvValue(value);
+  const prefix = `${key}=`;
+  if (cleaned.startsWith(prefix)) {
+    return cleaned.substring(prefix.length).trim();
+  }
+  return cleaned;
+}
+
 export const config = {
   port: Number(process.env.PORT || 3000),
   nodeEnv: process.env.NODE_ENV || "development",
   logLevel: process.env.LOG_LEVEL || "info",
   n8nCallbackUrl: cleanEnvValue(process.env.N8N_CALLBACK_URL),
   n8nWebhookPath: cleanEnvValue(process.env.N8N_WEBHOOK_PATH) || "/webhook/pipeline-notify",
-  pipelineSlackChannel: cleanEnvValue(process.env.PIPELINE_SLACK_CHANNEL),
-  cliNotificationChannel: cleanEnvValue(process.env.CLI_NOTIFICATION_CHANNEL),
+  pipelineSlackChannel: cleanChannelValue(process.env.PIPELINE_SLACK_CHANNEL, "PIPELINE_SLACK_CHANNEL"),
+  cliNotificationChannel: cleanChannelValue(process.env.CLI_NOTIFICATION_CHANNEL, "CLI_NOTIFICATION_CHANNEL"),
   cliVerboseMode: cleanEnvValue(process.env.CLI_VERBOSE_MODE).toLowerCase() === "true",
   azureOpenAiEndpoint: process.env.AZURE_OPENAI_ENDPOINT ?? "",
   azureOpenAiApiKey: process.env.AZURE_OPENAI_API_KEY ?? "",
