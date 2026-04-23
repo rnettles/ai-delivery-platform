@@ -382,14 +382,18 @@ async function executeCurrentStep(
       verificationPassed
     );
 
-    await pipelineNotifierService.notify({
-      pipeline_id: pipelineId,
-      step: run.current_step,
-      status: run.status,
-      gate_required: run.status === "awaiting_approval",
-      artifact_paths: artifactPaths,
-      metadata: run.metadata,
-    });
+    // Skip notification on terminal complete — pipeline is done, no actionable gate event.
+    // Avoids 404 from n8n when webhook is no longer listening (test-mode one-shot exhausted).
+    if (run.current_step !== "complete") {
+      await pipelineNotifierService.notify({
+        pipeline_id: pipelineId,
+        step: run.current_step,
+        status: run.status,
+        gate_required: run.status === "awaiting_approval",
+        artifact_paths: artifactPaths,
+        metadata: run.metadata,
+      });
+    }
 
       // Autonomous chaining (ADR-030): if the pipeline is still running and no human
       // gate is required, immediately kick off the next role without waiting.

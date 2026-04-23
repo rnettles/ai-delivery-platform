@@ -14,6 +14,7 @@ vi.mock("../config", () => ({
 import { PipelineNotifierService } from "../services/pipeline-notifier.service";
 import { PipelineNotification } from "../domain/pipeline.types";
 import { config } from "../config";
+import { logger } from "../services/logger.service";
 
 const baseNotification: PipelineNotification = {
   pipeline_id: "pipe-2026-04-19-test1234",
@@ -52,8 +53,37 @@ describe("PipelineNotifierService", () => {
     expect(JSON.parse(options.body as string)).toMatchObject({
       pipeline_id: "pipe-2026-04-19-test1234",
       step: "planner",
+      agent_caller: "Planner",
       gate_required: true,
     });
+  });
+
+  it("uses canonical agent caller labels in the payload", async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true });
+
+    await service.notify({ ...baseNotification, step: "sprint-controller" });
+
+    const [, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(options.body as string)).toMatchObject({
+      step: "sprint-controller",
+      agent_caller: "Sprint-Controller",
+    });
+  });
+
+  it("includes canonical agent caller labels in success logs", async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true });
+
+    await service.notify({ ...baseNotification, step: "verifier" });
+
+    expect(logger.info).toHaveBeenCalledWith(
+      "Pipeline notification sent",
+      expect.objectContaining({
+        pipeline_id: "pipe-2026-04-19-test1234",
+        step: "verifier",
+        agent_caller: "Verifier",
+        gate_required: true,
+      })
+    );
   });
 
   it("strips trailing slash from callback URL before appending path", async () => {

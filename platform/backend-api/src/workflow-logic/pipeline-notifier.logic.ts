@@ -13,6 +13,7 @@ export interface PipelineNotification {
   gate_required: boolean;
   artifact_paths?: string[];
   metadata?: Record<string, unknown>;
+  agent_caller?: string;
   event?: "step_start" | "progress" | "step_complete" | "gate";
   message?: string;
 }
@@ -28,8 +29,25 @@ function stepLabel(step: string): string {
   return step.replace(/-/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
 }
 
+function agentCallerLabel(step: string, agentCaller?: string): string {
+  if (agentCaller) return agentCaller;
+
+  switch (step) {
+    case "planner":
+      return "Planner";
+    case "sprint-controller":
+      return "Sprint-Controller";
+    case "implementer":
+      return "Implementer";
+    case "verifier":
+      return "Verifier";
+    default:
+      return stepLabel(step ?? "");
+  }
+}
+
 export function buildSlackMessage(n: PipelineNotification): { channel: string | null; slack_payload?: SlackMessage } {
-  const { pipeline_id, step, status, artifact_paths = [], metadata = {}, event, message } = n;
+  const { pipeline_id, step, status, artifact_paths = [], metadata = {}, event, message, agent_caller } = n;
   const channel = (metadata["slack_channel"] as string | undefined) ?? null;
   const thread_ts = metadata["slack_thread_ts"] as string | undefined;
 
@@ -38,18 +56,18 @@ export function buildSlackMessage(n: PipelineNotification): { channel: string | 
   }
 
   const firstArtifact = artifact_paths[0] ?? null;
-  const label = stepLabel(step ?? "");
+  const label = agentCallerLabel(step ?? "", agent_caller);
 
   let text: string;
   let blocks: unknown[];
 
   if (event === "progress" && message) {
     // Lightweight progress update — thread message only, no buttons
-    text = message;
+    text = `${label}: ${message}`;
     blocks = [
       {
         type: "context",
-        elements: [{ type: "mrkdwn", text: message }],
+        elements: [{ type: "mrkdwn", text: text }],
       },
     ];
   } else if (status === "awaiting_approval") {

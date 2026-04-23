@@ -153,11 +153,11 @@ describe("buildSlackMessage (pipeline-notifier Build Slack Message node)", () =>
         message: "⚙️ Implementing task-001",
       });
       expect(result.channel).toBe("C123ABC");
-      expect(result.slack_payload?.text).toBe("⚙️ Implementing task-001");
+      expect(result.slack_payload?.text).toBe("Planner: ⚙️ Implementing task-001");
       const blocks = result.slack_payload?.blocks as Array<Record<string, unknown>>;
       expect(blocks[0]["type"]).toBe("context");
       const elements = (blocks[0]["elements"] as Array<Record<string, unknown>>);
-      expect((elements[0]["text"] as string)).toBe("⚙️ Implementing task-001");
+      expect((elements[0]["text"] as string)).toBe("Planner: ⚙️ Implementing task-001");
     });
 
     it("falls back to generic running message when message is absent", () => {
@@ -189,8 +189,8 @@ describe("buildSlackMessage (pipeline-notifier Build Slack Message node)", () =>
 
   // ── step label formatting ─────────────────────────────────────────────────
 
-  it("converts kebab-case step names to Title Case in messages", () => {
+  it("uses canonical caller labels in messages", () => {
     const result = buildSlackMessage({ ...base, status: "running", step: "sprint-controller" });
-    expect(result.slack_payload?.text).toContain("Sprint Controller");
+    expect(result.slack_payload?.text).toContain("Sprint-Controller");
   });
 });

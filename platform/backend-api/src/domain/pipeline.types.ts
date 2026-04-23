@@ -107,6 +107,8 @@ export interface PipelineNotification {
   gate_required: boolean;
   artifact_paths: string[];
   metadata: PipelineRun["metadata"];
+  /** Canonical agent label used by downstream notifiers (for example: Planner, Sprint-Controller). */
+  agent_caller?: string;
   /** Notification event kind — defaults to gate/complete rendering when absent */
   event?: PipelineNotificationEvent;
   /** Human-readable progress message for event === 'progress' */

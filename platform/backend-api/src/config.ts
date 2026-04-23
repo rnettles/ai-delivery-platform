@@ -2,12 +2,18 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
+function cleanEnvValue(value: string | undefined): string {
+  if (!value) return "";
+  return value.replace(/\s+#.*$/, "").trim();
+}
+
 export const config = {
   port: Number(process.env.PORT || 3000),
   nodeEnv: process.env.NODE_ENV || "development",
   logLevel: process.env.LOG_LEVEL || "info",
-  n8nCallbackUrl: process.env.N8N_CALLBACK_URL ?? "",
-  n8nWebhookPath: process.env.N8N_WEBHOOK_PATH ?? "/webhook/pipeline-notify",
+  n8nCallbackUrl: cleanEnvValue(process.env.N8N_CALLBACK_URL),
+  n8nWebhookPath: cleanEnvValue(process.env.N8N_WEBHOOK_PATH) || "/webhook/pipeline-notify",
+  startupSlackChannel: cleanEnvValue(process.env.STARTUP_SLACK_CHANNEL),
   azureOpenAiEndpoint: process.env.AZURE_OPENAI_ENDPOINT ?? "",
   azureOpenAiApiKey: process.env.AZURE_OPENAI_API_KEY ?? "",
   azureOpenAiDeployment: process.env.AZURE_OPENAI_DEPLOYMENT ?? "gpt-4.1",
