@@ -831,13 +831,34 @@ export class PipelineService {
 
   async takeover(pipelineId: string, actor: string): Promise<PipelineRun> {
     const run = await this.get(pipelineId);
-    this.assertStatus(run, ["awaiting_approval", "running"]);
+    this.assertStatus(run, ["awaiting_approval", "running", "failed"]);
 
     const steps = [...run.steps];
     const stepIdx = this.currentStepIdx(steps, run.current_step as PipelineRole);
     steps[stepIdx] = { ...steps[stepIdx], actor, status: "running" };
 
     return this.save(run, { status: "paused_takeover", steps });
+  }
+
+  async retry(pipelineId: string, actor: string): Promise<PipelineRun> {
+    const run = await this.get(pipelineId);
+    this.assertStatus(run, ["failed"]);
+
+    const steps = [...run.steps];
+    const stepIdx = this.currentStepIdx(steps, run.current_step as PipelineRole);
+    const now = new Date().toISOString();
+    
+    // Reset the failed step to running state for retry
+    steps[stepIdx] = {
+      ...steps[stepIdx],
+      actor,
+      status: "running",
+      started_at: now,
+      completed_at: undefined,
+    };
+
+    // Resume pipeline execution
+    return this.save(run, { status: "running", steps });
   }
 
   // ─── HANDOFF ──────────────────────────────────────────────────────────────

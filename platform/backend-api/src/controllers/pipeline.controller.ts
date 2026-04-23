@@ -217,6 +217,27 @@ export async function takeoverPipeline(req: Request, res: Response, next: NextFu
   }
 }
 
+export async function retryPipeline(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const pipelineId = String(req.params.pipelineId);
+    const actor = getSlackActor(req);
+    const run = await pipelineService.retry(pipelineId, actor);
+
+    await pipelineNotifierService.notify({
+      pipeline_id: run.pipeline_id,
+      step: run.current_step,
+      status: run.status,
+      gate_required: false,
+      artifact_paths: [],
+      metadata: run.metadata,
+    });
+
+    res.status(200).json(run);
+  } catch (error) {
+    next(error);
+  }
+}
+
 export async function handoffPipeline(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const pipelineId = String(req.params.pipelineId);

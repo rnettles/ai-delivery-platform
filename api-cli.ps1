@@ -105,6 +105,7 @@ Pipeline commands:
   pipeline-approve
   pipeline-cancel
   pipeline-takeover
+  pipeline-retry
   pipeline-handoff
   pipeline-skip
   sprint                     # sprint plan + task list for a pipeline
@@ -177,9 +178,14 @@ Details by command:
     Refreshes git, then lists staged tasks from staged sprint plans.
     Optional: -ChannelId (falls back to active channel), -ProjectId, -Limit
 
-  pipeline/pipeline-summary/pipeline-approve/pipeline-cancel/pipeline-takeover/pipeline-handoff/pipeline-skip:
+  pipeline-create:
+    Require: -EntryPoint, -Description
+    Optional: -ExecutionMode (next-flow|full-sprint)
+
+  pipeline-approve/pipeline-cancel/pipeline-approve/pipeline-takeover/pipeline-retry/pipeline-handoff/pipeline-skip:
     Require: -PipelineId
     Optional: -Actor, -ArtifactPath (handoff), -Justification (skip)
+    Note: takeover pauses pipeline in takeover mode; retry resumes failed step
 
   projects:
     Includes channel mappings by default
@@ -1105,6 +1111,12 @@ switch ($commandName) {
   "pipeline-takeover" {
     $effectivePipelineId = Resolve-PipelineId -ExplicitPipelineId $PipelineId -Required
     Invoke-Adp -HttpMethod "POST" -RelativePath "/pipeline/$effectivePipelineId/takeover" -BodyObject @{ actor = $Actor }
+    break
+  }
+
+  "pipeline-retry" {
+    $effectivePipelineId = Resolve-PipelineId -ExplicitPipelineId $PipelineId -Required
+    Invoke-Adp -HttpMethod "POST" -RelativePath "/pipeline/$effectivePipelineId/retry" -BodyObject @{ actor = $Actor }
     break
   }
 
