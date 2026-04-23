@@ -4,6 +4,7 @@ dist/
 **/dist/
 platform/backend-api/.env
 platform/backend-api/.env.local
+platform/cli/.env.local
 platform/backend-api/docker/.cache
 
 # REST Client private env (contains API keys)

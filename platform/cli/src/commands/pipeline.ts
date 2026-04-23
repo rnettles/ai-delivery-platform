@@ -184,7 +184,6 @@ export function registerPipelineCommands(program: Command): void {
         method: "GET",
         path: "/pipeline/status-summary/by-channel",
         formatterSummary: formatPipelineList(res),
-        channelId,
       });
     });
 
@@ -216,7 +215,6 @@ export function registerPipelineCommands(program: Command): void {
         method: "GET",
         path: "/pipeline/status-summary/current",
         formatterSummary: formatPipelineCurrent(res),
-        channelId,
       });
     });
 
@@ -278,7 +276,6 @@ export function registerPipelineCommands(program: Command): void {
         method: "GET",
         path: "/pipeline/staged/phases",
         formatterSummary: formatStagedPhases(res),
-        channelId,
       });
     });
 
@@ -313,7 +310,6 @@ export function registerPipelineCommands(program: Command): void {
         method: "GET",
         path: "/pipeline/staged/sprints",
         formatterSummary: formatStagedSprints(res),
-        channelId,
       });
     });
 
@@ -348,7 +344,6 @@ export function registerPipelineCommands(program: Command): void {
         method: "GET",
         path: "/pipeline/staged/tasks",
         formatterSummary: formatStagedTasks(res),
-        channelId,
       });
     });
 

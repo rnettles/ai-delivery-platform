@@ -79,7 +79,16 @@ export async function sendNotification(opts: {
   }
 
   try {
-    await request({ method: "POST", path: "/pipeline/cli-notify", body: payload });
+    const result = await request<{ ok: boolean; skipped?: boolean; reason?: string; notified?: boolean }>({
+      method: "POST",
+      path: "/pipeline/cli-notify",
+      body: payload,
+    });
+    if (result.skipped) {
+      process.stderr.write(
+        `[notify] skipped: ${result.reason ?? "CLI_NOTIFICATION_CHANNEL not configured on server"}\n`
+      );
+    }
   } catch {
     // Non-blocking by design
   }

@@ -8,8 +8,11 @@ export function loadEnvFile(filePath: string): string[] {
     candidates.push(filePath);
   } else {
     candidates.push(path.join(process.cwd(), filePath));
-    // Fallback to the standard backend-api .env.local relative to the cli package
     const cliRoot = path.join(__dirname, "..", "..", "..");
+    // CLI-specific config (preferred — only has ADP_* vars, not backend internals)
+    candidates.push(path.join(cliRoot, "cli", filePath));
+    candidates.push(path.join(cliRoot, "cli", ".env.local"));
+    // Fallback: backend-api .env.local for local dev convenience
     candidates.push(path.join(cliRoot, "backend-api", filePath));
     candidates.push(path.join(cliRoot, "backend-api", ".env.local"));
   }

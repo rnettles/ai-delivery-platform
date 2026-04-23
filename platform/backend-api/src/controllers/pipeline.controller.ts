@@ -30,6 +30,21 @@ function getCliLevelEmoji(level: string): string {
   }
 }
 
+function getRoleLabel(role: PipelineRole): string {
+  switch (role) {
+    case "planner":
+      return "Planner";
+    case "sprint-controller":
+      return "Sprint-Controller";
+    case "implementer":
+      return "Implementer";
+    case "verifier":
+      return "Verifier";
+    default:
+      return "System";
+  }
+}
+
 export async function notifyCliCommand(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const body = req.body as {
@@ -79,7 +94,7 @@ export async function notifyCliCommand(req: Request, res: Response, next: NextFu
       },
       event: "progress",
       message: `${getCliLevelEmoji(normalizedStatus)} ${rawMessage}`,
-      agent_caller: "CLI",
+      agent_caller: "System",
     });
 
     res.status(202).json({ ok: true, notified: true, channel });
@@ -278,6 +293,7 @@ export async function takeoverPipeline(req: Request, res: Response, next: NextFu
       gate_required: false,
       artifact_paths: [],
       metadata: run.metadata,
+      agent_caller: "System",
     });
 
     res.status(200).json(run);
@@ -299,6 +315,7 @@ export async function retryPipeline(req: Request, res: Response, next: NextFunct
       gate_required: false,
       artifact_paths: [],
       metadata: run.metadata,
+      agent_caller: "System",
     });
 
     // Mirror pattern from approve/handoff/skip: restart role execution
@@ -368,14 +385,7 @@ async function executeCurrentStep(
 ): Promise<void> {
   const { logger } = await import("../services/logger.service");
 
-  const callerLabel =
-    role === "planner"
-      ? "Planner"
-      : role === "sprint-controller"
-      ? "Sprint-Controller"
-      : role === "implementer"
-      ? "Implementer"
-      : "Verifier";
+  const callerLabel = getRoleLabel(role);
 
   try {
     logger.info("Pipeline step executing", { pipeline_id: pipelineId, role });
@@ -404,6 +414,7 @@ async function executeCurrentStep(
         metadata: currentRun.metadata,
         event: "progress",
         message: `${callerLabel}: ${message}`,
+        agent_caller: callerLabel,
       }).catch(() => { /* best-effort */ });
     };
 
@@ -470,6 +481,7 @@ async function executeCurrentStep(
         gate_required: run.status === "awaiting_approval",
         artifact_paths: artifactPaths,
         metadata: run.metadata,
+        agent_caller: callerLabel,
       });
     }
 
@@ -496,6 +508,7 @@ async function executeCurrentStep(
         gate_required: false,
         artifact_paths: [],
         metadata: run.metadata,
+        agent_caller: callerLabel,
       });
     } catch {
       // If this also fails, the pipeline is in an inconsistent state — log only
