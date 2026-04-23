@@ -596,7 +596,8 @@ function Send-LocalCommandNotification {
     -Message $message `
     -CommandName $CommandName `
     -HttpMethod "LOCAL" `
-    -RelativePath "/cli/$CommandName"
+    -RelativePath "/cli/$CommandName" `
+    -ForceCliChannel
 }
 
 function Resolve-NotificationChannelId {
@@ -621,7 +622,8 @@ function Send-CliNotification {
     [string]$Message,
     [string]$CommandName,
     [string]$HttpMethod,
-    [string]$RelativePath
+    [string]$RelativePath,
+    [switch]$ForceCliChannel
   )
 
   if ([string]::IsNullOrWhiteSpace($Message)) {
@@ -644,9 +646,11 @@ function Send-CliNotification {
     }
   }
 
-  $targetChannel = Resolve-NotificationChannelId
-  if (-not [string]::IsNullOrWhiteSpace($targetChannel)) {
-    $payload.channel_id = $targetChannel
+  if (-not $ForceCliChannel) {
+    $targetChannel = Resolve-NotificationChannelId
+    if (-not [string]::IsNullOrWhiteSpace($targetChannel)) {
+      $payload.channel_id = $targetChannel
+    }
   }
 
   try {
