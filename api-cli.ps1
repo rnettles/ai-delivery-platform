@@ -469,6 +469,9 @@ function Test-ShouldNotifyCommand {
   }
 
   $notifiableCommands = @(
+    "active-set",
+    "active-show",
+    "active-clear",
     "health",
     "scripts",
     "execute",
@@ -482,6 +485,7 @@ function Test-ShouldNotifyCommand {
     "staged-tasks",
     "pipeline-summary",
     "pipeline-current",
+    "sprint",
     "pipeline-create",
     "pipeline-approve",
     "pipeline-cancel",
