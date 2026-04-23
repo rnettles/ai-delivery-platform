@@ -83,6 +83,21 @@ export async function getCurrentPipelineStatusSummary(req: Request, res: Respons
   }
 }
 
+export async function getChannelPipelineStatusList(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const channelId = typeof req.query.channel_id === "string" ? req.query.channel_id.trim() : "";
+    if (!channelId) {
+      throw new HttpError(400, "CHANNEL_ID_REQUIRED", "Query param 'channel_id' is required.");
+    }
+
+    const limit = typeof req.query.limit === "string" ? Number(req.query.limit) : undefined;
+    const result = await pipelineService.listStatusByChannel(channelId, limit);
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+}
+
 export async function approvePipeline(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const pipelineId = String(req.params.pipelineId);

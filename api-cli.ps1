@@ -96,6 +96,7 @@ Core commands:
 Pipeline commands:
   pipeline-create
   pipeline
+  pipeline-list
   pipeline-summary
   pipeline-current
   pipeline-approve
@@ -127,6 +128,7 @@ Quick examples:
   ./api-cli.ps1 active-set -ChannelId C12345678 -PipelineId pipe-2026-04-22-abc12345
   ./api-cli.ps1 active-show
   ./api-cli.ps1 execute -ScriptName test.echo -Message "hello-local"
+  ./api-cli.ps1 pipeline-list -ChannelId C12345678
   ./api-cli.ps1 pipeline-create -Description "Add health endpoint" -EntryPoint planner -ExecutionMode next-flow
   ./api-cli.ps1 projects
   ./api-cli.ps1 projects -ExcludeChannels
@@ -155,6 +157,10 @@ Details by command:
   pipeline-create:
     Optional: -EntryPoint planner|sprint-controller|implementer|verifier, -ExecutionMode next|next-flow|full-sprint,
               -Description, -SlackChannel, -BodyJson
+
+  pipeline-list:
+    Lists pipelines for a channel from newest to oldest.
+    Optional: -ChannelId (falls back to active channel), -Limit
 
   pipeline/pipeline-summary/pipeline-approve/pipeline-cancel/pipeline-takeover/pipeline-handoff/pipeline-skip:
     Require: -PipelineId
@@ -562,6 +568,17 @@ switch ($commandName) {
   "pipeline" {
     $effectivePipelineId = Resolve-PipelineId -ExplicitPipelineId $PipelineId -Required
     Invoke-Adp -HttpMethod "GET" -RelativePath "/pipeline/$effectivePipelineId"
+    break
+  }
+
+  "pipeline-list" {
+    $effectiveChannelId = Resolve-ChannelId -ExplicitChannelId $ChannelId
+    if ([string]::IsNullOrWhiteSpace($effectiveChannelId)) {
+      throw "Missing required option: -ChannelId (or set one via active-set)"
+    }
+
+    $query = @{ channel_id = $effectiveChannelId; limit = $Limit }
+    Invoke-Adp -HttpMethod "GET" -RelativePath "/pipeline/status-summary/by-channel" -Query $query
     break
   }
 

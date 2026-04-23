@@ -68,6 +68,11 @@ export type CurrentPipelineStatusResult =
   | { kind: "single"; run: PipelineStatusSummary }
   | { kind: "multiple"; runs: PipelineStatusChoice[] };
 
+export interface ChannelPipelineStatusListResult {
+  channel_id: string;
+  runs: PipelineStatusChoice[];
+}
+
 // Ordered pipeline role sequence
 const ROLE_SEQUENCE: PipelineRole[] = [
   "planner",
@@ -912,6 +917,36 @@ export class PipelineService {
     );
 
     return { kind: "multiple", runs };
+  }
+
+  async listStatusByChannel(channelId: string, limit = 20): Promise<ChannelPipelineStatusListResult> {
+    const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), 100) : 20;
+
+    const rows = await db
+      .select()
+      .from(pipelineRuns)
+      .where(sql`${pipelineRuns.metadata} ->> 'slack_channel' = ${channelId}`)
+      .orderBy(desc(pipelineRuns.updated_at))
+      .limit(safeLimit);
+
+    const runs: PipelineStatusChoice[] = await Promise.all(
+      rows.map(async (row) => {
+        const summary = await this.getStatusSummary(row.pipeline_id);
+        return {
+          pipeline_id: summary.pipeline_id,
+          status: summary.status,
+          current_step: summary.current_step,
+          current_actor: summary.current_step_detail?.actor,
+          project_id: summary.project_id,
+          repo_url: summary.repo_url,
+          sprint_branch: summary.sprint_branch,
+          updated_at: summary.updated_at,
+          wait_state: summarizeWaitState(summary),
+        };
+      })
+    );
+
+    return { channel_id: channelId, runs };
   }
 
   /**

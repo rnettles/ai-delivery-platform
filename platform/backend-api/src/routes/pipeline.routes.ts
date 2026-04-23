@@ -3,6 +3,7 @@ import {
   approvePipeline,
   cancelPipeline,
   createPipeline,
+  getChannelPipelineStatusList,
   getCurrentPipelineStatusSummary,
   getPipeline,
   getPipelineArtifact,
@@ -19,6 +20,7 @@ router.get("/pipeline/:pipelineId", getPipeline);
 router.get("/pipeline/:pipelineId/artifact", getPipelineArtifact);
 router.get("/pipeline/:pipelineId/status-summary", getPipelineStatusSummary);
 router.get("/pipeline/status-summary/current", getCurrentPipelineStatusSummary);
+router.get("/pipeline/status-summary/by-channel", getChannelPipelineStatusList);
 router.post("/pipeline/:pipelineId/cancel", cancelPipeline);
 router.post("/pipeline/:pipelineId/approve", approvePipeline);
 router.post("/pipeline/:pipelineId/takeover", takeoverPipeline);
