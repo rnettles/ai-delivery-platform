@@ -5,7 +5,10 @@ vi.mock("../services/logger.service", () => ({
 }));
 
 vi.mock("../config", () => ({
-  config: { n8nCallbackUrl: "https://n8n.example.com" },
+  config: {
+    n8nCallbackUrl: "https://n8n.example.com",
+    n8nWebhookPath: "/webhook/pipeline-notify",
+  },
 }));
 
 import { PipelineNotifierService } from "../services/pipeline-notifier.service";
@@ -29,7 +32,8 @@ describe("PipelineNotifierService", () => {
     service = new PipelineNotifierService();
     mockFetch = vi.fn();
     vi.stubGlobal("fetch", mockFetch);
-    (config as { n8nCallbackUrl: string }).n8nCallbackUrl = "https://n8n.example.com";
+    (config as { n8nCallbackUrl: string; n8nWebhookPath: string }).n8nCallbackUrl = "https://n8n.example.com";
+    (config as { n8nCallbackUrl: string; n8nWebhookPath: string }).n8nWebhookPath = "/webhook/pipeline-notify";
   });
 
   afterEach(() => {
@@ -76,10 +80,20 @@ describe("PipelineNotifierService", () => {
   });
 
   it("skips the call when N8N_CALLBACK_URL is not configured", async () => {
-    (config as { n8nCallbackUrl: string }).n8nCallbackUrl = "";
+    (config as { n8nCallbackUrl: string; n8nWebhookPath: string }).n8nCallbackUrl = "";
 
     await service.notify(baseNotification);
 
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("supports webhook-test path override", async () => {
+    (config as { n8nCallbackUrl: string; n8nWebhookPath: string }).n8nWebhookPath = "/webhook-test/pipeline-notify";
+    mockFetch.mockResolvedValueOnce({ ok: true });
+
+    await service.notify(baseNotification);
+
+    const [url] = mockFetch.mock.calls[0] as [string];
+    expect(url).toBe("https://n8n.example.com/webhook-test/pipeline-notify");
   });
 });

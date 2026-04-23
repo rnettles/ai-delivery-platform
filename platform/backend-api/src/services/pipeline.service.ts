@@ -848,13 +848,16 @@ export class PipelineService {
     const stepIdx = this.currentStepIdx(steps, run.current_step as PipelineRole);
     const now = new Date().toISOString();
     
-    // Reset the failed step to running state for retry
+    // Reset the failed step to running state for retry, clearing stale fields from failed attempt
     // Keep original actor for audit trail; this is automated recovery, not human control
     steps[stepIdx] = {
       ...steps[stepIdx],
       status: "running",
       started_at: now,
       completed_at: undefined,
+      execution_id: undefined,
+      artifact_paths: [],
+      gate_outcome: null,
     };
 
     // Resume pipeline execution (system takes control, not the operator)
@@ -1494,7 +1497,7 @@ export class PipelineService {
   async reconcileOrphanedRuns(): Promise<void> {
     try {
       const rows = await db
-        .select({ pipeline_id: pipelineRuns.pipeline_id, steps: pipelineRuns.steps })
+        .select({ pipeline_id: pipelineRuns.pipeline_id, current_step: pipelineRuns.current_step, steps: pipelineRuns.steps })
         .from(pipelineRuns)
         .where(eq(pipelineRuns.status, "running"));
 
@@ -1503,37 +1506,64 @@ export class PipelineService {
         return;
       }
 
-      logger.info("Startup reconciliation: cancelling orphaned running pipelines", {
+      logger.info("Startup reconciliation: checking orphaned running pipelines", {
         count: rows.length,
         pipeline_ids: rows.map((r) => r.pipeline_id),
       });
 
       const now = new Date().toISOString();
+      const completed: string[] = [];
+      const cancelled: string[] = [];
 
       for (const row of rows) {
         try {
-          const steps = (row.steps as PipelineStepRecord[]).map((s) =>
+          const steps = row.steps as PipelineStepRecord[];
+          // Find the current step in history
+          const currentStep = steps.find((s) => s.role === row.current_step);
+          
+          // If the current step is already complete, transition pipeline to complete
+          // (this means the step finished but the pipeline status wasn't updated)
+          const isStepComplete = currentStep?.status === "complete";
+          
+          const updatedSteps = steps.map((s) =>
             s.status === "running"
               ? { ...s, status: "complete" as const, actor: "system", completed_at: now }
               : s
           );
+          
+          const nextStatus = isStepComplete ? "complete" : "cancelled";
+          
           await db
             .update(pipelineRuns)
             .set({
-              status: "cancelled",
-              steps: steps as typeof pipelineRuns.$inferInsert["steps"],
+              status: nextStatus,
+              steps: updatedSteps as typeof pipelineRuns.$inferInsert["steps"],
               updated_at: new Date(),
             })
             .where(eq(pipelineRuns.pipeline_id, row.pipeline_id));
+          
+          (isStepComplete ? completed : cancelled).push(row.pipeline_id);
+          
+          logger.info("Startup reconciliation: pipeline reconciled", {
+            pipeline_id: row.pipeline_id,
+            current_step: row.current_step,
+            step_status: currentStep?.status,
+            new_status: nextStatus,
+          });
         } catch (rowErr) {
-          logger.error("Startup reconciliation: failed to cancel pipeline", {
+          logger.error("Startup reconciliation: failed to reconcile pipeline", {
             pipeline_id: row.pipeline_id,
             error: String(rowErr),
           });
         }
       }
 
-      logger.info("Startup reconciliation complete", { cancelled: rows.length });
+      logger.info("Startup reconciliation complete", { 
+        completed: completed.length,
+        cancelled: cancelled.length,
+        completed_pipeline_ids: completed,
+        cancelled_pipeline_ids: cancelled,
+      });
     } catch (err) {
       logger.error("Startup reconciliation failed", { error: String(err) });
     }

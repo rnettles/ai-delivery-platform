@@ -19,7 +19,10 @@ export class PipelineNotifierService {
       return;
     }
 
-    const target = `${callbackUrl.replace(/\/$/, "")}/webhook/pipeline-notify`;
+    const base = callbackUrl.replace(/\/$/, "");
+    const webhookPath = (config.n8nWebhookPath || "/webhook/pipeline-notify").trim();
+    const normalizedPath = webhookPath.startsWith("/") ? webhookPath : "/" + webhookPath;
+    const target = base + normalizedPath;
 
     try {
       const response = await fetch(target, {

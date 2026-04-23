@@ -7,6 +7,7 @@ export const config = {
   nodeEnv: process.env.NODE_ENV || "development",
   logLevel: process.env.LOG_LEVEL || "info",
   n8nCallbackUrl: process.env.N8N_CALLBACK_URL ?? "",
+  n8nWebhookPath: process.env.N8N_WEBHOOK_PATH ?? "/webhook/pipeline-notify",
   azureOpenAiEndpoint: process.env.AZURE_OPENAI_ENDPOINT ?? "",
   azureOpenAiApiKey: process.env.AZURE_OPENAI_API_KEY ?? "",
   azureOpenAiDeployment: process.env.AZURE_OPENAI_DEPLOYMENT ?? "gpt-4.1",

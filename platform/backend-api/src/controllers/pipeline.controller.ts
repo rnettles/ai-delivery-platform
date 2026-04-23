@@ -232,6 +232,12 @@ export async function retryPipeline(req: Request, res: Response, next: NextFunct
       metadata: run.metadata,
     });
 
+    // Mirror pattern from approve/handoff/skip: restart role execution
+    if (run.status === "running" && run.current_step !== "complete") {
+      const currentStep = run.current_step as PipelineRole;
+      executeCurrentStep(run.pipeline_id, currentStep, {}, undefined).catch(() => {});
+    }
+
     res.status(200).json(run);
   } catch (error) {
     next(error);
