@@ -18,14 +18,49 @@ interface GovernanceManifest {
  */
 class GovernanceService {
   private manifest: GovernanceManifest | null = null;
+  private resolvedBasePath: string | null = null;
 
-  private get basePath(): string {
-    return path.resolve(process.cwd(), config.governancePath);
+  private async getBasePath(): Promise<string> {
+    if (this.resolvedBasePath) {
+      return this.resolvedBasePath;
+    }
+
+    const configured = path.resolve(process.cwd(), config.governancePath);
+    const candidates = [
+      configured,
+      path.resolve(process.cwd(), "../governance"),
+      path.resolve(__dirname, "../../governance"),
+      path.resolve(__dirname, "../../../governance"),
+    ];
+
+    for (const candidate of candidates) {
+      const manifestPath = path.join(candidate, "manifest.json");
+      try {
+        await fs.access(manifestPath);
+        this.resolvedBasePath = candidate;
+        if (candidate !== configured) {
+          logger.info("Governance path fallback applied", {
+            configured_path: configured,
+            resolved_path: candidate,
+          });
+        }
+        return candidate;
+      } catch {
+        // Try next candidate path.
+      }
+    }
+
+    throw new Error(
+      `Governance manifest not found. Checked: ${candidates
+        .map((p) => path.join(p, "manifest.json"))
+        .join(", ")}`
+    );
   }
 
   private async loadManifest(): Promise<GovernanceManifest> {
     if (this.manifest) return this.manifest;
-    const manifestPath = path.join(this.basePath, "manifest.json");
+    const basePath = await this.getBasePath();
+    const manifestPath = path.join(basePath, "manifest.json");
     const raw = await fs.readFile(manifestPath, "utf-8");
     this.manifest = JSON.parse(raw) as GovernanceManifest;
     logger.info("Governance manifest loaded", { version: this.manifest.version, path: manifestPath });
@@ -36,7 +71,7 @@ class GovernanceService {
     const manifest = await this.loadManifest();
     const entry = manifest.roles[role];
     if (!entry) throw new Error(`Governance: no prompt registered for role '${role}'`);
-    const promptPath = path.join(this.basePath, entry.prompt);
+    const promptPath = path.join(await this.getBasePath(), entry.prompt);
     return fs.readFile(promptPath, "utf-8");
   }
 
@@ -44,7 +79,7 @@ class GovernanceService {
     const manifest = await this.loadManifest();
     const entry = manifest.rules[key];
     if (!entry) throw new Error(`Governance: no rule registered for key '${key}'`);
-    const rulePath = path.join(this.basePath, entry);
+    const rulePath = path.join(await this.getBasePath(), entry);
     return fs.readFile(rulePath, "utf-8");
   }
 
@@ -52,7 +87,7 @@ class GovernanceService {
     const manifest = await this.loadManifest();
     const entry = manifest.schemas[key];
     if (!entry) throw new Error(`Governance: no schema registered for key '${key}'`);
-    const schemaPath = path.join(this.basePath, entry);
+    const schemaPath = path.join(await this.getBasePath(), entry);
     const raw = await fs.readFile(schemaPath, "utf-8");
     return JSON.parse(raw) as unknown;
   }
