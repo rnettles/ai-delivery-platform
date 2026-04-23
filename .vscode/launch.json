@@ -1,0 +1,25 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Backend API (Dev)",
+      "program": "${workspaceFolder}/platform/backend-api/src/server.ts",
+      "cwd": "${workspaceFolder}/platform/backend-api",
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "preLaunchTask": "npm-install",
+      "env": {
+        "NODE_ENV": "development"
+      },
+      "runtimeArgs": [
+        "--require",
+        "tsx/esm"
+      ],
+      "skipFiles": [
+        "<node_internals>/**"
+      ]
+    }
+  ]
+}
