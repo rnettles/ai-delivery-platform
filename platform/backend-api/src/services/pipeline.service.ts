@@ -1,4 +1,6 @@
 import { randomUUID } from "crypto";
+import fs from "fs/promises";
+import path from "path";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { pipelineRuns } from "../db/schema";
@@ -124,6 +126,33 @@ export interface StagedTasksResult {
   refreshed_at: string;
   source: "artifacts";
   git_head_commit?: string;
+  tasks: StagedTaskRecord[];
+}
+
+export interface RepoStagedPhasesResult {
+  refreshed_at: string;
+  source: "artifacts";
+  git_head_commit?: string;
+  project_id: string;
+  channel_id?: string;
+  phases: StagedPhaseRecord[];
+}
+
+export interface RepoStagedSprintsResult {
+  refreshed_at: string;
+  source: "artifacts";
+  git_head_commit?: string;
+  project_id: string;
+  channel_id?: string;
+  sprints: StagedSprintRecord[];
+}
+
+export interface RepoStagedTasksResult {
+  refreshed_at: string;
+  source: "artifacts";
+  git_head_commit?: string;
+  project_id: string;
+  channel_id?: string;
   tasks: StagedTaskRecord[];
 }
 
@@ -372,6 +401,67 @@ export class PipelineService {
     return {
       run,
       git_head_commit: gitRefresh.headCommit,
+      refreshed_at: new Date().toISOString(),
+    };
+  }
+
+  private async listRepoMarkdownFiles(repoRoot: string, relativeDir: string, matcher: RegExp): Promise<string[]> {
+    const dir = path.join(repoRoot, relativeDir);
+    let entries;
+
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      return [];
+    }
+
+    const files = entries
+      .filter((e) => e.isFile() && matcher.test(String(e.name)))
+      .map((e) => path.join(dir, String(e.name)));
+
+    const withTimes = await Promise.all(
+      files.map(async (file) => ({
+        file,
+        mtimeMs: (await fs.stat(file)).mtimeMs,
+      }))
+    );
+
+    withTimes.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    return withTimes.map((x) => x.file);
+  }
+
+  private toRelPath(absPath: string): string {
+    return path.relative(process.cwd(), absPath).replace(/\\/g, "/");
+  }
+
+  private async resolveArtifactProject(channelId?: string, projectId?: string): Promise<{
+    project: Project;
+    git_head_commit?: string;
+    refreshed_at: string;
+  }> {
+    const normalizedChannel = channelId?.trim();
+    const normalizedProject = projectId?.trim();
+
+    let project: Project | null = null;
+
+    if (normalizedProject) {
+      project = await projectService.getById(normalizedProject);
+    } else if (normalizedChannel) {
+      project = await projectService.getByChannel(normalizedChannel);
+    }
+
+    if (!project) {
+      project = await projectService.getByName("default");
+    }
+
+    if (!project) {
+      throw new HttpError(404, "PROJECT_NOT_FOUND", "No project resolved for staged artifact lookup.");
+    }
+
+    const git = await projectGitService.ensureReady(project, { forcePull: true });
+    return {
+      project,
+      git_head_commit: git.head_commit,
       refreshed_at: new Date().toISOString(),
     };
   }
@@ -1238,6 +1328,139 @@ export class PipelineService {
       refreshed_at,
       source: "artifacts",
       git_head_commit,
+      tasks,
+    };
+  }
+
+  async listRepoStagedPhases(opts?: { channelId?: string; projectId?: string; limit?: number }): Promise<RepoStagedPhasesResult> {
+    const safeLimit = this.normalizeLimit(opts?.limit ?? 20);
+    const { project, git_head_commit, refreshed_at } = await this.resolveArtifactProject(opts?.channelId, opts?.projectId);
+
+    const files = [
+      ...(await this.listRepoMarkdownFiles(project.clone_path, "ai_dev_stack/ai_project_tasks/staged_phases", /^phase_plan_.*\.md$/i)),
+      ...(await this.listRepoMarkdownFiles(project.clone_path, "ai_dev_stack/ai_project_tasks/active", /^phase_plan_.*\.md$/i)),
+    ].slice(0, safeLimit);
+
+    const phases: StagedPhaseRecord[] = [];
+    for (const absPath of files) {
+      try {
+        const markdown = await fs.readFile(absPath, "utf-8");
+        const relPath = this.toRelPath(absPath);
+        const parsed = this.parsePhasePlan(markdown, relPath);
+        const stat = await fs.stat(absPath);
+        phases.push({
+          phase_id: parsed.phase_id,
+          name: parsed.name,
+          status: parsed.status,
+          artifact_path: relPath,
+          sourced_from: "planner",
+          completed_at: new Date(stat.mtimeMs).toISOString(),
+        });
+      } catch {
+        // Ignore unreadable files and continue.
+      }
+    }
+
+    return {
+      refreshed_at,
+      source: "artifacts",
+      git_head_commit,
+      project_id: project.project_id,
+      ...(opts?.channelId ? { channel_id: opts.channelId } : {}),
+      phases,
+    };
+  }
+
+  async listRepoStagedSprints(opts?: { channelId?: string; projectId?: string; limit?: number }): Promise<RepoStagedSprintsResult> {
+    const safeLimit = this.normalizeLimit(opts?.limit ?? 20);
+    const { project, git_head_commit, refreshed_at } = await this.resolveArtifactProject(opts?.channelId, opts?.projectId);
+
+    const files = [
+      ...(await this.listRepoMarkdownFiles(project.clone_path, "ai_dev_stack/ai_project_tasks/staged_sprints", /^sprint_plan_.*\.md$/i)),
+      ...(await this.listRepoMarkdownFiles(project.clone_path, "ai_dev_stack/ai_project_tasks/active", /^sprint_plan_.*\.md$/i)),
+    ].slice(0, safeLimit);
+
+    const sprints: StagedSprintRecord[] = [];
+    for (const absPath of files) {
+      try {
+        const markdown = await fs.readFile(absPath, "utf-8");
+        const relPath = this.toRelPath(absPath);
+        const parsed = this.parseSprintPlan(markdown, relPath);
+        const stat = await fs.stat(absPath);
+        sprints.push({
+          sprint_id: parsed.sprint_id,
+          phase_id: parsed.phase_id,
+          name: parsed.name,
+          status: parsed.status,
+          sprint_plan_path: relPath,
+          sourced_from: "sprint-controller",
+          completed_at: new Date(stat.mtimeMs).toISOString(),
+        });
+      } catch {
+        // Ignore unreadable files and continue.
+      }
+    }
+
+    return {
+      refreshed_at,
+      source: "artifacts",
+      git_head_commit,
+      project_id: project.project_id,
+      ...(opts?.channelId ? { channel_id: opts.channelId } : {}),
+      sprints,
+    };
+  }
+
+  async listRepoStagedTasks(opts?: { channelId?: string; projectId?: string; limit?: number }): Promise<RepoStagedTasksResult> {
+    const safeLimit = this.normalizeLimit(opts?.limit ?? 20);
+    const { project, git_head_commit, refreshed_at } = await this.resolveArtifactProject(opts?.channelId, opts?.projectId);
+
+    const sprintFiles = [
+      ...(await this.listRepoMarkdownFiles(project.clone_path, "ai_dev_stack/ai_project_tasks/staged_sprints", /^sprint_plan_.*\.md$/i)),
+      ...(await this.listRepoMarkdownFiles(project.clone_path, "ai_dev_stack/ai_project_tasks/active", /^sprint_plan_.*\.md$/i)),
+    ];
+
+    const tasks: StagedTaskRecord[] = [];
+    for (const absPath of sprintFiles) {
+      if (tasks.length >= safeLimit) {
+        break;
+      }
+
+      try {
+        const markdown = await fs.readFile(absPath, "utf-8");
+        const relPath = this.toRelPath(absPath);
+        const sprint = this.parseSprintPlan(markdown, relPath);
+        const parsedTasks = this.parseSprintTasks(markdown);
+        const stat = await fs.stat(absPath);
+        const completedAt = new Date(stat.mtimeMs).toISOString();
+
+        for (const task of parsedTasks) {
+          if (tasks.length >= safeLimit) {
+            break;
+          }
+
+          tasks.push({
+            sprint_id: sprint.sprint_id,
+            phase_id: sprint.phase_id,
+            task_id: task.task_id,
+            label: task.label,
+            status: "staged",
+            sprint_plan_path: relPath,
+            sourced_from: "sprint-controller",
+            completed_at: completedAt,
+          });
+        }
+      } catch {
+        // Ignore unreadable files and continue.
+      }
+    }
+
+    return {
+      refreshed_at,
+      source: "artifacts",
+      git_head_commit,
+      project_id: project.project_id,
+      ...(opts?.channelId ? { channel_id: opts.channelId } : {}),
       tasks,
     };
   }

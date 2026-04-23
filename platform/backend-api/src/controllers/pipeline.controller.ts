@@ -131,6 +131,42 @@ export async function getPipelineStagedTasks(req: Request, res: Response, next: 
   }
 }
 
+export async function getStagedPhases(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const channelId = typeof req.query.channel_id === "string" ? req.query.channel_id : undefined;
+    const projectId = typeof req.query.project_id === "string" ? req.query.project_id : undefined;
+    const limit = typeof req.query.limit === "string" ? Number(req.query.limit) : undefined;
+    const result = await pipelineService.listRepoStagedPhases({ channelId, projectId, limit });
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function getStagedSprints(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const channelId = typeof req.query.channel_id === "string" ? req.query.channel_id : undefined;
+    const projectId = typeof req.query.project_id === "string" ? req.query.project_id : undefined;
+    const limit = typeof req.query.limit === "string" ? Number(req.query.limit) : undefined;
+    const result = await pipelineService.listRepoStagedSprints({ channelId, projectId, limit });
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function getStagedTasks(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const channelId = typeof req.query.channel_id === "string" ? req.query.channel_id : undefined;
+    const projectId = typeof req.query.project_id === "string" ? req.query.project_id : undefined;
+    const limit = typeof req.query.limit === "string" ? Number(req.query.limit) : undefined;
+    const result = await pipelineService.listRepoStagedTasks({ channelId, projectId, limit });
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+}
+
 export async function approvePipeline(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const pipelineId = String(req.params.pipelineId);

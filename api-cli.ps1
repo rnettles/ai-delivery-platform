@@ -166,16 +166,16 @@ Details by command:
     Optional: -ChannelId (falls back to active channel), -Limit
 
   staged-phases:
-    Refreshes git, then lists phases by reading phase_plan artifacts for a pipeline.
-    Optional: -PipelineId (falls back to active pipeline or current-by-channel), -ChannelId, -Limit
+    Refreshes git, then lists staged phases from repo artifacts.
+    Optional: -ChannelId (falls back to active channel), -ProjectId, -Limit
 
   staged-sprints:
-    Refreshes git, then lists sprints by reading sprint_plan artifacts for a pipeline.
-    Optional: -PipelineId (falls back to active pipeline or current-by-channel), -ChannelId, -Limit
+    Refreshes git, then lists staged sprints from repo artifacts.
+    Optional: -ChannelId (falls back to active channel), -ProjectId, -Limit
 
   staged-tasks:
-    Refreshes git, then lists staged tasks from sprint_plan artifact contents.
-    Optional: -PipelineId (falls back to active pipeline or current-by-channel), -ChannelId, -Limit
+    Refreshes git, then lists staged tasks from staged sprint plans.
+    Optional: -ChannelId (falls back to active channel), -ProjectId, -Limit
 
   pipeline/pipeline-summary/pipeline-approve/pipeline-cancel/pipeline-takeover/pipeline-handoff/pipeline-skip:
     Require: -PipelineId
@@ -935,20 +935,41 @@ switch ($commandName) {
   }
 
   "staged-phases" {
-    $effectivePipelineId = Get-ContextPipelineId -ExplicitPipelineId $PipelineId -ExplicitChannelId $ChannelId -Required
-    Invoke-Adp -HttpMethod "GET" -RelativePath "/pipeline/$effectivePipelineId/staged/phases" -Query @{ limit = $Limit }
+    $query = @{ limit = $Limit }
+    $effectiveChannelId = Resolve-ChannelId -ExplicitChannelId $ChannelId
+    if (-not [string]::IsNullOrWhiteSpace($effectiveChannelId)) {
+      $query.channel_id = $effectiveChannelId
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ProjectId)) {
+      $query.project_id = $ProjectId
+    }
+    Invoke-Adp -HttpMethod "GET" -RelativePath "/pipeline/staged/phases" -Query $query
     break
   }
 
   "staged-sprints" {
-    $effectivePipelineId = Get-ContextPipelineId -ExplicitPipelineId $PipelineId -ExplicitChannelId $ChannelId -Required
-    Invoke-Adp -HttpMethod "GET" -RelativePath "/pipeline/$effectivePipelineId/staged/sprints" -Query @{ limit = $Limit }
+    $query = @{ limit = $Limit }
+    $effectiveChannelId = Resolve-ChannelId -ExplicitChannelId $ChannelId
+    if (-not [string]::IsNullOrWhiteSpace($effectiveChannelId)) {
+      $query.channel_id = $effectiveChannelId
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ProjectId)) {
+      $query.project_id = $ProjectId
+    }
+    Invoke-Adp -HttpMethod "GET" -RelativePath "/pipeline/staged/sprints" -Query $query
     break
   }
 
   "staged-tasks" {
-    $effectivePipelineId = Get-ContextPipelineId -ExplicitPipelineId $PipelineId -ExplicitChannelId $ChannelId -Required
-    Invoke-Adp -HttpMethod "GET" -RelativePath "/pipeline/$effectivePipelineId/staged/tasks" -Query @{ limit = $Limit }
+    $query = @{ limit = $Limit }
+    $effectiveChannelId = Resolve-ChannelId -ExplicitChannelId $ChannelId
+    if (-not [string]::IsNullOrWhiteSpace($effectiveChannelId)) {
+      $query.channel_id = $effectiveChannelId
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ProjectId)) {
+      $query.project_id = $ProjectId
+    }
+    Invoke-Adp -HttpMethod "GET" -RelativePath "/pipeline/staged/tasks" -Query $query
     break
   }
 
