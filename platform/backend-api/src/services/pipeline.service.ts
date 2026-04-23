@@ -849,15 +849,15 @@ export class PipelineService {
     const now = new Date().toISOString();
     
     // Reset the failed step to running state for retry
+    // Keep original actor for audit trail; this is automated recovery, not human control
     steps[stepIdx] = {
       ...steps[stepIdx],
-      actor,
       status: "running",
       started_at: now,
       completed_at: undefined,
     };
 
-    // Resume pipeline execution
+    // Resume pipeline execution (system takes control, not the operator)
     return this.save(run, { status: "running", steps });
   }
 
