@@ -1,3 +1,5 @@
+import fs from "fs/promises";
+import path from "path";
 import { Script, ScriptExecutionContext } from "./script.interface";
 import { llmFactory } from "../services/llm/llm-factory.service";
 import { artifactService } from "../services/artifact.service";
@@ -78,10 +80,8 @@ function slug(value: string): string {
     .slice(0, 40);
 }
 
-function buildTaskFeatureBranch(taskId: string, sprintId: string): string {
-  const task = slug(taskId) || "task";
-  const sprint = slug(sprintId) || "sprint";
-  return `feature/${task}-${sprint}`;
+function buildTaskFeatureBranch(taskId: string): string {
+  return `feature/${taskId}`;
 }
 
 export class SprintControllerScript implements Script<Record<string, unknown>, unknown> {
@@ -189,11 +189,35 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
 
     let sprintBranch: string | undefined;
     if (project) {
-      sprintBranch = buildTaskFeatureBranch(llm.first_task.task_id, llm.sprint_plan.sprint_id);
+      sprintBranch = buildTaskFeatureBranch(llm.first_task.task_id);
       await projectGitService.ensureReady(project);
       await projectGitService.createBranch(project, sprintBranch);
       await pipelineService.setSprintBranch(pipelineId, sprintBranch);
       context.notify(`🌿 Branch \`${sprintBranch}\` created and ready`);
+
+      // Persist planning artifacts to repo (AI_RUNTIME_PATHS.md)
+      const activeDir = path.join("ai_dev_stack", "ai_project_tasks", "active");
+      const repoBase = path.isAbsolute(project.clone_path)
+        ? project.clone_path
+        : path.join(process.cwd(), project.clone_path);
+      await fs.mkdir(path.join(repoBase, activeDir), { recursive: true });
+      await fs.writeFile(
+        path.join(repoBase, activeDir, `sprint_plan_${llm.sprint_plan.sprint_id.toLowerCase()}.md`),
+        sprintPlanContent,
+        "utf-8"
+      );
+      await fs.writeFile(path.join(repoBase, activeDir, "AI_IMPLEMENTATION_BRIEF.md"), briefContent, "utf-8");
+      await fs.writeFile(
+        path.join(repoBase, activeDir, "current_task.json"),
+        JSON.stringify(currentTask, null, 2),
+        "utf-8"
+      );
+      await projectGitService.commitAll(
+        project,
+        sprintBranch,
+        `chore(${llm.first_task.task_id}): stage sprint artifacts`
+      );
+      context.notify(`📋 Sprint artifacts committed to \`${activeDir}/\` on \`${sprintBranch}\``);
     }
 
     context.log("Sprint Controller setup complete", {

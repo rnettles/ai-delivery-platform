@@ -1,9 +1,14 @@
+import fs from "fs/promises";
+import path from "path";
 import { Script, ScriptExecutionContext } from "./script.interface";
 import { exec } from "child_process";
 import { promisify } from "util";
 import { llmFactory } from "../services/llm/llm-factory.service";
 import { artifactService } from "../services/artifact.service";
 import { governanceService } from "../services/governance.service";
+import { pipelineService } from "../services/pipeline.service";
+import { projectService } from "../services/project.service";
+import { projectGitService } from "../services/project-git.service";
 import { config } from "../config";
 
 const execAsync = promisify(exec);
@@ -159,6 +164,29 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
       "verification_result.md",
       artifactContent
     );
+
+    // Persist verification result to repo (AI_RUNTIME_PATHS.md)
+    try {
+      const run = await pipelineService.get(pipelineId);
+      const project = run.project_id ? await projectService.getById(run.project_id) : null;
+      if (project && run.sprint_branch) {
+        const activeDir = path.join("ai_dev_stack", "ai_project_tasks", "active");
+        const repoBase = path.isAbsolute(project.clone_path)
+          ? project.clone_path
+          : path.join(process.cwd(), project.clone_path);
+        const absPath = path.join(repoBase, activeDir, "verification_result.json");
+        await fs.mkdir(path.dirname(absPath), { recursive: true });
+        await fs.writeFile(absPath, JSON.stringify(verificationResult, null, 2), "utf-8");
+        await projectGitService.commitAll(
+          project,
+          run.sprint_branch,
+          `verify(${taskId}): record ${verificationResult.result} result`
+        );
+        context.notify(`📊 Verification result committed to \`${activeDir}/\` on \`${run.sprint_branch}\``);
+      }
+    } catch (err) {
+      context.log("Verifier: failed to persist result to repo (non-fatal)", { error: String(err) });
+    }
 
     context.log("Verifier complete", {
       task_id: taskId,

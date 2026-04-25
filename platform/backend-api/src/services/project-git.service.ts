@@ -70,6 +70,18 @@ class ProjectGitService {
   }
 
   /**
+   * Check out an existing local or remote branch without creating a new one.
+   * Caller must have called ensureReady() first.
+   */
+  async checkoutBranch(project: Project, branchName: string): Promise<void> {
+    return this.withLock(project.project_id, () => {
+      logger.info("git: checking out existing branch", { project: project.name, branch: branchName });
+      this.git(project.clone_path, ["fetch", "origin"]);
+      this.git(project.clone_path, ["checkout", branchName]);
+    });
+  }
+
+  /**
    * Stage all changes and commit. Returns the new HEAD commit SHA.
    */
   async commitAll(project: Project, branchName: string, message: string): Promise<string> {

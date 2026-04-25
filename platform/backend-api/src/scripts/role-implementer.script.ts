@@ -144,18 +144,21 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       clonePath = project.clone_path;
       await projectGitService.ensureReady(project);
 
-      if (!sprintBranch) {
+      if (run.sprint_branch) {
+        // Sprint controller already created and staged this branch — just check it out.
+        await projectGitService.checkoutBranch(project, run.sprint_branch);
+      } else {
+        // Fallback: create a new branch (pipeline started without sprint-controller).
         const safePipelineId = String(pipelineId).replace(/[^a-zA-Z0-9._/-]/g, "-");
         sprintBranch = `feature/${safePipelineId}`;
-        context.log("Implementer: no sprint branch on run, using fallback branch", {
+        context.log("Implementer: no sprint branch on run, creating fallback branch", {
           pipeline_id: pipelineId,
           sprint_branch: sprintBranch,
         });
+        await projectGitService.createBranch(project, sprintBranch);
       }
-
-      // Ensure we're on a branch before writing files so all work can be pushed remotely.
-      await projectGitService.createBranch(project, sprintBranch);
       context.log("Implementer: repo ready", { clone_path: clonePath, sprint_branch: sprintBranch });
+      if (!sprintBranch) throw new Error("Implementer: sprint branch could not be resolved");
     } catch (err) {
       context.log("Implementer: project/git resolution failed", {
         error: String(err),
