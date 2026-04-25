@@ -1,7 +1,12 @@
+import fs from "fs/promises";
+import path from "path";
 import { Script, ScriptExecutionContext } from "./script.interface";
 import { llmFactory } from "../services/llm/llm-factory.service";
 import { artifactService } from "../services/artifact.service";
 import { governanceService } from "../services/governance.service";
+import { pipelineService } from "../services/pipeline.service";
+import { projectService } from "../services/project.service";
+import { projectGitService } from "../services/project-git.service";
 
 export interface PlannerInput {
   description: string;
@@ -87,6 +92,22 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
     const artifactFilename = `phase_plan_${descriptor}.md`;
     const artifactContent = this.formatMarkdown(plan);
     const artifactPath = await artifactService.write(pipelineId, artifactFilename, artifactContent);
+
+    // Persist to project repo: ai_dev_stack/ai_project_tasks/staged_phases/ (AI_PHASE_PROCESS.md)
+    const run = await pipelineService.get(pipelineId);
+    const project = run.project_id ? await projectService.getById(run.project_id) : null;
+    if (project) {
+      const repoRelPath = path.join("ai_dev_stack", "ai_project_tasks", "staged_phases", artifactFilename);
+      const absPath = path.isAbsolute(project.clone_path)
+        ? path.join(project.clone_path, repoRelPath)
+        : path.join(process.cwd(), project.clone_path, repoRelPath);
+      await fs.mkdir(path.dirname(absPath), { recursive: true });
+      await fs.writeFile(absPath, artifactContent, "utf-8");
+      await projectGitService.ensureReady(project);
+      await projectGitService.commitAll(project, project.default_branch, `plan: draft ${plan.phase_id} phase plan`);
+      await projectGitService.push(project, project.default_branch);
+      context.notify(`📁 Phase plan persisted to \`${repoRelPath}\` on \`${project.default_branch}\``);
+    }
 
     context.log("Planner complete", { phase_id: plan.phase_id, artifact_path: artifactPath });
 
