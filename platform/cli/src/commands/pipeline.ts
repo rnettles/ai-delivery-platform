@@ -40,6 +40,15 @@ function requirePipelineId(explicit?: string): string {
   return id;
 }
 
+function requireChannelId(explicit?: string): string {
+  const id = resolveChannelId(explicit);
+  if (!id) {
+    console.error("Missing required --slack-channel (or set one via: adp active-set --channel-id <id>)");
+    process.exit(1);
+  }
+  return id;
+}
+
 export function registerPipelineCommands(program: Command): void {
   // ── pipeline-create ────────────────────────────────────────────────────────
   program
@@ -58,7 +67,7 @@ export function registerPipelineCommands(program: Command): void {
       if (opts.bodyJson) {
         body = opts.bodyJson;
       } else {
-        const channelId = resolveChannelId(opts.slackChannel);
+        const channelId = requireChannelId(opts.slackChannel);
         const metadata: Record<string, unknown> = { source: "api" };
         if (channelId) metadata.slack_channel = channelId;
 

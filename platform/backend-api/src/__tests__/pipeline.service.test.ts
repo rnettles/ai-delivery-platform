@@ -7,12 +7,18 @@ const mocks = vi.hoisted(() => {
   const insertReturning = vi.fn();
   const updateReturning = vi.fn();
   const artifactCleanup = vi.fn().mockResolvedValue(undefined);
+  const getProjectByChannel = vi.fn();
+  const getProjectById = vi.fn();
+  const getProjectByName = vi.fn();
 
   return {
     selectWhere,
     insertReturning,
     updateReturning,
     artifactCleanup,
+    getProjectByChannel,
+    getProjectById,
+    getProjectByName,
     db: {
       select: vi.fn(() => ({ from: vi.fn(() => ({ where: selectWhere })) })),
       insert: vi.fn(() => ({ values: vi.fn(() => ({ returning: insertReturning })) })),
@@ -29,6 +35,13 @@ vi.mock("../services/logger.service", () => ({
 }));
 vi.mock("../services/artifact.service", () => ({
   artifactService: { cleanup: mocks.artifactCleanup },
+}));
+vi.mock("../services/project.service", () => ({
+  projectService: {
+    getByChannel: mocks.getProjectByChannel,
+    getById: mocks.getProjectById,
+    getByName: mocks.getProjectByName,
+  },
 }));
 
 import { PipelineService } from "../services/pipeline.service";
@@ -67,6 +80,9 @@ describe("PipelineService", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getProjectByChannel.mockResolvedValue({ project_id: "proj-1" });
+    mocks.getProjectById.mockResolvedValue(null);
+    mocks.getProjectByName.mockResolvedValue(null);
     service = new PipelineService();
   });
 
@@ -80,7 +96,7 @@ describe("PipelineService", () => {
       const run = await service.create({
         entry_point: "planner",
         input: { description: "Build a widget" },
-        metadata: { source: "slack" },
+        metadata: { source: "slack", slack_channel: "C123ABC" },
       });
 
       expect(run.pipeline_id).toBe("pipe-2026-04-19-test1234");
@@ -88,6 +104,38 @@ describe("PipelineService", () => {
       expect(run.current_step).toBe("planner");
       expect(run.status).toBe("running");
       expect(mocks.db.insert).toHaveBeenCalledOnce();
+    });
+
+    it("throws 400 when metadata.slack_channel is missing", async () => {
+      await expect(
+        service.create({
+          entry_point: "planner",
+          input: { description: "Build a widget" },
+          metadata: { source: "api" },
+        })
+      ).rejects.toMatchObject({
+        statusCode: 400,
+        code: "SLACK_CHANNEL_REQUIRED",
+      });
+
+      expect(mocks.db.insert).not.toHaveBeenCalled();
+    });
+
+    it("throws 400 when metadata.slack_channel is not mapped", async () => {
+      mocks.getProjectByChannel.mockResolvedValueOnce(null);
+
+      await expect(
+        service.create({
+          entry_point: "planner",
+          input: { description: "Build a widget" },
+          metadata: { source: "api", slack_channel: "C-UNKNOWN" },
+        })
+      ).rejects.toMatchObject({
+        statusCode: 400,
+        code: "INVALID_SLACK_CHANNEL",
+      });
+
+      expect(mocks.db.insert).not.toHaveBeenCalled();
     });
 
     it("marks earlier roles as not_applicable when entry_point is implementer", async () => {
@@ -105,9 +153,8 @@ describe("PipelineService", () => {
       const run = await service.create({
         entry_point: "implementer",
         input: {},
-        metadata: {},
+        metadata: { source: "api", slack_channel: "C123ABC" },
       });
-
       expect(run.steps[0].status).toBe("not_applicable");
       expect(run.steps[1].status).toBe("not_applicable");
       expect(run.steps[2].status).toBe("running");
@@ -123,7 +170,6 @@ describe("PipelineService", () => {
       const run = await service.get("pipe-2026-04-19-test1234");
       expect(run.pipeline_id).toBe("pipe-2026-04-19-test1234");
     });
-
     it("throws 404 HttpError when not found", async () => {
       mocks.selectWhere.mockResolvedValue([]);
 
@@ -471,7 +517,7 @@ describe("PipelineService", () => {
       await service.create({
         entry_point: "planner",
         input: {},
-        metadata: { source: "slack" },
+        metadata: { source: "slack", slack_channel: "C123ABC" },
       });
 
       const insertCall = mocks.db.insert.mock.results[0]?.value as { values: ReturnType<typeof vi.fn> };

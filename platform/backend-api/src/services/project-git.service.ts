@@ -38,14 +38,12 @@ class ProjectGitService {
   }
 
   /**
-   * Ensure a branch exists and check it out.
+   * Create and check out a new branch.
    *
    * Behavior:
-   *  - If local branch exists: checkout it
-   *  - Else if remote branch exists: create local tracking branch from origin
+   *  - If local branch exists: fail fast
+   *  - If remote branch exists: fail fast
    *  - Else: create a new branch from current default-branch HEAD
-   *
-   * This is intentionally non-destructive for existing branches.
    * Caller must have called ensureReady() first.
    */
   async createBranch(project: Project, branchName: string): Promise<void> {
@@ -56,13 +54,15 @@ class ProjectGitService {
       this.git(project.clone_path, ["fetch", "origin"]);
 
       if (this.branchExistsLocal(project.clone_path, branchName)) {
-        this.git(project.clone_path, ["checkout", branchName]);
-        return;
+        const message = `git: branch already exists locally (${branchName})`;
+        logger.error(message, { project: project.name, branch: branchName, clonePath: project.clone_path });
+        throw new Error(message);
       }
 
       if (this.branchExistsRemote(project.clone_path, branchName)) {
-        this.git(project.clone_path, ["checkout", "-b", branchName, `origin/${branchName}`]);
-        return;
+        const message = `git: branch already exists on origin (${branchName})`;
+        logger.error(message, { project: project.name, branch: branchName, clonePath: project.clone_path });
+        throw new Error(message);
       }
 
       this.git(project.clone_path, ["checkout", "-b", branchName]);

@@ -577,25 +577,27 @@ export class PipelineService {
     // Caller-context stack: tracks the originating entry_point for nested flow return semantics.
     metadata.caller_context_stack = [req.entry_point];
 
-    // Resolve project from Slack channel or fall back to default (ADR-027).
-    // Keep create() resilient when project tables are unavailable (e.g., unit-test mocks).
-    let projectId: string | undefined;
-    try {
-      const slackChannel = metadata.slack_channel as string | undefined;
-      if (slackChannel) {
-        const project = await projectService.getByChannel(slackChannel);
-        projectId = project?.project_id;
-      }
-      if (!projectId) {
-        const defaultProject = await projectService.getByName("default");
-        projectId = defaultProject?.project_id;
-      }
-    } catch (err) {
-      logger.info("Project resolution skipped during pipeline create", {
-        pipeline_id: pipelineId,
-        error: String(err),
-      });
+    const requestedSlackChannel =
+      typeof metadata.slack_channel === "string" ? metadata.slack_channel.trim() : "";
+    if (!requestedSlackChannel) {
+      throw new HttpError(
+        400,
+        "SLACK_CHANNEL_REQUIRED",
+        "metadata.slack_channel is required for pipeline creation"
+      );
     }
+
+    const mappedProject = await projectService.getByChannel(requestedSlackChannel);
+    if (!mappedProject) {
+      throw new HttpError(
+        400,
+        "INVALID_SLACK_CHANNEL",
+        "metadata.slack_channel is not mapped to any project",
+        { slack_channel: requestedSlackChannel }
+      );
+    }
+
+    const projectId = mappedProject.project_id;
 
     // Build step history: mark all roles before entry_point as not_applicable
     const entryIdx = ROLE_SEQUENCE.indexOf(req.entry_point);
@@ -630,7 +632,7 @@ export class PipelineService {
         metadata: metadata as Record<string, unknown>,
         input: (req.input ?? {}) as Record<string, unknown>,
         implementer_attempts: 0,
-        project_id: projectId ?? null,
+        project_id: projectId,
         created_at: new Date(),
         updated_at: new Date(),
       })
