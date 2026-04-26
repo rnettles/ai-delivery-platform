@@ -55,6 +55,9 @@ export class PipelineNotifierService {
           step: notification.step,
           agent_caller: payload.agent_caller,
           gate_required: notification.gate_required,
+          status: notification.status,
+          has_message: !!notification.message,
+          message: notification.message,
         });
       }
     } catch (error) {

@@ -108,9 +108,16 @@ export function buildSlackMessage(n: PipelineNotification): { channel: string | 
         type: "section",
         text: {
           type: "mrkdwn",
-          text: `⚠️ *${label} failed* — Pipeline \`${pipeline_id}\` needs attention.${firstArtifact ? `\n*Findings:* \`${firstArtifact}\`` : ""}`,
+          text: `⚠️ *${label} failed* — Pipeline \`${pipeline_id}\` needs attention.${firstArtifact ? `\n*Findings:* \`${firstArtifact}\`` : ""}${message ? `\n*Reason:* ${message}` : ""}`,
         },
       },
+      ...(message ? [{
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `*Error Details:*\n\`\`\`${message}\`\`\``,
+        },
+      }] : []),
       {
         type: "actions",
         block_id: `fail_${pipeline_id}`,

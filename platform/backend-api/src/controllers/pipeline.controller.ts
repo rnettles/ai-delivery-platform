@@ -474,6 +474,9 @@ async function executeCurrentStep(
     // Skip notification on terminal complete — pipeline is done, no actionable gate event.
     // Avoids 404 from n8n when webhook is no longer listening (test-mode one-shot exhausted).
     if (run.current_step !== "complete") {
+      const failureMessage = !result.ok && result.errors?.length
+        ? result.errors[0].message
+        : undefined;
       await pipelineNotifierService.notify({
         pipeline_id: pipelineId,
         step: run.current_step,
@@ -482,6 +485,7 @@ async function executeCurrentStep(
         artifact_paths: artifactPaths,
         metadata: run.metadata,
         agent_caller: callerLabel,
+        message: failureMessage,
       });
     }
 
@@ -492,10 +496,11 @@ async function executeCurrentStep(
         executeCurrentStep(pipelineId, nextRole, {}, requestId).catch(() => {});
       }
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error("Pipeline step execution failed", {
       pipeline_id: pipelineId,
       role,
-      error: error instanceof Error ? error.message : String(error),
+      error: errorMessage,
     });
 
     // Attempt to mark step as failed in the pipeline
@@ -509,6 +514,7 @@ async function executeCurrentStep(
         artifact_paths: [],
         metadata: run.metadata,
         agent_caller: callerLabel,
+        message: errorMessage,
       });
     } catch {
       // If this also fails, the pipeline is in an inconsistent state — log only
