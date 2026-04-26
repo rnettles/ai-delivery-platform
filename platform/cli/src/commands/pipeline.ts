@@ -53,7 +53,7 @@ export function registerPipelineCommands(program: Command): void {
   // ── pipeline-create ────────────────────────────────────────────────────────
   program
     .command("pipeline-create")
-    .description("Create and start a new pipeline")
+    .description("Create and start a new pipeline (auto-sets active pipeline_id on success)")
     .option("--entry-point <role>", "Entry point: planner|sprint-controller|implementer|verifier", "planner")
     .option("--execution-mode <mode>", "next|next-flow|full-sprint")
     .option("--description <text>", "Pipeline description", "local test feature")

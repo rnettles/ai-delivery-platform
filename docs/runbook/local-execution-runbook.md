@@ -231,6 +231,39 @@ Returns `202 Accepted` with a `pipeline_id`. Role execution is asynchronous — 
 Invoke-RestMethod http://localhost:3000/pipeline/<pipeline_id> | ConvertTo-Json -Depth 10
 ```
 
+### 5.6 Using the TypeScript CLI (`adp`)
+
+The repository includes a TypeScript CLI at `platform/cli/` as a convenience wrapper over the REST API. It manages an active context file (`.adp-cli.state.json`) so you don't have to copy-paste IDs between commands.
+
+#### Setup
+
+```powershell
+Set-Location platform/cli
+npm install
+```
+
+#### Set active channel and create a pipeline
+
+```powershell
+npx tsx src/index.ts active-set --channel-id <slack_channel_id>
+npx tsx src/index.ts pipeline-create --entry-point planner --execution-mode next
+```
+
+`pipeline-create` automatically saves the returned `pipeline_id` as active context. Subsequent commands resolve it without `--pipeline-id`:
+
+```powershell
+npx tsx src/index.ts pipeline-summary   # uses active pipeline_id
+npx tsx src/index.ts pipeline-approve   # uses active pipeline_id
+```
+
+Pass `--no-set-active` to suppress auto-save when running multiple parallel pipelines on the same channel:
+
+```powershell
+npx tsx src/index.ts pipeline-create --entry-point planner --no-set-active
+```
+
+To override the saved `pipeline_id` for a single command, pass `--pipeline-id <id>` explicitly on that command.
+
 ---
 
 ## 6. REST Client Quick Reference
@@ -252,6 +285,8 @@ The repository includes a VS Code [REST Client](https://marketplace.visualstudio
 | `platform/backend-api/requests/*.http` | Yes | Request collections by domain (execution, pipeline, coordination, projects) |
 
 After creating a pipeline, copy the returned `pipeline_id` into `.vscode/settings.json` → `rest-client.environmentVariables.<env>.pipelineId` so downstream requests (approve, cancel, status, handoff) pick it up automatically.
+
+> **Using the TypeScript CLI?** Skip this step — `adp pipeline-create` automatically saves the new `pipeline_id` to `.adp-cli.state.json`. See [Section 5.6](#56-using-the-typescript-cli-adp).
 
 ### 6.3 Request file inventory
 
