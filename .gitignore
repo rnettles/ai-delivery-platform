@@ -17,3 +17,4 @@ platform/backend-api/docker/.cache
 .api-cli.state.json
 
 runtime
+platform/.adp-cli.state.json

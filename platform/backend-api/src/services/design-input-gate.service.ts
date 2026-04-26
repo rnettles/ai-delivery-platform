@@ -9,6 +9,9 @@ const FR_ROOTS = ["docs/functional_requirements", "docs/prd"];
 const ADR_ROOTS = ["docs/adr"];
 const TDN_ROOTS = ["docs/design", "docs/architecture"];
 const DESIGN_ROOTS = [...FR_ROOTS, ...ADR_ROOTS, ...TDN_ROOTS];
+const INTAKE_ROOT = "ai_dev_stack/ai_project_tasks/intake";
+
+export type EntryMode = "intake" | "plan";
 
 const DESIGN_FILE_EXTENSIONS = new Set([".md", ".txt", ".json", ".yaml", ".yml"]);
 
@@ -28,6 +31,7 @@ export interface DesignInputGateResult {
   project_id: string;
   project_name: string;
   clone_path: string;
+  entry_mode: EntryMode;
   /** File paths found across all roots (without content — for logging/notification) */
   sample_files: string[];
   /** FR/PRD files loaded with content for LLM context injection (primary planning inputs) */
@@ -36,15 +40,23 @@ export interface DesignInputGateResult {
   adr_context: DesignFile[];
   /** TDN/architecture files loaded with content so the planner can consider design constraints */
   tdn_context: DesignFile[];
+  /** Intake item context (intake-drafting mode only) */
+  intake_context?: DesignFile[];
 }
 
 export class DesignInputGateService {
   /**
    * Validates that design inputs exist AND loads FR/PRD content for LLM injection.
    * Throws HTTP 422 DESIGN_INPUT_MISSING if the project is not mapped or no design
-   * files are found. The returned fr_context is ready to inject into the LLM user message.
+   * files are found. Throws HTTP 422 NO_APPROVED_FRDS if entry_mode is 'plan' and
+   * no FRD with 'Status: Approved' exists (ADR-008 authority boundary enforcement).
+   * The returned fr_context is ready to inject into the LLM user message.
    */
-  async requireRelevantDesignInputs(pipelineId: string, role: string): Promise<DesignInputGateResult> {
+  async requireRelevantDesignInputs(
+    pipelineId: string,
+    role: string,
+    entryMode: EntryMode = "plan"
+  ): Promise<DesignInputGateResult> {
     const run = await pipelineService.get(pipelineId);
     if (!run.project_id) {
       throw new HttpError(
@@ -81,15 +93,62 @@ export class DesignInputGateService {
     const adrContext = await this.loadContext(repoRoot, ADR_ROOTS, MAX_ADR_FILES);
     const tdnContext = await this.loadContext(repoRoot, TDN_ROOTS, MAX_TDN_FILES);
 
+    // Human-AI authority boundary (ADR-008): in plan mode, require at least one Approved FRD
+    if (entryMode === "plan") {
+      const draftFrds = await this.checkFrdStatus(frContext);
+      if (draftFrds.length === frContext.length && frContext.length > 0) {
+        throw new HttpError(
+          422,
+          "NO_APPROVED_FRDS",
+          `Role '${role}' cannot produce a phase plan: no FRDs with Status: Approved were found. ` +
+            `Human approval of FRDs is required before phase planning can proceed (ADR-008).`,
+          {
+            role,
+            pipeline_id: pipelineId,
+            project_id: project.project_id,
+            draft_frds: draftFrds,
+          }
+        );
+      }
+    }
+
+    // Load intake context in intake mode
+    const intakeContext =
+      entryMode === "intake" ? await this.loadIntakeContext(repoRoot) : undefined;
+
     return {
       project_id: project.project_id,
       project_name: project.name,
       clone_path: repoRoot,
+      entry_mode: entryMode,
       sample_files: sampleFiles,
       fr_context: frContext,
       adr_context: adrContext,
       tdn_context: tdnContext,
+      ...(intakeContext !== undefined && { intake_context: intakeContext }),
     };
+  }
+
+  /**
+   * Loads the most recent open intake item's INTAKE.md for intake-drafting mode.
+   * Returns up to 1 file from the intake root.
+   */
+  private async loadIntakeContext(repoRoot: string): Promise<DesignFile[]> {
+    return this.loadContext(repoRoot, [INTAKE_ROOT], 1);
+  }
+
+  /**
+   * Checks which FRD files do NOT have 'Status: Approved' in their content.
+   * Returns paths of non-approved (Draft) FRDs (ADR-008 authority boundary check).
+   */
+  private async checkFrdStatus(frContext: DesignFile[]): Promise<string[]> {
+    const draftFrds: string[] = [];
+    for (const file of frContext) {
+      if (!file.content.includes("Status: Approved")) {
+        draftFrds.push(file.path);
+      }
+    }
+    return draftFrds;
   }
 
   /**

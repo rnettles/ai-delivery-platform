@@ -7,7 +7,7 @@ import { governanceService } from "../services/governance.service";
 import { pipelineService } from "../services/pipeline.service";
 import { projectService } from "../services/project.service";
 import { projectGitService } from "../services/project-git.service";
-import { designInputGateService } from "../services/design-input-gate.service";
+import { designInputGateService, EntryMode } from "../services/design-input-gate.service";
 import { HttpError } from "../utils/http-error";
 
 export interface PlannerInput {
@@ -15,6 +15,7 @@ export interface PlannerInput {
   project_context?: string;
   previous_artifacts?: string[];
   pipeline_id?: string;
+  entry_mode?: EntryMode;
 }
 
 /**
@@ -76,6 +77,7 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
     const typed = input as Partial<PlannerInput>;
     const description = typed.description?.trim() || "Unspecified objective";
     const pipelineId = typed.pipeline_id ?? context.correlation_id ?? context.execution_id;
+    const entryMode: EntryMode = typed.entry_mode === "intake" ? "intake" : "plan";
 
     context.log("Planner running", { description_length: description.length });
     context.notify(`📋 Planning delivery phase...\n> _${description.slice(0, 120)}${description.length > 120 ? "…" : ""}_`);
@@ -100,7 +102,7 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
       context.log("Planner: open-phase pre-condition check skipped", { reason: String(err) });
     }
 
-    const designInputs = await designInputGateService.requireRelevantDesignInputs(pipelineId, "planner");
+    const designInputs = await designInputGateService.requireRelevantDesignInputs(pipelineId, "planner", entryMode);
     context.notify(
       `📚 Design inputs loaded: ${designInputs.fr_context.length} FR/PRD, ` +
       `${designInputs.adr_context.length} ADR, ${designInputs.tdn_context.length} TDN file(s) ` +

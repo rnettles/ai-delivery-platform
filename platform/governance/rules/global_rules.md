@@ -44,9 +44,13 @@ Applies to all automated pipeline roles (planner, sprint-controller, implementer
 - Do NOT include prose or explanation outside the JSON structure.
 
 ## Design Artifact Rules
-
+- ADRs track architecture decisions. Use Status: Proposed (draft) → Accepted (binding) → Deprecated/Superseded.
+- TDNs track technical design notes. Use Status: Draft → In Review → Approved (binding) → Superseded.
+- Do not implement against a Proposed ADR or Draft TDN — these require human approval before they become binding.
 - Do not implement behavior that contradicts an Accepted ADR; flag the conflict instead.
 - Do not invent component interfaces or field schemas not specified in an approved design document.
+- AI agents operate under the human-AI authority boundary (ADR-008): produce Draft/Proposed artifacts only;
+  only human operators may set Status: Approved (FRDs, TDNs) or Status: Accepted (ADRs).
 
 ## Governance Source of Truth
 

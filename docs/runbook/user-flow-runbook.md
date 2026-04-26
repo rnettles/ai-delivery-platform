@@ -6,6 +6,49 @@
 
 ---
 
+## Section 0 — Before You Run a Pipeline
+
+> **Core invariant (ADR-008):** AI agents produce `Draft` artifacts. Only the human operator
+> advances artifacts to approved/accepted states. Do not invoke the coding pipeline until all
+> required FRDs are `Status: Approved`.
+
+### Intake Drafting vs. Phase Planning Mode
+
+The Planner operates in two modes. Choose the right one before running `/plan`:
+
+| Mode | When to use | Command |
+|---|---|---|
+| **Intake Drafting** | You have a new intake item and need AI to draft FRDs/PRDs | `/plan intake <intake-path>` |
+| **Phase Planning** | You have approved FRDs and want a phase plan | `/plan next-flow <description>` |
+
+Do not run `/plan next-flow` until you have at least one FRD with `Status: Approved`. The platform
+will reject the request with `NO_APPROVED_FRDS` if no approved FRDs exist.
+
+### FRD/ADR/TDN Readiness Checklist
+
+Before invoking the phase-planning Planner:
+
+- [ ] At least one FRD exists with `Status: Approved` in its frontmatter
+- [ ] FRDs are in `docs/functional_requirements/` or `docs/prd/`
+- [ ] All required ADRs are `Status: Accepted` (not just `Proposed`)
+- [ ] All required TDNs for Sprint 1 are `Status: Approved`
+- [ ] Intake `status: accepted` is set in `INTAKE.md`
+
+### What the human must do between each gate
+
+| Gate | What the human does |
+|---|---|
+| After intake drafting | Review Draft FRDs; set `Status: Approved`; set intake `status: accepted` |
+| After phase plan draft | Review scope and FR traceability; click ✅ Approve (Hard Stop A — ADR-003) |
+| After sprint plan | Review tasks and sprint scope; click ✅ Approve |
+| After implementation | Review implementation; verify test coverage; click ✅ Approve |
+| After Verifier PASS | Review and merge PR |
+
+For the full governance walkthrough including gate diagrams and recovery procedures, see
+[workflow-process-runbook.md](workflow-process-runbook.md).
+
+---
+
 ## Overview
 
 The platform is operated through Slack slash commands. A human types a command, the AI pipeline runs one or more agent roles (Planner → Sprint Controller → Implementer → Verifier), and posts progress to the originating thread.

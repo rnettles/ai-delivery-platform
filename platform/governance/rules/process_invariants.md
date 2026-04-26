@@ -91,6 +91,23 @@
 - Do not delete or overwrite an ADR. Mark it `Deprecated` or `Superseded` and create a new one.
 - Do not stage the first sprint of a phase that requires a TDN until that TDN has `Status: Approved`.
 - Do not produce working code as the output of a Spike. Spikes produce written findings only.
+- AI agents may draft ADRs (`Status: Proposed`) and TDNs (`Status: Draft`). These are not binding until human-approved.
+
+---
+
+## Human-AI Authority Boundary
+
+- AI agents may create or edit requirements and design artifacts in Draft/Proposed state only.
+- Only the human operator may set `Status: Approved` (FRDs, TDNs) or `Status: Accepted` (ADRs).
+- Only the human operator may set intake status to `accepted`.
+- The Planner must not produce a phase plan if no FRD with `Status: Approved` exists.
+  Return a structured error identifying Draft FRDs instead:
+  `{"error": "NO_APPROVED_FRDS", "draft_frds": [...list of Draft FRDs found...]}`
+- Planner Mode 1 (`entry_mode: intake`): produces Draft artifacts only; stops for human review;
+  does not produce a phase plan; does not set intake status.
+- Planner Mode 2 (`entry_mode: plan`): requires at least one `Status: Approved` FRD as input.
+- No platform implementation may skip or simulate human approval of requirements or design artifacts.
+- See ADR-008.
 
 ---
 
