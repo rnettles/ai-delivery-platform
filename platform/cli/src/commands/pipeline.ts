@@ -56,7 +56,7 @@ export function registerPipelineCommands(program: Command): void {
     .description("Create and start a new pipeline (auto-sets active pipeline_id on success)")
     .option("--entry-point <role>", "Entry point: planner|sprint-controller|implementer|verifier", "planner")
     .option("--execution-mode <mode>", "next|next-flow|full-sprint")
-    .option("--description <text>", "Pipeline description", "local test feature")
+    .option("--description <text>", "Pipeline description")
     .option("--slack-channel <id>", "Slack channel ID")
     .option("--actor <name>", "Actor name", "operator")
     .option("--body-json <json>", "Raw JSON body (overrides other options)")
@@ -69,12 +69,22 @@ export function registerPipelineCommands(program: Command): void {
         body = opts.bodyJson;
       } else {
         const channelId = requireChannelId(opts.slackChannel);
+        const rawDescription = String(opts.description ?? "").trim();
+        if (!rawDescription) {
+          console.error("Missing required --description (example: --description \"stage the next phase\")");
+          process.exit(1);
+        }
+
+        const normalizedDescription = opts.executionMode === "next"
+          ? "stage the next phase"
+          : rawDescription;
+
         const metadata: Record<string, unknown> = { source: "api" };
         if (channelId) metadata.slack_channel = channelId;
 
         const req: CreatePipelineRequest = {
           entry_point: opts.entryPoint,
-          input: { description: opts.description },
+          input: { description: normalizedDescription },
           metadata,
         };
         if (opts.executionMode) req.execution_mode = opts.executionMode;

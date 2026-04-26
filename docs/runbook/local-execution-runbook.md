@@ -246,7 +246,7 @@ npm install
 
 ```powershell
 npx tsx src/index.ts active-set --channel-id <slack_channel_id>
-npx tsx src/index.ts pipeline-create --entry-point planner --execution-mode next
+npx tsx src/index.ts pipeline-create --entry-point planner --execution-mode next --description "stage the next phase"
 ```
 
 `pipeline-create` automatically saves the returned `pipeline_id` as active context. Subsequent commands resolve it without `--pipeline-id`:
