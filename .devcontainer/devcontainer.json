@@ -1,0 +1,14 @@
+{
+    "name": "ai-delivery-platform",
+    "image": "mcr.microsoft.com/devcontainers/typescript-node:22",
+    "postCreateCommand": "bash .devcontainer/setup.sh",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "github.copilot",
+                "github.copilot-chat",
+                "ms-vscode.vscode-typescript-next"
+            ]
+        }
+    }
+}
