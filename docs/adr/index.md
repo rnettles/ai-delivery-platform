@@ -35,3 +35,4 @@ This directory contains all architectural decisions for the system.
 - ADR-028: Project-Scoped Git Repository Lifecycle
 - ADR-029: LLM Provider Abstraction
 - ADR-030: Autonomous Sprint Execution with PR-Gated Human Review
+- ADR-031: Three-Layer Governance Authority and Code-Level Invariant Enforcement
