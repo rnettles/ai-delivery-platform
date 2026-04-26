@@ -5,6 +5,7 @@ import { governanceService } from "../services/governance.service";
 import { pipelineService } from "../services/pipeline.service";
 import { projectService } from "../services/project.service";
 import { projectGitService } from "../services/project-git.service";
+import { designInputGateService } from "../services/design-input-gate.service";
 import { ToolDefinition, ToolCall } from "../services/llm/llm-provider.interface";
 import { HttpError } from "../utils/http-error";
 import fs from "fs/promises";
@@ -166,6 +167,12 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       });
       throw new Error(`Implementer cannot proceed without git persistence: ${String(err)}`);
     }
+
+    const designInputs = await designInputGateService.requireRelevantDesignInputs(pipelineId, "implementer");
+    context.notify(
+      `📚 Design inputs validated (${designInputs.sample_files.length} found). ` +
+      `Using project: \`${designInputs.project_name}\``
+    );
 
     // Build the user prompt with all available context
     const contextParts: string[] = [];

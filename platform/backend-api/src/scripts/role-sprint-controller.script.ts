@@ -8,6 +8,7 @@ import { pipelineService } from "../services/pipeline.service";
 import { projectService } from "../services/project.service";
 import { projectGitService } from "../services/project-git.service";
 import { githubApiService } from "../services/github-api.service";
+import { designInputGateService } from "../services/design-input-gate.service";
 import { HttpError } from "../utils/http-error";
 
 export interface SprintControllerInput {
@@ -150,6 +151,12 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       // Artifact read failure on a fresh pipeline is non-fatal.
       context.log("Sprint Controller: open-sprint pre-condition check skipped", { reason: String(err) });
     }
+
+    const designInputs = await designInputGateService.requireRelevantDesignInputs(pipelineId, "sprint-controller");
+    context.notify(
+      `📚 Design inputs validated (${designInputs.sample_files.length} found). ` +
+      `Using project: \`${designInputs.project_name}\``
+    );
 
     const phasePlanArtifact = await artifactService.findFirst(
       previousArtifacts.filter((p) => p.includes("phase_plan")).concat(previousArtifacts)

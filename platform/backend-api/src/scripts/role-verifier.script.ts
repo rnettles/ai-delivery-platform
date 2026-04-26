@@ -9,7 +9,9 @@ import { governanceService } from "../services/governance.service";
 import { pipelineService } from "../services/pipeline.service";
 import { projectService } from "../services/project.service";
 import { projectGitService } from "../services/project-git.service";
+import { designInputGateService } from "../services/design-input-gate.service";
 import { config } from "../config";
+import { HttpError } from "../utils/http-error";
 
 const execAsync = promisify(exec);
 
@@ -97,6 +99,12 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
 
     const previousArtifacts = typed.previous_artifacts ?? [];
 
+    const designInputs = await designInputGateService.requireRelevantDesignInputs(pipelineId, "verifier");
+    context.notify(
+      `📚 Design inputs validated (${designInputs.sample_files.length} found). ` +
+      `Using project: \`${designInputs.project_name}\``
+    );
+
     // Stage A: required inputs per AI_REVIEW.md
     const briefArtifact = await artifactService.findFirst(
       previousArtifacts.filter((p) => p.includes("AI_IMPLEMENTATION_BRIEF"))
@@ -110,10 +118,19 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
 
     const taskId = this.extractTaskId(taskArtifact?.content) ?? `task-${pipelineId}`;
 
-    const repoPath =
-      (context.metadata.repo_path as string | undefined) ??
-      (input.repo_path as string | undefined) ??
-      config.gitClonePath;
+    const run = await pipelineService.get(pipelineId);
+    const project = run.project_id ? await projectService.getById(run.project_id) : null;
+    if (!project) {
+      throw new HttpError(
+        422,
+        "DESIGN_INPUT_MISSING",
+        "Verifier requires a project-mapped pipeline run.",
+        { pipeline_id: pipelineId }
+      );
+    }
+    const repoPath = path.isAbsolute(project.clone_path)
+      ? project.clone_path
+      : path.join(process.cwd(), project.clone_path);
 
     const commands = this.resolveCommands(input);
     context.notify(`🧪 Running verification: ${commands.map((c) => `\`${c}\``).join(", ")}`);
@@ -167,8 +184,6 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
 
     // Persist verification result to repo (AI_RUNTIME_PATHS.md)
     try {
-      const run = await pipelineService.get(pipelineId);
-      const project = run.project_id ? await projectService.getById(run.project_id) : null;
       if (project && run.sprint_branch) {
         const activeDir = path.join("ai_dev_stack", "ai_project_tasks", "active");
         const repoBase = path.isAbsolute(project.clone_path)

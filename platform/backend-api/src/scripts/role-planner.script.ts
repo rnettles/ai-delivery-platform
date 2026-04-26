@@ -7,6 +7,7 @@ import { governanceService } from "../services/governance.service";
 import { pipelineService } from "../services/pipeline.service";
 import { projectService } from "../services/project.service";
 import { projectGitService } from "../services/project-git.service";
+import { designInputGateService } from "../services/design-input-gate.service";
 import { HttpError } from "../utils/http-error";
 
 export interface PlannerInput {
@@ -26,6 +27,14 @@ export interface PlannerPhasePlan {
   objectives: string[];
   deliverables: string[];
   dependencies: string[];
+  /** FR identifiers from the loaded FR/PRD documents that this phase addresses. Must not be empty. */
+  fr_ids_in_scope: string[];
+  /** Design artifacts required before this phase can advance to Planning (TDNs, ADRs, Spikes) */
+  required_design_artifacts: Array<{
+    type: "TDN" | "ADR" | "Spike";
+    title: string;
+    status: "Required" | "Exists" | "Approved";
+  }>;
   status: "Draft" | "Active" | "Complete";
 }
 
@@ -91,7 +100,24 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
       context.log("Planner: open-phase pre-condition check skipped", { reason: String(err) });
     }
 
-    const userContent = typed.project_context
+    const designInputs = await designInputGateService.requireRelevantDesignInputs(pipelineId, "planner");
+    context.notify(
+      `📚 Design inputs validated (${designInputs.sample_files.length} found). ` +
+      `Using project: \`${designInputs.project_name}\``
+    );
+
+    // Build user content: inject FR/PRD documents so the LLM can reference real FR IDs
+    const frSection = designInputs.fr_context.length > 0
+      ? `# Functional Requirements & PRD Documents\n\nThe following documents define what must be built. ` +
+        `Your phase plan MUST reference FR identifiers from these documents in fr_ids_in_scope.\n\n` +
+        designInputs.fr_context.map((f) => `## ${f.path}\n\n${f.content}`).join("\n\n---\n\n")
+      : "";
+
+    const userContent = frSection
+      ? `${frSection}\n\n---\n\n` +
+        (typed.project_context ? `Project context:\n${typed.project_context}\n\n` : "") +
+        `Delivery request: ${description}`
+      : typed.project_context
       ? `Project context:\n${typed.project_context}\n\nDelivery request: ${description}`
       : `Delivery request: ${description}`;
 
@@ -104,6 +130,17 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
 
     if (!plan.phase_id || !Array.isArray(plan.objectives) || !Array.isArray(plan.deliverables)) {
       throw new Error("Planner LLM response missing required fields (phase_id, objectives, deliverables)");
+    }
+
+    // Hard gate: FR IDs must be present and reference real documents (PLN-GATE-001, ADR-031)
+    if (!Array.isArray(plan.fr_ids_in_scope) || plan.fr_ids_in_scope.length === 0) {
+      throw new HttpError(
+        422,
+        "FR_IDS_REQUIRED",
+        "Planner produced a phase plan with no fr_ids_in_scope. All tasks must map to valid FR IDs " +
+          "(PLN-GATE-001). Ensure docs/functional_requirements or docs/prd contains FR documents.",
+        { phase_id: plan.phase_id, fr_context_files: designInputs.fr_context.map((f) => f.path) }
+      );
     }
     context.notify(`📝 Phase plan drafted: *${plan.name}* (\`${plan.phase_id}\`)\n> ${plan.objectives.length} objective${plan.objectives.length !== 1 ? "s" : ""}, ${plan.deliverables.length} deliverable${plan.deliverables.length !== 1 ? "s" : ""}`);
 
