@@ -115,7 +115,7 @@ If `execution_mode` is omitted, legacy full-pipeline behavior remains the defaul
       "execution_id": "exec-abc123",
       "status": "complete",
       "gate_outcome": "approved",
-      "artifact_paths": ["ai_dev_stack/ai_project_tasks/active/phase_plan_auth.md"],
+      "artifact_paths": ["project_work/ai_project_tasks/active/phase_plan_auth.md"],
       "started_at": "2026-04-19T14:30:00Z",
       "completed_at": "2026-04-19T14:34:12Z",
       "actor": "system"

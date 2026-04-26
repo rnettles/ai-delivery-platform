@@ -17,8 +17,8 @@ All agent guidance lives at relative paths within this project:
 - Runtime policy: `ai_dev_stack/ai_guidance/AI_RUNTIME_POLICY.md`
 - Loading rules: `ai_dev_stack/ai_guidance/AI_RUNTIME_LOADING_RULES.md`
 - Quality gates: `ai_dev_stack/ai_guidance/AI_RUNTIME_GATES.md`
-- Active task: `ai_dev_stack/ai_project_tasks/active/AI_IMPLEMENTATION_BRIEF.md`
-- Project context: `ai_dev_stack/ai_project_tasks/PROJECT_CONTEXT.md`
+- Active task: `project_work/ai_project_tasks/active/AI_IMPLEMENTATION_BRIEF.md`
+- Project context: `project_work/ai_project_tasks/PROJECT_CONTEXT.md`
 
 Always read `AI_RUNTIME_LOADING_RULES.md` before starting any task to determine which
 additional guidance files apply.

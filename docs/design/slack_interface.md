@@ -110,7 +110,7 @@ At each human approval gate, the Execution Service posts a callback to n8n which
 🤖 *Planner completed* — Phase Plan ready for review.
 
 Phase: PH-AUTH-1  |  Pipeline: pipe-2026-0419-001
-Artifact: ai_dev_stack/ai_project_tasks/active/phase_plan_auth.md
+Artifact: project_work/ai_project_tasks/active/phase_plan_auth.md
 
 [ 📄 View Artifact ]  [ ✅ Approve → Continue ]  [ ✋ Take Over ]
 ```
@@ -127,7 +127,7 @@ When Verifier produces a FAIL result:
 ⚠️ *Verifier found issues* — Task TASK-001 did not pass.
 
 Findings: 3 issues  |  Pipeline: pipe-2026-0419-001
-Artifact: ai_dev_stack/ai_project_tasks/active/verification_result.json
+Artifact: project_work/ai_project_tasks/active/verification_result.json
 
 [ 📄 View Findings ]  [ ✋ Take Over Fix ]  [ ⏭ Skip to Close ]
 ```

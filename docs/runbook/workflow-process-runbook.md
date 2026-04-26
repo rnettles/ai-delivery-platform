@@ -103,13 +103,13 @@ controls all approval decisions.
 
 ### Step 1 — Create intake
 ```
-ai_dev_stack/ai_project_tasks/intake/INT-YYYYMMDD-01/INTAKE.md
+project_work/ai_project_tasks/intake/INT-YYYYMMDD-01/INTAKE.md
 ```
 Fields required: Problem Statement, Findings Summary, Proposed Changes.
 
 ### Step 2 — Run Planner in intake-drafting mode
 ```
-/plan intake ai_dev_stack/ai_project_tasks/intake/INT-YYYYMMDD-01/INTAKE.md
+/plan intake project_work/ai_project_tasks/intake/INT-YYYYMMDD-01/INTAKE.md
 ```
 AI drafts FRDs and PRD amendments. All output is `Status: Draft`.
 
@@ -157,13 +157,13 @@ FRDs (adding/updating FR items) rather than entirely new FRDs. Review amendments
 
 ### Step 1 — Open reconciliation intake within 48 hours
 ```
-ai_dev_stack/ai_project_tasks/intake/INT-YYYYMMDD-P1-RECONCILE/INTAKE.md
+project_work/ai_project_tasks/intake/INT-YYYYMMDD-P1-RECONCILE/INTAKE.md
 ```
 Required fields: Problem Statement, Root Cause Analysis, What Bypassed Planning, Proposed FR Changes.
 
 ### Step 2 — AI drafts reconciliation FRDs
 ```
-/plan intake ai_dev_stack/ai_project_tasks/intake/INT-YYYYMMDD-P1-RECONCILE/INTAKE.md
+/plan intake project_work/ai_project_tasks/intake/INT-YYYYMMDD-P1-RECONCILE/INTAKE.md
 ```
 
 ### Step 3 — Human reviews and approves (Gate 1)
