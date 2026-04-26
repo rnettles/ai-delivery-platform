@@ -1,4 +1,5 @@
 import fs from "fs/promises";
+import { Dirent } from "fs";
 import path from "path";
 import { pipelineService } from "./pipeline.service";
 import { projectService } from "./project.service";
@@ -70,9 +71,19 @@ export class DesignInputGateService {
     }
 
     const project = await projectService.getById(run.project_id);
+    if (!project) {
+      throw new HttpError(
+        422,
+        "DESIGN_INPUT_MISSING",
+        `Role '${role}' requires a project-mapped pipeline run, but the project could not be found.`,
+        { role, pipeline_id: pipelineId, project_id: run.project_id }
+      );
+    }
 
     // Ensure gate checks run against the freshest project state (not a stale clone).
-    await projectGitService.ensureReady(project, { forcePull: true });
+    if (project) {
+      await projectGitService.ensureReady(project, { forcePull: true });
+    }
 
     const repoRoot = path.isAbsolute(project.clone_path)
       ? project.clone_path
@@ -124,29 +135,6 @@ export class DesignInputGateService {
             pipeline_id: pipelineId,
             project_id: project.project_id,
             draft_frds: nonApprovedFrds,
-          }
-        );
-      }
-
-      // If TDN artifacts exist for the phase, require at least one Approved TDN.
-      const tdnCandidates = tdnContext.filter(
-        (file) =>
-          file.path.includes("/tdn/") ||
-          /(^|\/)TDN[-_]/i.test(file.path) ||
-          file.content.includes("TDN ID:")
-      );
-      const nonApprovedTdns = this.getNonApprovedFiles(tdnCandidates, "Status: Approved");
-      if (tdnCandidates.length > 0 && nonApprovedTdns.length === tdnCandidates.length) {
-        throw new HttpError(
-          422,
-          "NO_APPROVED_TDNS",
-          `Role '${role}' cannot advance planning: no TDNs with Status: Approved were found. ` +
-            `Human approval of TDNs is required before phase progression can proceed (ADR-008).`,
-          {
-            role,
-            pipeline_id: pipelineId,
-            project_id: project.project_id,
-            draft_tdns: nonApprovedTdns,
           }
         );
       }
@@ -243,7 +231,7 @@ export class DesignInputGateService {
   ): Promise<string[]> {
     if (depth > maxDepth || limit <= 0) return [];
 
-    let entries: fs.Dirent[];
+    let entries: Dirent[];
     try {
       entries = await fs.readdir(absoluteDir, { withFileTypes: true });
     } catch {

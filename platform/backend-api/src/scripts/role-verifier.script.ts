@@ -135,16 +135,17 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
     const commands = this.resolveCommands(input);
     context.notify(`🧪 Running verification: ${commands.map((c) => `\`${c}\``).join(", ")}`);
     const commandResults = await this.runCommands(commands, repoPath, context);
-    const passed = commandResults.every((r) => r.ok);
-    context.notify(passed ? "✅ All verification checks passed" : `❌ ${commandResults.filter((r) => !r.ok).length} check(s) failed — analyzing failures...`);
+    const commandsPassed = commandResults.every((r) => r.ok);
+    context.notify(commandsPassed ? "✅ All verification checks passed" : `❌ ${commandResults.filter((r) => !r.ok).length} check(s) failed — analyzing failures...`);
 
-    let summary = passed
+    let passed = commandsPassed;
+    let summary = commandsPassed
       ? "All verifier commands completed successfully."
       : "One or more verifier commands failed.";
     let requiredCorrections: string[] = [];
     let handoff: HandoffContract | undefined;
 
-    if (!passed) {
+    if (!commandsPassed) {
       const triage = await this.triageFailures({
         taskId,
         commandResults,
@@ -155,6 +156,30 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
       summary = triage.summary;
       requiredCorrections = triage.required_corrections;
       handoff = triage.handoff;
+    }
+
+    // UX gate (AI_RULES.md UX Artifact Rules): verify user_flow.md is Approved when ui_evidence_required
+    if (briefArtifact?.content.includes('"ui_evidence_required": true') ||
+        briefArtifact?.content.includes('**ui_evidence_required:** true')) {
+      const uxFlowPath = path.join(
+        repoPath,
+        "project_work", "ai_project_tasks", "active", "ux", "user_flow.md"
+      );
+      try {
+        const uxContent = await fs.readFile(uxFlowPath, "utf-8");
+        if (!uxContent.includes("Status: Approved")) {
+          requiredCorrections.push(
+            "UX gate: user_flow.md exists but is not Status: Approved — obtain operator approval before closing this task"
+          );
+          passed = false;
+        }
+      } catch {
+        requiredCorrections.push(
+          "UX gate: user_flow.md is required (ui_evidence_required=true) but not found at " +
+            "project_work/ai_project_tasks/active/ux/user_flow.md"
+        );
+        passed = false;
+      }
     }
 
     const verifiedAt = new Date().toISOString();

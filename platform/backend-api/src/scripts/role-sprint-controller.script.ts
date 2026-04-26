@@ -162,6 +162,33 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       previousArtifacts.filter((p) => p.includes("phase_plan")).concat(previousArtifacts)
     );
 
+    // Gate: phase must be in Planning status before sprint staging (process_invariants §Phase Lifecycle Gates)
+    if (phasePlanArtifact) {
+      const statusMatch = /^\*\*Status:\*\*\s+(.+)$/m.exec(phasePlanArtifact.content);
+      const phaseStatus = statusMatch?.[1]?.trim();
+      if (phaseStatus && phaseStatus !== "Planning") {
+        throw new HttpError(
+          409,
+          "PHASE_NOT_IN_PLANNING",
+          `Sprint staging requires the phase plan to be in 'Planning' status, but found '${phaseStatus}'. ` +
+            `Advance the phase from Draft to Planning before staging Sprint 1 (process_invariants §Phase Lifecycle Gates).`,
+          { phase_status: phaseStatus }
+        );
+      }
+
+      // Gate: all required TDNs must be Approved before sprint staging (AI_RULES.md Design Artifact Rules)
+      const blockingTdns = this.extractBlockingTdns(phasePlanArtifact.content);
+      if (blockingTdns.length > 0) {
+        throw new HttpError(
+          422,
+          "NO_APPROVED_TDNS",
+          `Sprint staging is blocked: the phase plan lists ${blockingTdns.length} required TDN(s) that are not Status: Approved. ` +
+            `Human approval of all required TDNs is required before staging Sprint 1 (AI_RULES.md Design Artifact Rules).`,
+          { blocking_tdns: blockingTdns }
+        );
+      }
+    }
+
     const userContent = phasePlanArtifact
       ? `Phase plan:\n\n${phasePlanArtifact.content}\n\nProduce a sprint plan and implementation brief for Sprint 1, Task 1.`
       : "No phase plan found. Produce a generic 2-task Sprint 1 with a foundational first task.";
@@ -177,6 +204,31 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       throw new Error("Sprint Controller LLM response missing required fields");
     }
     context.notify(`🎯 First task identified: *${llm.first_task.task_id}* — ${llm.first_task.title}\n> Effort: ${llm.first_task.estimated_effort} | ${llm.first_task.files_likely_affected.length} file(s) likely affected`);
+
+    // UX gate: user_flow.md must be Approved before staging any user-facing sprint (AI_RULES.md UX Artifact Rules)
+    if (llm.task_flags?.ui_evidence_required === true) {
+      const uxFlowPath = path.join(
+        designInputs.clone_path,
+        "project_work", "ai_project_tasks", "active", "ux", "user_flow.md"
+      );
+      let uxFlowContent: string | null = null;
+      try {
+        uxFlowContent = await fs.readFile(uxFlowPath, "utf-8");
+      } catch {
+        // file not found
+      }
+      if (!uxFlowContent || !uxFlowContent.includes("Status: Approved")) {
+        throw new HttpError(
+          422,
+          "UX_GATE_NOT_SATISFIED",
+          `Sprint staging is blocked: task has ui_evidence_required=true but user_flow.md is ` +
+            `${uxFlowContent ? "not Status: Approved" : "missing"}. ` +
+            `Create and approve user_flow.md at project_work/ai_project_tasks/active/ux/user_flow.md ` +
+            `before staging Sprint 1 (AI_RULES.md UX Artifact Rules).`,
+          { path: uxFlowPath, found: uxFlowContent !== null }
+        );
+      }
+    }
 
     // Write sprint_plan.md — matches naming convention:
     // ai_dev_stack/ai_project_tasks/active/sprint_plan_<SPRINT_ID>.md
@@ -445,5 +497,26 @@ ${flagLines}
 - \`ai_dev_stack/ai_guidance/AI_RUNTIME_POLICY.md\`
 - \`ai_dev_stack/ai_guidance/AI_RUNTIME_GATES.md\`
 `;
+  }
+
+  /**
+   * Parses the phase plan markdown "Required Design Artifacts" table and returns the titles of
+   * any TDN entries whose status is not "Approved". Used to enforce the TDN staging gate.
+   */
+  private extractBlockingTdns(markdown: string): string[] {
+    const blocking: string[] = [];
+    let inArtifactsSection = false;
+    for (const line of markdown.split("\n")) {
+      if (/^## Required Design Artifacts/.test(line)) { inArtifactsSection = true; continue; }
+      if (inArtifactsSection && /^## /.test(line)) break;
+      if (!inArtifactsSection) continue;
+      // Match table rows: | TDN | <title> | <status> |
+      const m = /^\|\s*TDN\s*\|\s*(.+?)\s*\|\s*(.+?)\s*\|/.exec(line);
+      if (m) {
+        const status = m[2].trim();
+        if (status !== "Approved") blocking.push(m[1].trim());
+      }
+    }
+    return blocking;
   }
 }
