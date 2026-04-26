@@ -1,5 +1,11 @@
 # Global Rules — AI Delivery Platform
 
+> **Layer 3 — Platform Mechanics**
+> This file defines platform-specific runtime constraints for Execution Service roles.
+> It MUST NOT redefine, override, relax, or remove any rule from `process_invariants.md`.
+> Process invariants are injected into every system prompt separately via `getComposedPrompt()`.
+> See ADR-031 for the three-layer governance authority model.
+
 Applies to all automated pipeline roles (planner, sprint-controller, implementer, verifier, fixer).
 
 ## Role Boundaries

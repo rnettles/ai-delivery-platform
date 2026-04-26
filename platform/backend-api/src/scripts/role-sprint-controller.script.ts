@@ -8,6 +8,7 @@ import { pipelineService } from "../services/pipeline.service";
 import { projectService } from "../services/project.service";
 import { projectGitService } from "../services/project-git.service";
 import { githubApiService } from "../services/github-api.service";
+import { HttpError } from "../utils/http-error";
 
 export interface SprintControllerInput {
   previous_artifacts?: string[];
@@ -130,6 +131,26 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
   ): Promise<SprintControllerOutput> {
     context.notify("🗂️ Breaking phase plan into sprint tasks and drafting implementation brief...");
 
+    // Pre-condition: no open sprint exists (process_invariants §Sprint Lifecycle Gates, ADR-031)
+    try {
+      const staged = await pipelineService.listStagedSprints(pipelineId);
+      const OPEN_SPRINT_STATUSES = ["staged", "Planning", "Active", "ready_for_verification"];
+      const openSprint = staged.sprints.find((s) => OPEN_SPRINT_STATUSES.includes(s.status));
+      if (openSprint) {
+        throw new HttpError(
+          409,
+          "OPEN_SPRINT_EXISTS",
+          `A sprint is already open (${openSprint.sprint_id}, status: ${openSprint.status}). ` +
+            "Close the open sprint before staging a new one (process_invariants §Sprint Lifecycle Gates).",
+          { sprint_id: openSprint.sprint_id, status: openSprint.status }
+        );
+      }
+    } catch (err) {
+      if (err instanceof HttpError) throw err;
+      // Artifact read failure on a fresh pipeline is non-fatal.
+      context.log("Sprint Controller: open-sprint pre-condition check skipped", { reason: String(err) });
+    }
+
     const phasePlanArtifact = await artifactService.findFirst(
       previousArtifacts.filter((p) => p.includes("phase_plan")).concat(previousArtifacts)
     );
@@ -138,7 +159,7 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       ? `Phase plan:\n\n${phasePlanArtifact.content}\n\nProduce a sprint plan and implementation brief for Sprint 1, Task 1.`
       : "No phase plan found. Produce a generic 2-task Sprint 1 with a foundational first task.";
 
-    const systemPrompt = await governanceService.getPrompt("sprint-controller");
+    const systemPrompt = await governanceService.getComposedPrompt("sprint-controller");
     const provider = await llmFactory.forRole("sprint-controller");
     const llm = await provider.chatJson<LlmResponse>([
       { role: "system", content: systemPrompt },

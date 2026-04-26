@@ -75,6 +75,19 @@ class GovernanceService {
     return fs.readFile(promptPath, "utf-8");
   }
 
+  /**
+   * Returns a composed system prompt for LLM calls: process invariants prepended to the
+   * role-specific mechanics. This ensures Layer 1 invariants reach the LLM regardless of
+   * what the Layer 3 role prompt file contains. See ADR-031.
+   */
+  async getComposedPrompt(role: string): Promise<string> {
+    const [invariants, rolePrompt] = await Promise.all([
+      this.getRule("process_invariants"),
+      this.getPrompt(role),
+    ]);
+    return `## PROCESS INVARIANTS (non-overridable)\n\n${invariants}\n\n---\n\n## ROLE-SPECIFIC MECHANICS\n\n${rolePrompt}`;
+  }
+
   async getRule(key: string): Promise<string> {
     const manifest = await this.loadManifest();
     const entry = manifest.rules[key];

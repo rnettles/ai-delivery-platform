@@ -7,6 +7,7 @@ import { governanceService } from "../services/governance.service";
 import { pipelineService } from "../services/pipeline.service";
 import { projectService } from "../services/project.service";
 import { projectGitService } from "../services/project-git.service";
+import { HttpError } from "../utils/http-error";
 
 export interface PlannerInput {
   description: string;
@@ -70,11 +71,31 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
     context.log("Planner running", { description_length: description.length });
     context.notify(`📋 Planning delivery phase...\n> _${description.slice(0, 120)}${description.length > 120 ? "…" : ""}_`);
 
+    // Pre-condition: no open phase exists (process_invariants §Phase Lifecycle Gates, ADR-031)
+    try {
+      const staged = await pipelineService.listStagedPhases(pipelineId);
+      const OPEN_PHASE_STATUSES = ["Draft", "Planning", "Active"];
+      const openPhase = staged.phases.find((p) => OPEN_PHASE_STATUSES.includes(p.status));
+      if (openPhase) {
+        throw new HttpError(
+          409,
+          "OPEN_PHASE_EXISTS",
+          `A phase is already open (${openPhase.phase_id}, status: ${openPhase.status}). ` +
+            "Close or supersede it before staging a new phase (process_invariants §Phase Lifecycle Gates).",
+          { phase_id: openPhase.phase_id, status: openPhase.status }
+        );
+      }
+    } catch (err) {
+      if (err instanceof HttpError) throw err;
+      // Artifact read failure (e.g., no prior artifacts on a fresh pipeline) is non-fatal.
+      context.log("Planner: open-phase pre-condition check skipped", { reason: String(err) });
+    }
+
     const userContent = typed.project_context
       ? `Project context:\n${typed.project_context}\n\nDelivery request: ${description}`
       : `Delivery request: ${description}`;
 
-    const systemPrompt = await governanceService.getPrompt("planner");
+    const systemPrompt = await governanceService.getComposedPrompt("planner");
     const provider = await llmFactory.forRole("planner");
     const plan = await provider.chatJson<PlannerPhasePlan>([
       { role: "system", content: systemPrompt },

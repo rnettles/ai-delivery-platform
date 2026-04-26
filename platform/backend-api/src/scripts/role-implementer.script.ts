@@ -6,6 +6,7 @@ import { pipelineService } from "../services/pipeline.service";
 import { projectService } from "../services/project.service";
 import { projectGitService } from "../services/project-git.service";
 import { ToolDefinition, ToolCall } from "../services/llm/llm-provider.interface";
+import { HttpError } from "../utils/http-error";
 import fs from "fs/promises";
 import path from "path";
 
@@ -181,7 +182,7 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
         ? `${contextParts.join("\n\n---\n\n")}${repoNote}`
         : `No implementation brief found.${repoNote}`;
 
-    const systemPrompt = await governanceService.getPrompt("implementer");
+    const systemPrompt = await governanceService.getComposedPrompt("implementer");
     const provider = await llmFactory.forRole("implementer");
 
     // ─── Tool execution state ────────────────────────────────────────────────
@@ -294,6 +295,19 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
         summary: "Implementation completed (finish tool not called)",
         files_changed: writtenFiles.map((f) => ({ ...f, description: `${f.action}d` })),
       };
+    }
+
+    // Post-condition: implementation limit ≤5 files (process_invariants §Implementation Limits, ADR-031)
+    // Layer 3 tightens the Layer 1 standard of ≤7 to ≤5 for platform-driven execution.
+    if (finishPayload.files_changed.length > 5) {
+      throw new HttpError(
+        422,
+        "INVARIANT_VIOLATION",
+        `Implementation limit exceeded: ${finishPayload.files_changed.length} file(s) changed ` +
+          "(platform limit: ≤5 files per task). Reduce scope and retry " +
+          "(process_invariants §Implementation Limits).",
+        { files_changed: finishPayload.files_changed.length, limit: 5 }
+      );
     }
 
     // Commit + push are mandatory for durable implementer work.

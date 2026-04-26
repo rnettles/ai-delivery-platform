@@ -13,6 +13,7 @@
     "verifier": { "prompt": "prompts/role-verifier.md" }
   },
   "rules": {
+    "process_invariants": "rules/process_invariants.md",
     "global": "rules/global_rules.md",
     "runtime_loading": "rules/runtime_loading_rules.md",
     "runtime_gates": "rules/runtime_gates.md",

@@ -274,7 +274,7 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
     taskContent?: string;
     implContent?: string;
   }): Promise<LlmResponse> {
-    const systemPrompt = await governanceService.getPrompt("verifier");
+    const systemPrompt = await governanceService.getComposedPrompt("verifier");
     const provider = await llmFactory.forRole("verifier");
 
     const sections: string[] = [];
