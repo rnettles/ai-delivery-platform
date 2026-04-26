@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import { request } from "../client";
-import { loadState } from "../state";
+import { loadState, saveState } from "../state";
 import { sendNotification } from "../notify";
 import {
   formatPipeline,
@@ -61,6 +61,7 @@ export function registerPipelineCommands(program: Command): void {
     .option("--actor <name>", "Actor name", "operator")
     .option("--body-json <json>", "Raw JSON body (overrides other options)")
     .option("--json", "Output raw JSON")
+    .option("--no-set-active", "Do not update active pipeline_id after create")
     .action(async (opts) => {
       let body: CreatePipelineRequest | string;
 
@@ -90,6 +91,12 @@ export function registerPipelineCommands(program: Command): void {
         console.log(JSON.stringify(res, null, 2));
       } else {
         console.log(formatPipeline(res));
+      }
+
+      // Auto-persist the new pipeline as active unless opted out
+      if (opts.setActive !== false) {
+        saveState({ ...loadState(), pipeline_id: res.pipeline_id });
+        if (!opts.json) console.log(`Active pipeline set to: ${res.pipeline_id}`);
       }
 
       // Only pass channel_id when the user explicitly specified --slack-channel
