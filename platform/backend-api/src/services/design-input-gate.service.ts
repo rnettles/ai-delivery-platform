@@ -2,6 +2,7 @@ import fs from "fs/promises";
 import path from "path";
 import { pipelineService } from "./pipeline.service";
 import { projectService } from "./project.service";
+import { projectGitService } from "./project-git.service";
 import { HttpError } from "../utils/http-error";
 
 // Document roots by category — searched in priority order within each category
@@ -48,8 +49,9 @@ export class DesignInputGateService {
   /**
    * Validates that design inputs exist AND loads FR/PRD content for LLM injection.
    * Throws HTTP 422 DESIGN_INPUT_MISSING if the project is not mapped or no design
-   * files are found. Throws HTTP 422 NO_APPROVED_FRDS if entry_mode is 'plan' and
-   * no FRD with 'Status: Approved' exists (ADR-008 authority boundary enforcement).
+    * files are found. Throws HTTP 422 NO_APPROVED_FRDS if entry_mode is 'plan' and
+    * no FRD with 'Status: Approved' exists. Throws HTTP 422 NO_APPROVED_TDNS if
+    * TDN artifacts are present but none are Approved (ADR-008 authority boundary).
    * The returned fr_context is ready to inject into the LLM user message.
    */
   async requireRelevantDesignInputs(
@@ -68,6 +70,10 @@ export class DesignInputGateService {
     }
 
     const project = await projectService.getById(run.project_id);
+
+    // Ensure gate checks run against the freshest project state (not a stale clone).
+    await projectGitService.ensureReady(project, { forcePull: true });
+
     const repoRoot = path.isAbsolute(project.clone_path)
       ? project.clone_path
       : path.join(process.cwd(), project.clone_path);
@@ -95,8 +101,19 @@ export class DesignInputGateService {
 
     // Human-AI authority boundary (ADR-008): in plan mode, require at least one Approved FRD
     if (entryMode === "plan") {
-      const draftFrds = await this.checkFrdStatus(frContext);
-      if (draftFrds.length === frContext.length && frContext.length > 0) {
+      const nonApprovedFrds = this.getNonApprovedFiles(frContext, "Status: Approved", (file) =>
+        file.path.includes("docs/functional_requirements") ||
+        /(^|\/)FRD[-_]/i.test(file.path) ||
+        file.content.includes("FR Document ID:")
+      );
+      const frdCandidates = frContext.filter(
+        (file) =>
+          file.path.includes("docs/functional_requirements") ||
+          /(^|\/)FRD[-_]/i.test(file.path) ||
+          file.content.includes("FR Document ID:")
+      );
+
+      if (frdCandidates.length > 0 && nonApprovedFrds.length === frdCandidates.length) {
         throw new HttpError(
           422,
           "NO_APPROVED_FRDS",
@@ -106,7 +123,30 @@ export class DesignInputGateService {
             role,
             pipeline_id: pipelineId,
             project_id: project.project_id,
-            draft_frds: draftFrds,
+            draft_frds: nonApprovedFrds,
+          }
+        );
+      }
+
+      // If TDN artifacts exist for the phase, require at least one Approved TDN.
+      const tdnCandidates = tdnContext.filter(
+        (file) =>
+          file.path.includes("/tdn/") ||
+          /(^|\/)TDN[-_]/i.test(file.path) ||
+          file.content.includes("TDN ID:")
+      );
+      const nonApprovedTdns = this.getNonApprovedFiles(tdnCandidates, "Status: Approved");
+      if (tdnCandidates.length > 0 && nonApprovedTdns.length === tdnCandidates.length) {
+        throw new HttpError(
+          422,
+          "NO_APPROVED_TDNS",
+          `Role '${role}' cannot advance planning: no TDNs with Status: Approved were found. ` +
+            `Human approval of TDNs is required before phase progression can proceed (ADR-008).`,
+          {
+            role,
+            pipeline_id: pipelineId,
+            project_id: project.project_id,
+            draft_tdns: nonApprovedTdns,
           }
         );
       }
@@ -137,18 +177,15 @@ export class DesignInputGateService {
     return this.loadContext(repoRoot, [INTAKE_ROOT], 1);
   }
 
-  /**
-   * Checks which FRD files do NOT have 'Status: Approved' in their content.
-   * Returns paths of non-approved (Draft) FRDs (ADR-008 authority boundary check).
-   */
-  private async checkFrdStatus(frContext: DesignFile[]): Promise<string[]> {
-    const draftFrds: string[] = [];
-    for (const file of frContext) {
-      if (!file.content.includes("Status: Approved")) {
-        draftFrds.push(file.path);
-      }
-    }
-    return draftFrds;
+  private getNonApprovedFiles(
+    files: DesignFile[],
+    requiredStatusLine: string,
+    predicate?: (file: DesignFile) => boolean
+  ): string[] {
+    return files
+      .filter((file) => (predicate ? predicate(file) : true))
+      .filter((file) => !file.content.includes(requiredStatusLine))
+      .map((file) => file.path);
   }
 
   /**
