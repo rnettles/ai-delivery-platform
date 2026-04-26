@@ -4,16 +4,20 @@ import { pipelineService } from "./pipeline.service";
 import { projectService } from "./project.service";
 import { HttpError } from "../utils/http-error";
 
-// Roots searched in priority order — FRs and PRD first, then design artifacts
+// Document roots by category — searched in priority order within each category
 const FR_ROOTS = ["docs/functional_requirements", "docs/prd"];
-const DESIGN_ROOTS = ["docs/functional_requirements", "docs/prd", "docs/design", "docs/architecture"];
+const ADR_ROOTS = ["docs/adr"];
+const TDN_ROOTS = ["docs/design", "docs/architecture"];
+const DESIGN_ROOTS = [...FR_ROOTS, ...ADR_ROOTS, ...TDN_ROOTS];
 
 const DESIGN_FILE_EXTENSIONS = new Set([".md", ".txt", ".json", ".yaml", ".yml"]);
 
 // Maximum characters per file loaded into LLM context (prevents token overflow)
 const MAX_FILE_CHARS = 6000;
-// Maximum number of files to load as context
-const MAX_CONTEXT_FILES = 6;
+// Per-category file limits — FRs get priority, ADRs and TDNs are secondary
+const MAX_FR_FILES = 4;
+const MAX_ADR_FILES = 3;
+const MAX_TDN_FILES = 3;
 
 export interface DesignFile {
   path: string;
@@ -24,10 +28,14 @@ export interface DesignInputGateResult {
   project_id: string;
   project_name: string;
   clone_path: string;
-  /** File paths found (without content — for logging/notification) */
+  /** File paths found across all roots (without content — for logging/notification) */
   sample_files: string[];
-  /** FR/PRD files loaded with truncated content for LLM context injection */
+  /** FR/PRD files loaded with content for LLM context injection (primary planning inputs) */
   fr_context: DesignFile[];
+  /** ADR files loaded with content so the planner can evaluate compliance and congruency */
+  adr_context: DesignFile[];
+  /** TDN/architecture files loaded with content so the planner can consider design constraints */
+  tdn_context: DesignFile[];
 }
 
 export class DesignInputGateService {
@@ -68,8 +76,10 @@ export class DesignInputGateService {
       );
     }
 
-    // Load FR/PRD content for LLM context injection
-    const frContext = await this.loadFrContext(repoRoot);
+    // Load design artifact content for LLM context injection
+    const frContext = await this.loadContext(repoRoot, FR_ROOTS, MAX_FR_FILES);
+    const adrContext = await this.loadContext(repoRoot, ADR_ROOTS, MAX_ADR_FILES);
+    const tdnContext = await this.loadContext(repoRoot, TDN_ROOTS, MAX_TDN_FILES);
 
     return {
       project_id: project.project_id,
@@ -77,34 +87,37 @@ export class DesignInputGateService {
       clone_path: repoRoot,
       sample_files: sampleFiles,
       fr_context: frContext,
+      adr_context: adrContext,
+      tdn_context: tdnContext,
     };
   }
 
   /**
-   * Loads content of FR/PRD files (truncated) for injection into LLM user messages.
-   * Prioritises docs/functional_requirements then docs/prd.
+   * Loads file contents (truncated to MAX_FILE_CHARS) from the given root directories.
+   * Files are collected in priority order across roots up to maxFiles total.
    */
-  private async loadFrContext(repoRoot: string): Promise<DesignFile[]> {
+  private async loadContext(repoRoot: string, roots: string[], maxFiles: number): Promise<DesignFile[]> {
     const loaded: DesignFile[] = [];
 
-    for (const root of FR_ROOTS) {
+    for (const root of roots) {
+      if (loaded.length >= maxFiles) break;
       const absRoot = path.join(repoRoot, root);
-      const filePaths = await this.collectFiles(absRoot, repoRoot, 0, 3, MAX_CONTEXT_FILES - loaded.length);
+      const filePaths = await this.collectFiles(absRoot, repoRoot, 0, 3, maxFiles - loaded.length);
 
       for (const relPath of filePaths) {
-        if (loaded.length >= MAX_CONTEXT_FILES) break;
+        if (loaded.length >= maxFiles) break;
         try {
           const raw = await fs.readFile(path.join(repoRoot, relPath), "utf-8");
-          const content = raw.length > MAX_FILE_CHARS
-            ? raw.slice(0, MAX_FILE_CHARS) + `\n\n[...truncated at ${MAX_FILE_CHARS} chars — see ${relPath} for full content]`
-            : raw;
+          const content =
+            raw.length > MAX_FILE_CHARS
+              ? raw.slice(0, MAX_FILE_CHARS) +
+                `\n\n[...truncated at ${MAX_FILE_CHARS} chars — see ${relPath} for full content]`
+              : raw;
           loaded.push({ path: relPath, content });
         } catch {
           // File unreadable — skip
         }
       }
-
-      if (loaded.length >= MAX_CONTEXT_FILES) break;
     }
 
     return loaded;
