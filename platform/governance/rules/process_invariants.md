@@ -32,6 +32,19 @@
 - Every sprint task must trace to a phase checklist item or an accepted intake item.
 - Phase lifecycle: `Draft` → `Planning` → `Active` → `Complete`.
 
+**Planner input requirements:**
+- Planner must only plan FRs not already claimed by an existing phase plan.
+  Cross-reference `staged_phases/*.md` to determine the claimed FR set before planning.
+- If all known FRs are already covered by existing phase plans, the Planner must stop and
+  report that there are no pending FRs — do not create an empty or redundant phase.
+- Every phase plan must include a non-empty `fr_ids_in_scope` field referencing actual FR
+  identifiers from the project's FR/PRD documents. Phase plans without FR traceability are invalid.
+- Planner must evaluate all loaded ADRs for compliance and congruency before producing a phase plan.
+  Any conflict with an Accepted ADR must be flagged in `required_design_artifacts` (type ADR,
+  status Required) — do not silently ignore ADR conflicts.
+- Planner must consider all related TDNs during phase design. Any TDN required before
+  implementation can begin must be listed in `required_design_artifacts` (type TDN, status Required).
+
 ---
 
 ## Sprint Lifecycle Gates
