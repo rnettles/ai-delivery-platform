@@ -25,9 +25,9 @@ additional guidance files apply.
 
 ## Agent Files
 
-Agent prompt definitions originate from `ai-project_template/.github/agents/` and are
-synced to the global Copilot agents folder via `dotfiles/install.bat`. The
-`ai-project_template` repo is included as a workspace folder in
+Agent prompt definitions live in `ai-project_template/.github/agents/` and are
+synced to the global Copilot agents folder via `ai-project_template/install/install.bat`.
+The `ai-project_template` repo is included as a workspace folder in
 `ai-delivery-platform.code-workspace` for direct agent discovery.
 
 ## Guidance Sync
@@ -35,11 +35,11 @@ synced to the global Copilot agents folder via `dotfiles/install.bat`. The
 To update policy guidance files from the template, run:
 
 ```
-dotfiles\sync-project.bat C:\dev\code\ai-delivery-platform
+ai-project_template\install\sync-project.bat C:\dev\code\ai-delivery-platform
 ```
 
 In Codespaces:
 
 ```
-bash /workspaces/dotfiles/sync-project.sh /workspaces/ai-delivery-platform
+bash /workspaces/ai-project_template/install/sync-project.sh /workspaces/ai-delivery-platform
 ```
