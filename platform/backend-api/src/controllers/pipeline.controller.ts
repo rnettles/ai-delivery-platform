@@ -416,6 +416,11 @@ async function executeCurrentStep(
       previous_artifacts: previousArtifacts,
     };
 
+    // Pass execution_mode from pipeline metadata to script input
+    if (currentRun.metadata?.execution_mode) {
+      enrichedInput.execution_mode = currentRun.metadata.execution_mode;
+    }
+
     // Build a notify function that fires progress messages to Slack — best-effort, never throws.
     const notifyProgress = (message: string): void => {
       pipelineNotifierService.notify({

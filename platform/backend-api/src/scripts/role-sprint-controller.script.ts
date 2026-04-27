@@ -157,9 +157,38 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       `Using project: \`${designInputs.project_name}\``
     );
 
-    const phasePlanArtifact = await artifactService.findFirst(
+    let phasePlanArtifact = await artifactService.findFirst(
       previousArtifacts.filter((p) => p.includes("phase_plan")).concat(previousArtifacts)
     );
+
+    // Fallback: if no phase plan in pipeline artifacts, read most recent one from project repo staged_phases/
+    if (!phasePlanArtifact) {
+      const stagedPhasesDir = path.join(
+        designInputs.clone_path,
+        "project_work",
+        "ai_project_tasks",
+        "staged_phases"
+      );
+      try {
+        const entries = await fs.readdir(stagedPhasesDir, { withFileTypes: true });
+        const planFiles = entries
+          .filter((e) => e.isFile() && /^phase_plan_.*\.md$/i.test(e.name))
+          .map((e) => path.join(stagedPhasesDir, e.name));
+        if (planFiles.length > 0) {
+          // Pick most recently modified phase plan
+          const withMtime = await Promise.all(
+            planFiles.map(async (fp) => ({ fp, mtime: (await fs.stat(fp)).mtimeMs }))
+          );
+          withMtime.sort((a, b) => b.mtime - a.mtime);
+          const content = await fs.readFile(withMtime[0].fp, "utf-8");
+          phasePlanArtifact = { path: withMtime[0].fp, content };
+          context.notify(`📄 Phase plan loaded from repo: \`${path.basename(withMtime[0].fp)}\``);
+        }
+      } catch {
+        // staged_phases dir doesn't exist yet — non-fatal, continue without phase plan
+        context.log("Sprint Controller: no staged_phases dir found, continuing without phase plan");
+      }
+    }
 
     // Gate: phase must be in Planning status before sprint staging (process_invariants §Phase Lifecycle Gates)
     if (phasePlanArtifact) {
