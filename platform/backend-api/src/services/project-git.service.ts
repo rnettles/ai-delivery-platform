@@ -147,6 +147,10 @@ class ProjectGitService {
           if (forcePull) {
             logger.info("git: fetch + reset (force-pull)", { project: project.name, clonePath });
             this.git(clonePath, ["fetch", "origin"]);
+            // Checkout the default branch before reset so an in-progress feature branch
+            // left checked out by a prior sprint-controller run is never clobbered.
+            // reset --hard only moves the currently checked-out branch's ref.
+            this.git(clonePath, ["checkout", project.default_branch]);
             this.git(clonePath, ["reset", "--hard", `origin/${project.default_branch}`]);
           } else {
             logger.info("git: pulling (TTL expired)", { project: project.name, clonePath });
