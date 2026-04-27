@@ -4,6 +4,8 @@ import * as path from "path";
 import { pipelineService } from "../services/pipeline.service";
 import { pipelineNotifierService } from "../services/pipeline-notifier.service";
 import { executionService } from "../services/execution.service";
+import { projectService } from "../services/project.service";
+import { projectGitService } from "../services/project-git.service";
 import {
   CreatePipelineRequest,
   PipelineHandoffRequest,
@@ -393,6 +395,17 @@ async function executeCurrentStep(
     // Fetch current pipeline state to pass completed artifact paths to the next role.
     // Roles are artifact-driven — each reads from the prior step's output.
     const currentRun = await pipelineService.get(pipelineId);
+
+    // Git is the source of truth (ADR-001, ADR-011). Force-pull before any gate logic
+    // or script reads artifacts from the clone, so approval status changes made in the
+    // remote repo are visible to this execution.
+    if (currentRun.project_id) {
+      const project = await projectService.getById(currentRun.project_id);
+      if (project) {
+        logger.info("git: force-pull before role execution", { pipeline_id: pipelineId, role, project: project.name });
+        await projectGitService.ensureReady(project, { forcePull: true });
+      }
+    }
     const previousArtifacts = currentRun.steps
       .filter((s) => s.status === "complete" || s.status === "not_applicable")
       .flatMap((s) => s.artifact_paths);
