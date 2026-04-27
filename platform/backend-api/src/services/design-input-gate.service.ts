@@ -11,7 +11,7 @@ const FR_ROOTS = ["docs/functional_requirements", "docs/prd"];
 const ADR_ROOTS = ["docs/adr"];
 const TDN_ROOTS = ["docs/design", "docs/architecture"];
 const DESIGN_ROOTS = [...FR_ROOTS, ...ADR_ROOTS, ...TDN_ROOTS];
-const INTAKE_ROOT = "ai_dev_stack/ai_project_tasks/intake";
+const INTAKE_ROOT = "project_work/ai_project_tasks/intake";
 
 export type EntryMode = "intake" | "plan";
 

@@ -479,7 +479,7 @@ describe("PipelineService", () => {
       expect(run.status).toBe("running");
     });
 
-    it("mode=full-sprint: sprint-controller close-out transitions to awaiting_pr_review", async () => {
+    it("mode=full-sprint: sprint-controller task close-out routes to planner", async () => {
       const sprintControllerRow = makeRow({
         entry_point: "sprint-controller",
         current_step: "sprint-controller",
@@ -495,7 +495,7 @@ describe("PipelineService", () => {
       });
 
       mocks.selectWhere.mockResolvedValueOnce([sprintControllerRow]);
-      const savedRow = makeRow({ current_step: "complete", status: "awaiting_pr_review" });
+      const savedRow = makeRow({ current_step: "planner", status: "running" });
       mocks.updateReturning.mockResolvedValueOnce([savedRow]);
 
       const run = await service.completeStep(
@@ -506,8 +506,41 @@ describe("PipelineService", () => {
         false
       );
 
-      // Sprint close-out: verifier was previously complete → open PR and await review
+      // Sprint Controller closes out task scope and hands off sprint close decision to Planner.
+      expect(run.status).toBe("running");
+      expect(run.current_step).toBe("planner");
+    });
+
+    it("planner sprint close-out transitions to awaiting_pr_review", async () => {
+      const plannerRow = makeRow({
+        entry_point: "planner",
+        current_step: "planner",
+        status: "running",
+        metadata: { source: "slack", execution_mode: "full-sprint" },
+        steps: [
+          { role: "planner", status: "complete", gate_outcome: "auto", artifact_paths: ["artifacts/phase_plan.md"], actor: "system", started_at: "2026-04-19T00:00:00.000Z", completed_at: "2026-04-19T00:30:00.000Z" },
+          { role: "sprint-controller", status: "complete", gate_outcome: "auto", artifact_paths: ["artifacts/sprint_plan_s01.md"], actor: "system", started_at: "2026-04-19T00:30:00.000Z", completed_at: "2026-04-19T01:00:00.000Z" },
+          { role: "implementer", status: "complete", gate_outcome: "auto", artifact_paths: ["artifacts/implementation_summary.md"], actor: "system", started_at: "2026-04-19T01:00:00.000Z", completed_at: "2026-04-19T01:30:00.000Z" },
+          { role: "verifier", status: "complete", gate_outcome: "auto", artifact_paths: ["artifacts/verification_result.json"], actor: "system", started_at: "2026-04-19T01:30:00.000Z", completed_at: "2026-04-19T02:00:00.000Z" },
+          { role: "sprint-controller", status: "complete", gate_outcome: "auto", artifact_paths: ["artifacts/sprint_closeout.json"], actor: "system", started_at: "2026-04-19T02:00:00.000Z", completed_at: "2026-04-19T02:30:00.000Z" },
+          { role: "planner", status: "running", gate_outcome: null, artifact_paths: [], actor: "system", started_at: "2026-04-19T02:30:00.000Z" },
+        ],
+      });
+
+      mocks.selectWhere.mockResolvedValueOnce([plannerRow]);
+      const savedRow = makeRow({ current_step: "complete", status: "awaiting_pr_review" });
+      mocks.updateReturning.mockResolvedValueOnce([savedRow]);
+
+      const run = await service.completeStep(
+        "pipe-2026-04-19-test1234",
+        "planner",
+        "exec-010",
+        ["artifacts/planner_sprint_closeout.json"],
+        false
+      );
+
       expect(run.status).toBe("awaiting_pr_review");
+      expect(run.current_step).toBe("complete");
     });
 
     it("creates pipeline with caller_context_stack initialized to entry_point", async () => {

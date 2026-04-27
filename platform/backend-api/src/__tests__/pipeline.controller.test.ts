@@ -132,6 +132,26 @@ describe("Pipeline HTTP routes", () => {
         expect.objectContaining({ entry_point: "sprint-controller", execution_mode: "full-sprint" })
       );
     });
+
+    it("forwards input.description unchanged to pipelineService.create", async () => {
+      vi.mocked(pipelineService.create).mockResolvedValueOnce(mockRun as never);
+
+      await request(app)
+        .post("/pipeline")
+        .send({
+          entry_point: "sprint-controller",
+          execution_mode: "next",
+          input: { description: "Stage next sprint as Fast Track" },
+        });
+
+      expect(pipelineService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          entry_point: "sprint-controller",
+          execution_mode: "next",
+          input: { description: "Stage next sprint as Fast Track" },
+        })
+      );
+    });
   });
 
   // ── GET /pipeline/:pipelineId ──────────────────────────────────────────────

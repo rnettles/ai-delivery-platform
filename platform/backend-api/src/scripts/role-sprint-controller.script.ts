@@ -7,7 +7,6 @@ import { governanceService } from "../services/governance.service";
 import { pipelineService } from "../services/pipeline.service";
 import { projectService } from "../services/project.service";
 import { projectGitService } from "../services/project-git.service";
-import { githubApiService } from "../services/github-api.service";
 import { designInputGateService } from "../services/design-input-gate.service";
 import { HttpError } from "../utils/http-error";
 
@@ -231,7 +230,7 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
     }
 
     // Write sprint_plan.md — matches naming convention:
-    // ai_dev_stack/ai_project_tasks/active/sprint_plan_<SPRINT_ID>.md
+    // project_work/ai_project_tasks/active/sprint_plan_<SPRINT_ID>.md
     const sprintPlanContent = this.formatSprintMarkdown(llm.sprint_plan, llm.first_task);
     const sprintPlanPath = await artifactService.write(
       pipelineId,
@@ -276,7 +275,7 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       context.notify(`🌿 Branch \`${sprintBranch}\` created and ready`);
 
       // Persist planning artifacts to repo (AI_RUNTIME_PATHS.md)
-      const activeDir = path.join("ai_dev_stack", "ai_project_tasks", "active");
+      const activeDir = path.join("project_work", "ai_project_tasks", "active");
       const repoBase = path.isAbsolute(project.clone_path)
         ? project.clone_path
         : path.join(process.cwd(), project.clone_path);
@@ -332,47 +331,38 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
     if (verification.result !== "PASS") {
       throw new Error("Sprint Controller close-out called before verifier PASS");
     }
-    context.notify("🏁 Verification passed — pushing branch and opening pull request...");
+    context.notify("🏁 Verification passed — closing out task and preparing sprint-complete artifacts for Planner...");
 
     const run = await pipelineService.get(pipelineId);
-    const project = run.project_id
-      ? await projectService.getById(run.project_id)
-      : await projectService.getByName("default");
-    if (!project) {
-      throw new Error("Sprint Controller close-out failed: project not found");
-    }
 
-    const sprintBranch = run.sprint_branch ?? `feature/${pipelineId}`;
-
-    await projectGitService.ensureReady(project);
-    await projectGitService.push(project, sprintBranch);
+    const currentTaskArtifact = await artifactService.findFirst(
+      previousArtifacts.filter((p) => p.includes("current_task.json"))
+    );
 
     const sprintPlanArtifact = await artifactService.findFirst(
       previousArtifacts.filter((p) => p.includes("sprint_plan_"))
     );
 
-    const title = `[${sprintBranch}] Autonomous sprint`;
-    const body = [
-      "## Sprint Summary",
-      verification.summary ?? "Verifier passed.",
-      "",
-      "## Pipeline",
-      `Pipeline ID: ${pipelineId}`,
-      verification.task_id ? `Last Task: ${verification.task_id}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n");
+    let currentTaskId: string | undefined;
+    if (currentTaskArtifact?.content) {
+      try {
+        const parsed = JSON.parse(currentTaskArtifact.content) as { task_id?: string };
+        currentTaskId = parsed.task_id;
+      } catch {
+        // Non-fatal: keep fallback from verification task id.
+      }
+    }
 
-    const pr = await githubApiService.createPullRequest({
-      repoUrl: project.repo_url,
-      title,
-      body,
-      head: sprintBranch,
-      base: project.default_branch,
-    });
-
-    await pipelineService.setPrDetails(pipelineId, pr.number, pr.html_url, sprintBranch);
-    context.notify(`🔗 PR #${pr.number} opened: <${pr.html_url}|View Pull Request>`);
+    const sprintCompleteArtifacts = [
+      sprintPlanArtifact?.path,
+      currentTaskArtifact?.path,
+      ...previousArtifacts.filter(
+        (p) =>
+          p.includes("AI_IMPLEMENTATION_BRIEF") ||
+          p.includes("verification_result.json") ||
+          p.includes("verification_result.md")
+      ),
+    ].filter((p): p is string => Boolean(p));
 
     const closeOutPath = await artifactService.write(
       pipelineId,
@@ -380,10 +370,13 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       JSON.stringify(
         {
           pipeline_id: pipelineId,
-          sprint_branch: sprintBranch,
-          pr_number: pr.number,
-          pr_url: pr.html_url,
+          sprint_branch: run.sprint_branch,
+          last_completed_task_id: currentTaskId ?? verification.task_id ?? "n/a",
+          closeout_role: "sprint-controller",
+          closeout_scope: "task",
+          gate_result: "PASS",
           verifier_summary: verification.summary ?? "",
+          sprint_complete_artifacts: sprintCompleteArtifacts,
         },
         null,
         2
@@ -392,9 +385,8 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
 
     context.log("Sprint Controller close-out complete", {
       pipeline_id: pipelineId,
-      sprint_branch: sprintBranch,
-      pr_number: pr.number,
-      pr_url: pr.html_url,
+      sprint_branch: run.sprint_branch,
+      last_completed_task_id: currentTaskId ?? verification.task_id ?? "n/a",
     });
 
     return {
@@ -410,17 +402,15 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
         incident_tier: "none",
       },
       first_task: {
-        task_id: verification.task_id ?? "n/a",
-        title: "Sprint close-out",
-        description: "Push sprint branch and create PR",
-        acceptance_criteria: ["Pull request created"],
+        task_id: currentTaskId ?? verification.task_id ?? "n/a",
+        title: "Task close-out",
+        description: "Publish task closeout artifacts for planner sprint closure",
+        acceptance_criteria: ["sprint_closeout.json emitted"],
         estimated_effort: "S",
         files_likely_affected: [],
         status: "pending",
       },
-      sprint_branch: sprintBranch,
-      pr_number: pr.number,
-      pr_url: pr.html_url,
+      sprint_branch: run.sprint_branch,
       artifact_paths: [closeOutPath],
     };
   }

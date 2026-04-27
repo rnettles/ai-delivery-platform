@@ -110,6 +110,16 @@ describe("parseSlackCommand (slack-ingress Guard & Parse node)", () => {
       expect(result).toMatchObject({ type: "create_pipeline", entry_point: "sprint-controller", execution_mode: "next", description: "PH-AUTH-1" });
     });
 
+    it("preserves descriptive sprint intent text in next mode", () => {
+      const result = parseSlackCommand({ command: "/sprint", text: "Stage next sprint as Fast Track" });
+      expect(result).toMatchObject({
+        type: "create_pipeline",
+        entry_point: "sprint-controller",
+        execution_mode: "next",
+        description: "Stage next sprint as Fast Track",
+      });
+    });
+
     it("parses 'next-flow' mode for /sprint", () => {
       const result = parseSlackCommand({ command: "/sprint", text: "next-flow" });
       expect(result).toMatchObject({ type: "create_pipeline", entry_point: "sprint-controller", execution_mode: "next-flow", description: "" });

@@ -75,9 +75,7 @@ export function registerPipelineCommands(program: Command): void {
           process.exit(1);
         }
 
-        const normalizedDescription = opts.executionMode === "next"
-          ? "stage the next phase"
-          : rawDescription;
+        const normalizedDescription = rawDescription;
 
         const metadata: Record<string, unknown> = { source: "api" };
         if (channelId) metadata.slack_channel = channelId;

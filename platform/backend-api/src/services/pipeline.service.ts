@@ -177,7 +177,7 @@ const NEXT_ROLE: Partial<Record<PipelineRole, PipelineRole>> = {
   planner: "sprint-controller",
   "sprint-controller": "implementer",
   implementer: "verifier",
-  verifier: "sprint-controller", // close-out pass
+  verifier: "sprint-controller", // task close-out pass
 };
 
 function nextRoleAfter(role: PipelineRole): PipelineRole | "complete" {
@@ -762,14 +762,14 @@ export class PipelineService {
     }
 
     // ── Execution mode: "full-sprint" ──────────────────────────────────────────
-    // After verifier PASS, route back to sprint-controller for close-out (PR creation).
-    // This applies regardless of entry_point — full-sprint always completes the sprint.
+    // After verifier PASS, route back to sprint-controller for task close-out.
+    // Planner performs final sprint close-out after sprint-controller emits gate artifacts.
     if (
       role === "verifier" &&
       verificationPassed !== false &&
       executionMode === "full-sprint"
     ) {
-      logger.info("Verifier PASS in full-sprint mode — routing to sprint-controller close-out", {
+      logger.info("Verifier PASS in full-sprint mode — routing to sprint-controller task close-out", {
         pipeline_id: run.pipeline_id,
         entry_point: run.entry_point,
       });
@@ -777,12 +777,31 @@ export class PipelineService {
       return this.save(run, { current_step: "sprint-controller", status: "running", steps });
     }
 
-    // Sprint Controller close-out: verifier already passed → open PR, await review (ADR-030)
+    // Sprint Controller task close-out: verifier already passed -> hand off to Planner.
     // Detected by presence of a completed verifier step in the history.
     if (role === "sprint-controller") {
       const verifierPassed = steps.some((s) => s.role === "verifier" && s.status === "complete");
       if (verifierPassed) {
-        logger.info("Sprint Controller close-out: transitioning to awaiting_pr_review", {
+        logger.info("Sprint Controller task close-out complete: routing to planner sprint close-out", {
+          pipeline_id: run.pipeline_id,
+        });
+        steps.push(this.newRunningStep("planner", now));
+        return this.save(run, { current_step: "planner", status: "running", steps });
+      }
+    }
+
+    // Planner sprint close-out: verifier and sprint-controller have already completed.
+    // Planner finalizes sprint closure (PR handoff), then pipeline awaits PR review.
+    if (role === "planner") {
+      const verifierPassed = steps.some((s) => s.role === "verifier" && s.status === "complete");
+      const sprintControllerClosedTask = steps.some(
+        (s) =>
+          s.role === "sprint-controller" &&
+          s.status === "complete" &&
+          s.artifact_paths.some((p) => p.includes("sprint_closeout.json"))
+      );
+      if (verifierPassed && sprintControllerClosedTask) {
+        logger.info("Planner sprint close-out: transitioning to awaiting_pr_review", {
           pipeline_id: run.pipeline_id,
         });
         return this.saveAndMaybeCleanup(run, { current_step: "complete", status: "awaiting_pr_review", steps });
@@ -1403,8 +1422,8 @@ export class PipelineService {
     const { project, git_head_commit, refreshed_at } = await this.resolveArtifactProject(opts?.channelId, opts?.projectId);
 
     const files = [
-      ...(await this.listRepoMarkdownFiles(project.clone_path, "ai_dev_stack/ai_project_tasks/staged_phases", /^phase_plan_.*\.md$/i)),
-      ...(await this.listRepoMarkdownFiles(project.clone_path, "ai_dev_stack/ai_project_tasks/active", /^phase_plan_.*\.md$/i)),
+      ...(await this.listRepoMarkdownFiles(project.clone_path, "project_work/ai_project_tasks/staged_phases", /^phase_plan_.*\.md$/i)),
+      ...(await this.listRepoMarkdownFiles(project.clone_path, "project_work/ai_project_tasks/active", /^phase_plan_.*\.md$/i)),
     ].slice(0, safeLimit);
 
     const phases: StagedPhaseRecord[] = [];
@@ -1442,8 +1461,8 @@ export class PipelineService {
     const { project, git_head_commit, refreshed_at } = await this.resolveArtifactProject(opts?.channelId, opts?.projectId);
 
     const files = [
-      ...(await this.listRepoMarkdownFiles(project.clone_path, "ai_dev_stack/ai_project_tasks/staged_sprints", /^sprint_plan_.*\.md$/i)),
-      ...(await this.listRepoMarkdownFiles(project.clone_path, "ai_dev_stack/ai_project_tasks/active", /^sprint_plan_.*\.md$/i)),
+      ...(await this.listRepoMarkdownFiles(project.clone_path, "project_work/ai_project_tasks/staged_sprints", /^sprint_plan_.*\.md$/i)),
+      ...(await this.listRepoMarkdownFiles(project.clone_path, "project_work/ai_project_tasks/active", /^sprint_plan_.*\.md$/i)),
     ].slice(0, safeLimit);
 
     const sprints: StagedSprintRecord[] = [];
@@ -1482,8 +1501,8 @@ export class PipelineService {
     const { project, git_head_commit, refreshed_at } = await this.resolveArtifactProject(opts?.channelId, opts?.projectId);
 
     const sprintFiles = [
-      ...(await this.listRepoMarkdownFiles(project.clone_path, "ai_dev_stack/ai_project_tasks/staged_sprints", /^sprint_plan_.*\.md$/i)),
-      ...(await this.listRepoMarkdownFiles(project.clone_path, "ai_dev_stack/ai_project_tasks/active", /^sprint_plan_.*\.md$/i)),
+      ...(await this.listRepoMarkdownFiles(project.clone_path, "project_work/ai_project_tasks/staged_sprints", /^sprint_plan_.*\.md$/i)),
+      ...(await this.listRepoMarkdownFiles(project.clone_path, "project_work/ai_project_tasks/active", /^sprint_plan_.*\.md$/i)),
     ];
 
     const tasks: StagedTaskRecord[] = [];

@@ -11,12 +11,13 @@
 
 ## Role Boundaries
 
-- **Planner** determines WHAT to build. Does not write code or produce sprint plans.
-- **Sprint Controller** determines HOW tasks are structured. Does not implement code.
+- **Planner** determines WHAT to build and closes lifecycle stages. It performs heavy design work, defines phase scope/objectives/FR coverage, creates phase plans, creates sprint plans, and closes sprints/phases from gate artifacts. It never writes code.
+- **Sprint Controller** determines HOW sprint tasks are packaged for execution. It prepares implementation instructions, selects the next incomplete sprint task, verifies/decomposes task size, stages active task artifacts, and performs task closeout. It does not derive sprint plans from phase scope and does not perform final sprint closure.
 - **Implementer** writes code and tests. Does not plan, stage sprints, or verify.
 - **Verifier** evaluates implementation against acceptance criteria. Does not implement or fix.
 - **Fixer** corrects specific listed failures from the Verifier. Does not plan or expand scope.
 - **Documenter** syncs documentation to delivered sprint behavior. Does not implement code.
+- **PASS closeout invariant:** Verifier PASS routes to Sprint Controller for task closeout decisions. Sprint Controller emits sprint-complete artifacts from the last completed task context. Planner consumes those passing gate artifacts to make the final sprint close decision.
 - No role may perform the work of another role.
 - No role may expand scope beyond the current assigned task.
 
@@ -54,8 +55,9 @@
 
 - Do not stage a new sprint if any existing sprint has status `staged`, `Planning`, `Active`, or `ready_for_verification`.
   The operator must close the open sprint before staging a new one.
-- Sprint close-out requires explicit operator confirmation that the documenter agent has run.
-  Do not mark a sprint closed, archive artifacts, or update state until this confirmation is received.
+- Verifier PASS must route to Sprint Controller for task closeout before any sprint-close decision.
+- Planner closes the sprint only after PASS gate artifacts are available (`verification_result.json` + Sprint Controller `sprint_closeout.json`).
+- Sprint Controller task closeout must emit artifact evidence from the last completed task context before Planner sprint closure.
 
 ---
 

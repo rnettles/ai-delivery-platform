@@ -1,19 +1,14 @@
 {
-    "folders": [
-        {
-            "name": "ai-delivery-platform",
-            "path": "."
-        },
-        {
-            "name": "ai-project_template [shared]",
-            "path": "../ai-project_template"
-        }
-    ],
-    "settings": {
-        "files.exclude": {
-            "**/node_modules": true,
-            "**/.venv": true,
-            "**/__pycache__": true
-        }
-    }
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../Personal Health Knowledge System"
+		},
+		{
+			"path": "../ai-project_template"
+		}
+	],
+	"settings": {}
 }

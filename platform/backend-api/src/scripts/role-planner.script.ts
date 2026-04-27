@@ -7,6 +7,7 @@ import { governanceService } from "../services/governance.service";
 import { pipelineService } from "../services/pipeline.service";
 import { projectService } from "../services/project.service";
 import { projectGitService } from "../services/project-git.service";
+import { githubApiService } from "../services/github-api.service";
 import { designInputGateService, EntryMode } from "../services/design-input-gate.service";
 import { HttpError } from "../utils/http-error";
 
@@ -40,9 +41,13 @@ export interface PlannerPhasePlan {
 }
 
 export interface PlannerOutput {
-  phase_id: string;
-  phase_plan: PlannerPhasePlan;
+  phase_id?: string;
+  phase_plan?: PlannerPhasePlan;
   artifact_path: string;
+  closeout_mode?: "sprint";
+  pr_number?: number;
+  pr_url?: string;
+  sprint_branch?: string;
 }
 
 export class PlannerScript implements Script<Record<string, unknown>, unknown> {
@@ -63,11 +68,15 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
     },
     output_schema: {
       type: "object",
-      required: ["phase_id", "phase_plan", "artifact_path"],
+      required: ["artifact_path"],
       properties: {
         phase_id: { type: "string" },
         phase_plan: { type: "object" },
         artifact_path: { type: "string" },
+        closeout_mode: { type: "string" },
+        pr_number: { type: "number" },
+        pr_url: { type: "string" },
+        sprint_branch: { type: "string" },
       },
     },
     tags: ["role", "planner", "planning"],
@@ -78,6 +87,24 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
     const description = typed.description?.trim() || "Unspecified objective";
     const pipelineId = typed.pipeline_id ?? context.correlation_id ?? context.execution_id;
     const entryMode: EntryMode = typed.entry_mode === "intake" ? "intake" : "plan";
+    const previousArtifacts = typed.previous_artifacts ?? [];
+
+    const verificationArtifact = await artifactService.findFirst(
+      previousArtifacts.filter((p) => p.includes("verification_result.json"))
+    );
+    const sprintCloseOutArtifact = await artifactService.findFirst(
+      previousArtifacts.filter((p) => p.includes("sprint_closeout.json"))
+    );
+
+    if (verificationArtifact && sprintCloseOutArtifact) {
+      return this.runSprintCloseOut(
+        pipelineId,
+        previousArtifacts,
+        verificationArtifact.content,
+        sprintCloseOutArtifact.content,
+        context
+      );
+    }
 
     context.log("Planner running", { description_length: description.length });
     context.notify(`📋 Planning delivery phase...\n> _${description.slice(0, 120)}${description.length > 120 ? "…" : ""}_`);
@@ -112,7 +139,7 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
     // Read already-claimed FR IDs from existing phase plans in the project repo
     const stagedPhasesDir = path.join(
       designInputs.clone_path,
-      "ai_dev_stack",
+      "project_work",
       "ai_project_tasks",
       "staged_phases"
     );
@@ -205,18 +232,18 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
     }
     context.notify(`📝 Phase plan drafted: *${plan.name}* (\`${plan.phase_id}\`)\n> ${plan.objectives.length} objective${plan.objectives.length !== 1 ? "s" : ""}, ${plan.deliverables.length} deliverable${plan.deliverables.length !== 1 ? "s" : ""}`);
 
-    // Artifact path follows ai_dev_stack governance naming convention:
+    // Artifact path follows project_work governance naming convention:
     // phase_plan_<descriptor>.md
     const descriptor = plan.phase_id.toLowerCase().replace(/[^a-z0-9]+/g, "_");
     const artifactFilename = `phase_plan_${descriptor}.md`;
     const artifactContent = this.formatMarkdown(plan);
     const artifactPath = await artifactService.write(pipelineId, artifactFilename, artifactContent);
 
-    // Persist to project repo: ai_dev_stack/ai_project_tasks/staged_phases/ (AI_PHASE_PROCESS.md)
+    // Persist to project repo: project_work/ai_project_tasks/staged_phases/ (AI_PHASE_PROCESS.md)
     const run = await pipelineService.get(pipelineId);
     const project = run.project_id ? await projectService.getById(run.project_id) : null;
     if (project) {
-      const repoRelPath = path.join("ai_dev_stack", "ai_project_tasks", "staged_phases", artifactFilename);
+      const repoRelPath = path.join("project_work", "ai_project_tasks", "staged_phases", artifactFilename);
       const absPath = path.isAbsolute(project.clone_path)
         ? path.join(project.clone_path, repoRelPath)
         : path.join(process.cwd(), project.clone_path, repoRelPath);
@@ -276,6 +303,112 @@ ${dependencies}
 ## Required Design Artifacts
 ${designArtifacts}
 `;
+  }
+
+  private async runSprintCloseOut(
+    pipelineId: string,
+    previousArtifacts: string[],
+    verificationJson: string,
+    sprintCloseOutJson: string,
+    context: ScriptExecutionContext
+  ): Promise<PlannerOutput> {
+    const verification = JSON.parse(verificationJson) as { result?: string; summary?: string; task_id?: string };
+    if (verification.result !== "PASS") {
+      throw new Error("Planner sprint close-out called before verifier PASS");
+    }
+
+    const sprintCloseOut = JSON.parse(sprintCloseOutJson) as {
+      sprint_branch?: string;
+      last_completed_task_id?: string;
+      sprint_complete_artifacts?: string[];
+      verifier_summary?: string;
+    };
+
+    context.notify("🏁 Planner closing sprint from PASS gate artifacts and task closeout evidence...");
+
+    const run = await pipelineService.get(pipelineId);
+    const project = run.project_id
+      ? await projectService.getById(run.project_id)
+      : await projectService.getByName("default");
+    if (!project) {
+      throw new Error("Planner sprint close-out failed: project not found");
+    }
+
+    const sprintBranch = sprintCloseOut.sprint_branch ?? run.sprint_branch ?? `feature/${pipelineId}`;
+
+    await projectGitService.ensureReady(project);
+    await projectGitService.push(project, sprintBranch);
+
+    const sprintPlanArtifact = await artifactService.findFirst(
+      previousArtifacts.filter((p) => p.includes("sprint_plan_"))
+    );
+
+    const title = `[${sprintBranch}] Autonomous sprint`;
+    const body = [
+      "## Sprint Summary",
+      sprintCloseOut.verifier_summary ?? verification.summary ?? "Verifier passed.",
+      "",
+      "## Pipeline",
+      `Pipeline ID: ${pipelineId}`,
+      sprintCloseOut.last_completed_task_id
+        ? `Last Task: ${sprintCloseOut.last_completed_task_id}`
+        : verification.task_id
+          ? `Last Task: ${verification.task_id}`
+          : "",
+      "",
+      "## Gate Artifacts",
+      ...(sprintCloseOut.sprint_complete_artifacts ?? []).map((p) => `- ${p}`),
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const pr = await githubApiService.createPullRequest({
+      repoUrl: project.repo_url,
+      title,
+      body,
+      head: sprintBranch,
+      base: project.default_branch,
+    });
+
+    await pipelineService.setPrDetails(pipelineId, pr.number, pr.html_url, sprintBranch);
+    context.notify(`🔗 Planner opened PR #${pr.number}: <${pr.html_url}|View Pull Request>`);
+
+    const closeOutPath = await artifactService.write(
+      pipelineId,
+      "planner_sprint_closeout.json",
+      JSON.stringify(
+        {
+          pipeline_id: pipelineId,
+          sprint_branch: sprintBranch,
+          pr_number: pr.number,
+          pr_url: pr.html_url,
+          last_completed_task_id: sprintCloseOut.last_completed_task_id ?? verification.task_id ?? "n/a",
+          closeout_role: "planner",
+          closeout_scope: "sprint",
+          gate_result: "PASS",
+          sprint_plan_path: sprintPlanArtifact?.path,
+          sprint_complete_artifacts: sprintCloseOut.sprint_complete_artifacts ?? [],
+        },
+        null,
+        2
+      )
+    );
+
+    context.log("Planner sprint close-out complete", {
+      pipeline_id: pipelineId,
+      sprint_branch: sprintBranch,
+      pr_number: pr.number,
+      pr_url: pr.html_url,
+    });
+
+    return {
+      phase_id: "closeout",
+      artifact_path: closeOutPath,
+      closeout_mode: "sprint",
+      pr_number: pr.number,
+      pr_url: pr.html_url,
+      sprint_branch: sprintBranch,
+    };
   }
 
   /**

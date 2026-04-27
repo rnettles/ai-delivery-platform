@@ -210,7 +210,7 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
     // Persist verification result to repo (AI_RUNTIME_PATHS.md)
     try {
       if (project && run.sprint_branch) {
-        const activeDir = path.join("ai_dev_stack", "ai_project_tasks", "active");
+        const activeDir = path.join("project_work", "ai_project_tasks", "active");
         const repoBase = path.isAbsolute(project.clone_path)
           ? project.clone_path
           : path.join(process.cwd(), project.clone_path);
