@@ -8,7 +8,7 @@ import { pipelineService } from "../services/pipeline.service";
 import { projectService } from "../services/project.service";
 import { projectGitService } from "../services/project-git.service";
 import { githubApiService } from "../services/github-api.service";
-import { designInputGateService, EntryMode } from "../services/design-input-gate.service";
+import { designInputGateService, EntryMode, DesignInputGateResult } from "../services/design-input-gate.service";
 import { HttpError } from "../utils/http-error";
 
 export interface PlannerInput {
@@ -53,6 +53,7 @@ export interface PlannerOutput {
 
 const SPRINT_READY_PHASE_STATUSES = new Set(["Planning", "Approved"]);
 const OPEN_SPRINT_STATUSES = new Set(["staged", "Planning", "Active", "ready_for_verification"]);
+const APPROVED_STATUSES = new Set(["approved", "accepted"]);
 
 export class PlannerScript implements Script<Record<string, unknown>, unknown> {
   public readonly descriptor = {
@@ -315,6 +316,11 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
         { phase_id: plan.phase_id, fr_context_files: designInputs.fr_context.map((f) => f.path) }
       );
     }
+
+    // Hard gate: dependent FRs and required TDNs must be human-approved before phase plan creation.
+    // This prevents creating phase plans that are guaranteed to fail sprint-stage design gates.
+    this.assertApprovedDependencies(plan, designInputs);
+
     context.notify(`📝 Phase plan drafted: *${plan.name}* (\`${plan.phase_id}\`)\n> ${plan.objectives.length} objective${plan.objectives.length !== 1 ? "s" : ""}, ${plan.deliverables.length} deliverable${plan.deliverables.length !== 1 ? "s" : ""}`);
 
     // Artifact path follows project_work governance naming convention:
@@ -494,6 +500,151 @@ ${designArtifacts}
       pr_url: pr.html_url,
       sprint_branch: sprintBranch,
     };
+  }
+
+  private assertApprovedDependencies(plan: PlannerPhasePlan, designInputs: DesignInputGateResult): void {
+    const frDependencyIssues = this.findUnapprovedFrDependencies(plan, designInputs);
+    if (frDependencyIssues.length > 0) {
+      throw new HttpError(
+        422,
+        "FR_DEPENDENCIES_NOT_APPROVED",
+        "Planner cannot create a phase plan because one or more FR dependencies are not human-approved. " +
+          "Approve dependent FR documents first, then rerun Planner.",
+        {
+          phase_id: plan.phase_id,
+          fr_dependencies_pending_approval: frDependencyIssues,
+        }
+      );
+    }
+
+    const tdnDependencyIssues = this.findUnapprovedTdnDependencies(plan, designInputs);
+    if (tdnDependencyIssues.length > 0) {
+      throw new HttpError(
+        422,
+        "TDN_DEPENDENCIES_NOT_APPROVED",
+        "Planner cannot create a phase plan because required TDN dependencies are missing or not human-approved. " +
+          "Approve all required TDNs first, then rerun Planner.",
+        {
+          phase_id: plan.phase_id,
+          tdn_dependencies_pending_approval: tdnDependencyIssues,
+        }
+      );
+    }
+  }
+
+  private findUnapprovedFrDependencies(
+    plan: PlannerPhasePlan,
+    designInputs: DesignInputGateResult
+  ): Array<{ fr_id: string; reason: "not_found" | "not_approved"; paths: string[] }> {
+    const frToContexts = new Map<string, Array<{ path: string; approved: boolean }>>();
+
+    for (const file of designInputs.fr_context) {
+      const frIds = this.extractFrIds(file.content);
+      const status = this.readArtifactStatus(file.content);
+      const approved = status ? APPROVED_STATUSES.has(status.toLowerCase()) : false;
+
+      for (const id of frIds) {
+        const existing = frToContexts.get(id) ?? [];
+        existing.push({ path: file.path, approved });
+        frToContexts.set(id, existing);
+      }
+    }
+
+    const issues: Array<{ fr_id: string; reason: "not_found" | "not_approved"; paths: string[] }> = [];
+    for (const frId of plan.fr_ids_in_scope ?? []) {
+      const contexts = frToContexts.get(frId);
+      if (!contexts || contexts.length === 0) {
+        issues.push({ fr_id: frId, reason: "not_found", paths: [] });
+        continue;
+      }
+
+      if (!contexts.some((c) => c.approved)) {
+        issues.push({
+          fr_id: frId,
+          reason: "not_approved",
+          paths: contexts.map((c) => c.path),
+        });
+      }
+    }
+
+    return issues;
+  }
+
+  private findUnapprovedTdnDependencies(
+    plan: PlannerPhasePlan,
+    designInputs: DesignInputGateResult
+  ): Array<{ title: string; reason: "missing" | "not_approved"; path?: string; status?: string }> {
+    const requiredTdns = (plan.required_design_artifacts ?? []).filter((a) => a.type === "TDN");
+    if (requiredTdns.length === 0) {
+      return [];
+    }
+
+    const tdnIndex = designInputs.tdn_context.map((file) => {
+      const title = this.readArtifactTitle(file.content);
+      const status = this.readArtifactStatus(file.content);
+      const approved = status ? APPROVED_STATUSES.has(status.toLowerCase()) : false;
+      return {
+        path: file.path,
+        title,
+        normalizedTitle: this.normalizeTitle(title),
+        status,
+        approved,
+      };
+    });
+
+    const issues: Array<{ title: string; reason: "missing" | "not_approved"; path?: string; status?: string }> = [];
+    for (const required of requiredTdns) {
+      const requiredNorm = this.normalizeTitle(required.title);
+      const matched = tdnIndex.find(
+        (tdn) =>
+          tdn.normalizedTitle === requiredNorm ||
+          tdn.normalizedTitle.includes(requiredNorm) ||
+          requiredNorm.includes(tdn.normalizedTitle)
+      );
+
+      if (!matched) {
+        issues.push({ title: required.title, reason: "missing" });
+        continue;
+      }
+
+      if (!matched.approved) {
+        issues.push({
+          title: required.title,
+          reason: "not_approved",
+          path: matched.path,
+          status: matched.status,
+        });
+      }
+    }
+
+    return issues;
+  }
+
+  private extractFrIds(content: string): string[] {
+    const matches = content.match(/\bFR-\d+(?:\.\d+)?\b/gm) ?? [];
+    return [...new Set(matches)];
+  }
+
+  private readArtifactStatus(content: string): string | undefined {
+    const boldStatus = /^\*\*Status:\*\*\s*(.+)$/im.exec(content);
+    if (boldStatus?.[1]?.trim()) {
+      return boldStatus[1].trim();
+    }
+
+    const plainStatus = /^Status:\s*(.+)$/im.exec(content);
+    return plainStatus?.[1]?.trim() || undefined;
+  }
+
+  private readArtifactTitle(content: string): string {
+    const h1 = /^#\s+(.+)$/m.exec(content);
+    return h1?.[1]?.trim() || "";
+  }
+
+  private normalizeTitle(value: string): string {
+    return value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
   }
 
   /**
