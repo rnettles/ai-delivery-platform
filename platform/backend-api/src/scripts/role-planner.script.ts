@@ -666,7 +666,7 @@ ${designArtifacts}
 
     const userContent =
       `Phase plan:\n\n${phasePlanContent}\n\n` +
-      `Produce a sprint plan and implementation brief for Sprint 1, Task 1. ` +
+      `Produce a sprint plan for Sprint 1 only. Do not generate task briefs or current_task artifacts. ` +
       (description ? `Additional context: ${description}` : "");
 
     const systemPrompt = await governanceService.getComposedPrompt("sprint-controller");
@@ -674,8 +674,9 @@ ${designArtifacts}
 
     interface SprintLlmResponse {
       sprint_plan: { sprint_id: string; phase_id: string; name: string; goals: string[]; tasks: string[]; status: "staged" };
-      first_task: { task_id: string; title: string; description: string; acceptance_criteria: string[]; estimated_effort: "S" | "M" | "L"; files_likely_affected: string[]; status: "pending" };
-      task_flags: { fr_ids_in_scope: string[]; architecture_contract_change: boolean; ui_evidence_required: boolean; incident_tier: "none" | "p0" | "p1" | "p2" | "p3"; schema_change?: boolean; migration_change?: boolean; cross_subsystem_change?: boolean };
+      // Optional compatibility fields if the model returns extra content.
+      first_task?: { task_id: string; title: string; description: string; acceptance_criteria: string[]; estimated_effort: "S" | "M" | "L"; files_likely_affected: string[]; status: "pending" };
+      task_flags?: { fr_ids_in_scope: string[]; architecture_contract_change: boolean; ui_evidence_required: boolean; incident_tier: "none" | "p0" | "p1" | "p2" | "p3"; schema_change?: boolean; migration_change?: boolean; cross_subsystem_change?: boolean };
     }
 
     const llm = await provider.chatJson<SprintLlmResponse>([
@@ -683,34 +684,17 @@ ${designArtifacts}
       { role: "user", content: userContent },
     ]);
 
-    if (!llm.sprint_plan?.sprint_id || !llm.first_task?.task_id) {
+    if (!llm.sprint_plan?.sprint_id) {
       throw new Error("Sprint planning LLM response missing required fields");
     }
 
-    context.notify(`🎯 First task identified: *${llm.first_task.task_id}* — ${llm.first_task.title}\n> Effort: ${llm.first_task.estimated_effort}`);
-
-    // Format artifacts (mirrors Sprint Controller format)
-    const sprintPlanContent = this.formatSprintMarkdown(llm.sprint_plan, llm.first_task);
-    const briefContent = this.formatBrief(llm.first_task, llm.task_flags, llm.sprint_plan);
-    const currentTask = {
-      task_id: llm.first_task.task_id,
-      title: llm.first_task.title,
-      description: llm.first_task.description,
-      assigned_to: "implementer",
-      status: "pending",
-      artifacts: [],
-    };
+    // Planner sprint mode only stages sprint_plan artifacts.
+    const sprintPlanContent = this.formatSprintMarkdownFromPlan(llm.sprint_plan);
 
     const sprintPlanPath = await artifactService.write(
       pipelineId,
       `sprint_plan_${llm.sprint_plan.sprint_id.toLowerCase()}.md`,
       sprintPlanContent
-    );
-    const briefPath = await artifactService.write(pipelineId, "AI_IMPLEMENTATION_BRIEF.md", briefContent);
-    const currentTaskPath = await artifactService.write(
-      pipelineId,
-      "current_task.json",
-      JSON.stringify(currentTask, null, 2)
     );
 
     // Persist to project repo and create sprint branch
@@ -735,16 +719,10 @@ ${designArtifacts}
         sprintPlanContent,
         "utf-8"
       );
-      await fs.writeFile(path.join(activeDir, "AI_IMPLEMENTATION_BRIEF.md"), briefContent, "utf-8");
-      await fs.writeFile(
-        path.join(activeDir, "current_task.json"),
-        JSON.stringify(currentTask, null, 2),
-        "utf-8"
-      );
       await projectGitService.commitAll(
         project,
         sprintBranch,
-        `chore(${llm.first_task.task_id}): stage sprint artifacts`
+        `chore(${llm.sprint_plan.sprint_id}): stage sprint plan`
       );
       await projectGitService.push(project, sprintBranch);
 
@@ -757,8 +735,7 @@ ${designArtifacts}
           `Phase: ${llm.sprint_plan.phase_id}`,
           `Branch: ${sprintBranch}`,
           "",
-          "Review the staged sprint artifacts in project_work/ai_project_tasks/active/.",
-          `First task: ${llm.first_task.task_id} - ${llm.first_task.title}`,
+          "Review the staged sprint plan in project_work/ai_project_tasks/active/.",
         ].join("\n"),
         head: sprintBranch,
         base: project.default_branch,
@@ -824,6 +801,25 @@ ${firstTask.files_likely_affected.map((f) => `- \`${f}\``).join("\n")}
 
 **Acceptance criteria:**
 ${firstTask.acceptance_criteria.map((c) => `- ${c}`).join("\n")}
+`;
+  }
+
+  private formatSprintMarkdownFromPlan(
+    plan: { sprint_id: string; phase_id: string; name: string; goals: string[]; tasks: string[]; status: string }
+  ): string {
+    const goals = plan.goals.map((g) => `- ${g}`).join("\n");
+    const tasks = plan.tasks.map((t) => `- ${t}`).join("\n");
+    return `# Sprint Plan: ${plan.sprint_id}
+
+**Phase:** ${plan.phase_id}
+**Name:** ${plan.name}
+**Status:** ${plan.status}
+
+## Goals
+${goals}
+
+## Tasks
+${tasks}
 `;
   }
 
