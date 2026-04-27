@@ -67,6 +67,8 @@ export interface SprintControllerOutput {
   artifact_paths: string[];
 }
 
+const SPRINT_READY_PHASE_STATUSES = new Set(["Planning", "Approved"]);
+
 interface LlmResponse {
   sprint_plan: SprintPlan;
   first_task: SprintTask;
@@ -190,16 +192,16 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       }
     }
 
-    // Gate: phase must be in Planning status before sprint staging (process_invariants §Phase Lifecycle Gates)
+    // Gate: phase must be approved for sprint staging (process_invariants §Phase Lifecycle Gates)
     if (phasePlanArtifact) {
       const statusMatch = /^\*\*Status:\*\*\s+(.+)$/m.exec(phasePlanArtifact.content);
       const phaseStatus = statusMatch?.[1]?.trim();
-      if (phaseStatus && phaseStatus !== "Planning") {
+      if (phaseStatus && !SPRINT_READY_PHASE_STATUSES.has(phaseStatus)) {
         throw new HttpError(
           409,
           "PHASE_NOT_IN_PLANNING",
-          `Sprint staging requires the phase plan to be in 'Planning' status, but found '${phaseStatus}'. ` +
-            `Advance the phase from Draft to Planning before staging Sprint 1 (process_invariants §Phase Lifecycle Gates).`,
+          `Sprint staging requires the phase plan to be in 'Planning' or 'Approved' status, but found '${phaseStatus}'. ` +
+            `Approve the phase plan before staging Sprint 1 (process_invariants §Phase Lifecycle Gates).`,
           { phase_status: phaseStatus }
         );
       }

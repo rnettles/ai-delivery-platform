@@ -51,6 +51,8 @@ export interface PlannerOutput {
   sprint_branch?: string;
 }
 
+const SPRINT_READY_PHASE_STATUSES = new Set(["Planning", "Approved"]);
+
 export class PlannerScript implements Script<Record<string, unknown>, unknown> {
   public readonly descriptor = {
     name: "role.planner",
@@ -126,7 +128,7 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
     // Pre-condition: no open phase exists (process_invariants §Phase Lifecycle Gates, ADR-031)
     try {
       const staged = await pipelineService.listStagedPhases(pipelineId);
-      const OPEN_PHASE_STATUSES = ["Draft", "Planning", "Active"];
+      const OPEN_PHASE_STATUSES = ["Draft", "Planning", "Approved", "Active"];
       const openPhase = staged.phases.find((p) => OPEN_PHASE_STATUSES.includes(p.status));
       if (openPhase) {
         throw new HttpError(
@@ -162,7 +164,7 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
     // In next mode, provide comprehensive status before proceeding
     if (executionMode === "next") {
       const planningPhases = await this.findAllPhases(pipelineId);
-      const planningCount = planningPhases.filter((p) => p.status === "Planning").length;
+      const planningCount = planningPhases.filter((p) => SPRINT_READY_PHASE_STATUSES.has(p.status ?? "")).length;
       const unclaimedFrIds = designInputs.fr_context
         .flatMap((f) => {
           const matches = f.content.match(/^-\s+(FR-\d+)/gm);
@@ -171,7 +173,7 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
         .filter((id) => !claimedFrIds.includes(id));
 
       const statusLines = [
-        `**Planning phases:** ${planningCount} (ready for sprint staging)`,
+        `**Sprint-ready phases:** ${planningCount} (Status: Planning or Approved)`,
         `**Unclaimed FRs:** ${unclaimedFrIds.length} (available for new phase planning)`,
       ];
 
@@ -180,7 +182,7 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
           409,
           "NO_WORK_AVAILABLE",
           statusLines.join("\n") + 
-          "\n\nNo work available: advance a phase from Draft to Planning to stage a sprint, or add new FR work to plan additional phases.",
+          "\n\nNo work available: approve a phase plan to stage a sprint, or add new FR work to plan additional phases.",
           { planning_phases: planningCount, unclaimed_frs: unclaimedFrIds.length, execution_mode: executionMode }
         );
       }
@@ -190,7 +192,7 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
           409,
           "NO_PLANNING_PHASES",
           statusLines.join("\n") +
-          "\n\nTo stage a sprint, advance a phase from Draft to Planning status. To plan new phases, use execution_mode='full' or no mode restriction.",
+          "\n\nTo stage a sprint, approve a phase plan. To plan new phases, use execution_mode='full' or no mode restriction.",
           { planning_phases: planningCount, unclaimed_frs: unclaimedFrIds.length, execution_mode: executionMode }
         );
       }
@@ -273,7 +275,7 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
       
       // Provide context-aware message for NO_UNMET_FRS
       if (errorCode === "NO_UNMET_FRS") {
-        errorMsg = "No unclaimed FR work available to plan. All FR requirements are staged in existing phases. Advance a phase from Draft to Planning to stage a sprint.";
+        errorMsg = "No unclaimed FR work available to plan. All FR requirements are staged in existing phases. Approve a phase plan to stage a sprint.";
       }
       
       throw new HttpError(422, errorCode, errorMsg, {
@@ -518,7 +520,7 @@ ${designArtifacts}
   }
 
   /**
-   * Finds the most recent phase plan in Planning status from the project repo.
+  * Finds the most recent phase plan in a sprint-ready status from the project repo.
    * Searches staged_phases/ then active/. Returns null if none found.
    */
   private async findOpenPhasePlan(pipelineId: string): Promise<{ content: string; filePath: string } | null> {
@@ -563,9 +565,9 @@ ${designArtifacts}
     // Sort by mtime descending (most recent first)
     candidates.sort((a, b) => b.mtime - a.mtime);
 
-    // Return first one with Planning status
+    // Return first one with a sprint-ready status
     for (const c of candidates) {
-      if (c.status === "Planning") {
+      if (SPRINT_READY_PHASE_STATUSES.has(c.status ?? "")) {
         const content = await fs.readFile(c.filePath, "utf-8");
         return { content, filePath: c.filePath };
       }
