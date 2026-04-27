@@ -41,7 +41,7 @@ class ProjectGitService {
    * Create and check out a new branch.
    *
    * Behavior:
-   *  - If local branch exists: fail fast
+   *  - If local branch exists only locally: treat as stale retry state and recreate it
    *  - If remote branch exists: fail fast
    *  - Else: create a new branch from current default-branch HEAD
    * Caller must have called ensureReady() first.
@@ -53,16 +53,19 @@ class ProjectGitService {
       this.git(project.clone_path, ["pull", "--ff-only"]);
       this.git(project.clone_path, ["fetch", "origin"]);
 
-      if (this.branchExistsLocal(project.clone_path, branchName)) {
-        const message = `git: branch already exists locally (${branchName})`;
-        logger.error(message, { project: project.name, branch: branchName, clonePath: project.clone_path });
-        throw new Error(message);
-      }
-
       if (this.branchExistsRemote(project.clone_path, branchName)) {
         const message = `git: branch already exists on origin (${branchName})`;
         logger.error(message, { project: project.name, branch: branchName, clonePath: project.clone_path });
         throw new Error(message);
+      }
+
+      if (this.branchExistsLocal(project.clone_path, branchName)) {
+        logger.warn("git: removing stale local branch before recreate", {
+          project: project.name,
+          branch: branchName,
+          clonePath: project.clone_path,
+        });
+        this.deleteLocalBranch(project.clone_path, branchName);
       }
 
       this.git(project.clone_path, ["checkout", "-b", branchName]);
@@ -222,6 +225,10 @@ class ProjectGitService {
     } catch {
       return false;
     }
+  }
+
+  private deleteLocalBranch(clonePath: string, branchName: string): void {
+    this.git(clonePath, ["branch", "-D", branchName]);
   }
 
   /** Embed PAT into URL for credential-free HTTPS auth (ADR-011) */

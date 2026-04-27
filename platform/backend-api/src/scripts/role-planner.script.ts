@@ -52,6 +52,7 @@ export interface PlannerOutput {
 }
 
 const SPRINT_READY_PHASE_STATUSES = new Set(["Planning", "Approved"]);
+const OPEN_SPRINT_STATUSES = new Set(["staged", "Planning", "Active", "ready_for_verification"]);
 
 export class PlannerScript implements Script<Record<string, unknown>, unknown> {
   public readonly descriptor = {
@@ -112,6 +113,21 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
 
     // Sprint planning mode: execution_mode "next" with an open Planning-status phase plan in the repo
     if (executionMode === "next") {
+      const openRepoSprint = await this.findOpenRepoSprint(pipelineId);
+      if (openRepoSprint) {
+        throw new HttpError(
+          409,
+          "OPEN_SPRINT_EXISTS",
+          `Sprint ${openRepoSprint.sprint_id} is already staged and awaiting review (status: ${openRepoSprint.status}). Review the staged sprint artifacts before requesting another Planner next step.`,
+          {
+            sprint_id: openRepoSprint.sprint_id,
+            status: openRepoSprint.status,
+            sprint_plan_path: openRepoSprint.sprint_plan_path,
+            execution_mode: executionMode,
+          }
+        );
+      }
+
       const sprintPlan = await this.findOpenPhasePlan(pipelineId);
       if (sprintPlan) {
         context.log("Planner sprint planning mode detected", { execution_mode: executionMode });
@@ -632,23 +648,20 @@ ${designArtifacts}
   ): Promise<PlannerOutput> {
     context.notify("🗂️ Planner staging Sprint 1 from existing phase plan...");
 
-    // Gate: no open sprint already exists
-    try {
-      const staged = await pipelineService.listStagedSprints(pipelineId);
-      const OPEN_SPRINT_STATUSES = ["staged", "Planning", "Active", "ready_for_verification"];
-      const openSprint = staged.sprints.find((s) => OPEN_SPRINT_STATUSES.includes(s.status));
-      if (openSprint) {
-        throw new HttpError(
-          409,
-          "OPEN_SPRINT_EXISTS",
-          `A sprint is already open (${openSprint.sprint_id}, status: ${openSprint.status}). ` +
-            "Close the open sprint before staging a new one (process_invariants §Sprint Lifecycle Gates).",
-          { sprint_id: openSprint.sprint_id, status: openSprint.status }
-        );
-      }
-    } catch (err) {
-      if (err instanceof HttpError) throw err;
-      context.log("Planner: open-sprint pre-condition check skipped", { reason: String(err) });
+    // Gate: no open sprint already exists in the project repo
+    const openSprint = await this.findOpenRepoSprint(pipelineId);
+    if (openSprint) {
+      throw new HttpError(
+        409,
+        "OPEN_SPRINT_EXISTS",
+        `A sprint is already open (${openSprint.sprint_id}, status: ${openSprint.status}). ` +
+          "Review or close the open sprint before staging a new one (process_invariants §Sprint Lifecycle Gates).",
+        {
+          sprint_id: openSprint.sprint_id,
+          status: openSprint.status,
+          sprint_plan_path: openSprint.sprint_plan_path,
+        }
+      );
     }
 
     const userContent =
@@ -733,13 +746,34 @@ ${designArtifacts}
         sprintBranch,
         `chore(${llm.first_task.task_id}): stage sprint artifacts`
       );
-      context.notify(`📋 Sprint artifacts committed to \`active/\` on \`${sprintBranch}\``);
+      await projectGitService.push(project, sprintBranch);
+      context.notify(`📋 Sprint artifacts committed and pushed from \`active/\` on \`${sprintBranch}\``);
     }
 
     return {
       phase_id: llm.sprint_plan.phase_id,
       artifact_path: sprintPlanPath,
     };
+  }
+
+  private async findOpenRepoSprint(
+    pipelineId: string
+  ): Promise<{ sprint_id: string; status: string; sprint_plan_path: string } | null> {
+    try {
+      const staged = await pipelineService.listRepoStagedSprints({ projectId: (await pipelineService.get(pipelineId)).project_id ?? undefined, limit: 20 });
+      const openSprint = staged.sprints.find((s) => OPEN_SPRINT_STATUSES.has(s.status));
+      if (!openSprint) {
+        return null;
+      }
+
+      return {
+        sprint_id: openSprint.sprint_id,
+        status: openSprint.status,
+        sprint_plan_path: openSprint.sprint_plan_path,
+      };
+    } catch {
+      return null;
+    }
   }
 
   private formatSprintMarkdown(

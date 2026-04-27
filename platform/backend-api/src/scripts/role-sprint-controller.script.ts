@@ -327,7 +327,8 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
         sprintBranch,
         `chore(${llm.first_task.task_id}): stage sprint artifacts`
       );
-      context.notify(`📋 Sprint artifacts committed to \`${activeDir}/\` on \`${sprintBranch}\``);
+      await projectGitService.push(project, sprintBranch);
+      context.notify(`📋 Sprint artifacts committed and pushed from \`${activeDir}/\` on \`${sprintBranch}\``);
     }
 
     context.log("Sprint Controller setup complete", {
