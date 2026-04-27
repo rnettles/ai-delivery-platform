@@ -747,7 +747,24 @@ ${designArtifacts}
         `chore(${llm.first_task.task_id}): stage sprint artifacts`
       );
       await projectGitService.push(project, sprintBranch);
-      context.notify(`📋 Sprint artifacts committed and pushed from \`active/\` on \`${sprintBranch}\``);
+
+      const pr = await githubApiService.createPullRequest({
+        repoUrl: project.repo_url,
+        title: `[${llm.sprint_plan.sprint_id}] Stage sprint artifacts`,
+        body: [
+          "## Staged Sprint Review",
+          `Sprint: ${llm.sprint_plan.sprint_id}`,
+          `Phase: ${llm.sprint_plan.phase_id}`,
+          `Branch: ${sprintBranch}`,
+          "",
+          "Review the staged sprint artifacts in project_work/ai_project_tasks/active/.",
+          `First task: ${llm.first_task.task_id} - ${llm.first_task.title}`,
+        ].join("\n"),
+        head: sprintBranch,
+        base: project.default_branch,
+      });
+      await pipelineService.setPrDetails(pipelineId, pr.number, pr.html_url, sprintBranch);
+      context.notify(`📋 Sprint artifacts committed, pushed, and opened as PR #${pr.number}: <${pr.html_url}|View Pull Request>`);
     }
 
     return {

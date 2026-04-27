@@ -9,6 +9,11 @@ export interface GithubPullRequest {
   merged: boolean;
 }
 
+export interface GithubPullRequestReview {
+  state: string;
+  user_login: string;
+}
+
 interface RepoRef {
   owner: string;
   repo: string;
@@ -132,6 +137,70 @@ class GithubApiService {
       state: payload.state,
       merged: payload.merged ?? false,
     };
+  }
+
+  async listPullRequestReviews(opts: { repoUrl: string; number: number }): Promise<GithubPullRequestReview[]> {
+    const token = config.githubToken;
+    if (!token) {
+      throw new Error("GitHub API token not configured. Set GITHUB_TOKEN (or GIT_PAT fallback).");
+    }
+
+    const { owner, repo } = parseRepoUrl(opts.repoUrl);
+    const endpoint = `${config.githubApiBaseUrl}/repos/${owner}/${repo}/pulls/${opts.number}/reviews`;
+
+    const response = await fetch(endpoint, {
+      method: "GET",
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${token}`,
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`GitHub listPullRequestReviews failed: ${response.status} ${response.statusText} ${errorText}`);
+    }
+
+    const payload = (await response.json()) as Array<{ state?: string; user?: { login?: string } }>;
+    return payload.map((review) => ({
+      state: review.state ?? "",
+      user_login: review.user?.login ?? "unknown",
+    }));
+  }
+
+  async mergePullRequest(opts: { repoUrl: string; number: number; commitTitle?: string }): Promise<void> {
+    const token = config.githubToken;
+    if (!token) {
+      throw new Error("GitHub API token not configured. Set GITHUB_TOKEN (or GIT_PAT fallback).");
+    }
+
+    const { owner, repo } = parseRepoUrl(opts.repoUrl);
+    const endpoint = `${config.githubApiBaseUrl}/repos/${owner}/${repo}/pulls/${opts.number}/merge`;
+
+    const response = await fetch(endpoint, {
+      method: "PUT",
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${token}`,
+        "X-GitHub-Api-Version": "2022-11-28",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        ...(opts.commitTitle ? { commit_title: opts.commitTitle } : {}),
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`GitHub mergePullRequest failed: ${response.status} ${response.statusText} ${errorText}`);
+    }
+
+    logger.info("GitHub PR merged", {
+      owner,
+      repo,
+      pr_number: opts.number,
+    });
   }
 }
 

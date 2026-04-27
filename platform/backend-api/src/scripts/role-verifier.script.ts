@@ -222,7 +222,8 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
           run.sprint_branch,
           `verify(${taskId}): record ${verificationResult.result} result`
         );
-        context.notify(`📊 Verification result committed to \`${activeDir}/\` on \`${run.sprint_branch}\``);
+        await projectGitService.push(project, run.sprint_branch);
+        context.notify(`📊 Verification result committed and pushed from \`${activeDir}/\` on \`${run.sprint_branch}\``);
       }
     } catch (err) {
       context.log("Verifier: failed to persist result to repo (non-fatal)", { error: String(err) });

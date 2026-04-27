@@ -723,6 +723,15 @@ export class PipelineService {
     // Stop immediately after the entry role completes — do not advance downstream.
     const executionMode = run.metadata.execution_mode as string | undefined;
     if (executionMode === "next" && role === run.entry_point) {
+      if (run.pr_number) {
+        logger.info("Pipeline waiting for PR review after entry role (mode=next)", {
+          pipeline_id: run.pipeline_id,
+          role,
+          pr_number: run.pr_number,
+        });
+        return this.saveAndMaybeCleanup(run, { current_step: "complete", status: "awaiting_pr_review", steps });
+      }
+
       logger.info("Pipeline stopping after entry role (mode=next)", {
         pipeline_id: run.pipeline_id,
         role,

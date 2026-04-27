@@ -7,6 +7,7 @@ import { governanceService } from "../services/governance.service";
 import { pipelineService } from "../services/pipeline.service";
 import { projectService } from "../services/project.service";
 import { projectGitService } from "../services/project-git.service";
+import { githubApiService } from "../services/github-api.service";
 import { designInputGateService } from "../services/design-input-gate.service";
 import { HttpError } from "../utils/http-error";
 
@@ -328,7 +329,24 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
         `chore(${llm.first_task.task_id}): stage sprint artifacts`
       );
       await projectGitService.push(project, sprintBranch);
-      context.notify(`📋 Sprint artifacts committed and pushed from \`${activeDir}/\` on \`${sprintBranch}\``);
+
+      const pr = await githubApiService.createPullRequest({
+        repoUrl: project.repo_url,
+        title: `[${llm.sprint_plan.sprint_id}] Stage sprint artifacts`,
+        body: [
+          "## Staged Sprint Review",
+          `Sprint: ${llm.sprint_plan.sprint_id}`,
+          `Phase: ${llm.sprint_plan.phase_id}`,
+          `Branch: ${sprintBranch}`,
+          "",
+          "Review the staged sprint artifacts in project_work/ai_project_tasks/active/.",
+          `First task: ${llm.first_task.task_id} - ${llm.first_task.title}`,
+        ].join("\n"),
+        head: sprintBranch,
+        base: project.default_branch,
+      });
+      await pipelineService.setPrDetails(pipelineId, pr.number, pr.html_url, sprintBranch);
+      context.notify(`📋 Sprint artifacts committed, pushed, and opened as PR #${pr.number}: <${pr.html_url}|View Pull Request>`);
     }
 
     context.log("Sprint Controller setup complete", {

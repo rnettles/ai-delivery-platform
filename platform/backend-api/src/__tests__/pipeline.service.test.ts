@@ -543,6 +543,32 @@ describe("PipelineService", () => {
       expect(run.current_step).toBe("complete");
     });
 
+    it("planner next mode with pr details transitions to awaiting_pr_review", async () => {
+      const plannerRow = makeRow({
+        entry_point: "planner",
+        current_step: "planner",
+        status: "running",
+        pr_number: 42,
+        pr_url: "https://github.com/example/repo/pull/42",
+        metadata: { source: "slack", execution_mode: "next" },
+      });
+
+      mocks.selectWhere.mockResolvedValueOnce([plannerRow]);
+      const savedRow = makeRow({ current_step: "complete", status: "awaiting_pr_review", pr_number: 42 });
+      mocks.updateReturning.mockResolvedValueOnce([savedRow]);
+
+      const run = await service.completeStep(
+        "pipe-2026-04-19-test1234",
+        "planner",
+        "exec-011",
+        ["artifacts/sprint_plan_s01.md"],
+        false
+      );
+
+      expect(run.status).toBe("awaiting_pr_review");
+      expect(run.current_step).toBe("complete");
+    });
+
     it("creates pipeline with caller_context_stack initialized to entry_point", async () => {
       const row = makeRow();
       mocks.insertReturning.mockResolvedValueOnce([row]);
