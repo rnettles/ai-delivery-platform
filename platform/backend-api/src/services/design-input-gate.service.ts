@@ -17,6 +17,13 @@ export type EntryMode = "intake" | "plan";
 
 const DESIGN_FILE_EXTENSIONS = new Set([".md", ".txt", ".json", ".yaml", ".yml"]);
 
+// Files matching these patterns are scaffolding/reference only and must not be loaded
+// as design inputs or counted as FRD/TDN candidates.
+const EXCLUDED_FILENAME_PATTERNS = [
+  /^TEMPLATE_/i,
+  /^README(\..+)?$/i,
+];
+
 // Maximum characters per file loaded into LLM context (prevents token overflow)
 const MAX_FILE_CHARS = 6000;
 // Per-category file limits — FRs get priority, ADRs and TDNs are secondary
@@ -253,6 +260,7 @@ export class DesignInputGateService {
       if (!entry.isFile()) continue;
       const ext = path.extname(entry.name).toLowerCase();
       if (!DESIGN_FILE_EXTENSIONS.has(ext)) continue;
+      if (EXCLUDED_FILENAME_PATTERNS.some((p) => p.test(entry.name))) continue;
 
       const rel = path.relative(repoRoot, abs).replace(/\\/g, "/");
       out.push(rel);
