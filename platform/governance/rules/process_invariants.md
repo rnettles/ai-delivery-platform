@@ -33,10 +33,13 @@
 - Phase lifecycle: `Draft` → `Planning` → `Active` → `Complete`.
 
 **Planner input requirements:**
-- Planner must only plan FRs not already claimed by an existing phase plan.
-  Cross-reference `staged_phases/*.md` to determine the claimed FR set before planning.
-- If all known FRs are already covered by existing phase plans, the Planner must stop and
-  report that there are no pending FRs — do not create an empty or redundant phase.
+- Planner must only plan FRs that are explicitly listed in the "Already Claimed FR IDs" section
+  of the user message. Only identifiers that appear in that section are considered claimed.
+  IMPORTANT: "Phase 1", "Phase 2", or similar phase labels that appear inside FR acceptance
+  criteria or requirement descriptions are implementation scoping notes — they are NOT delivery
+  pipeline phase plans and do NOT make those FRs already claimed.
+- If all known FRs are explicitly listed as already claimed in the provided message, the Planner
+  must stop and report that there are no pending FRs — do not create an empty or redundant phase.
 - Every phase plan must include a non-empty `fr_ids_in_scope` field referencing actual FR
   identifiers from the project's FR/PRD documents. Phase plans without FR traceability are invalid.
 - Planner must evaluate all loaded ADRs for compliance and congruency before producing a phase plan.

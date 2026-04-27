@@ -145,14 +145,22 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
         designInputs.tdn_context.map((f) => `## ${f.path}\n\n${f.content}`).join("\n\n---\n\n")
       : "";
 
-    const claimedSection = claimedFrIds.length > 0
-      ? `# Already Claimed FR IDs\n\n` +
-        `These FR identifiers are already covered by existing phase plans. ` +
-        `DO NOT include them in fr_ids_in_scope unless this phase is explicitly superseding a prior plan. ` +
-        `If all FRs in the provided documents are already claimed and there is nothing left to plan, ` +
-        `return: {"error": "NO_UNMET_FRS", "message": "All known FRs are already covered by existing phases."}\n\n` +
-        claimedFrIds.map((id) => `- ${id}`).join("\n")
-      : "";
+    // Always inject Section 4 even when empty so the LLM sees an explicit "none claimed" signal.
+    // Omitting Section 4 entirely causes the LLM to conflate "Phase 1"/"Phase 2" labels
+    // inside FRD acceptance criteria with delivery pipeline phases, triggering NO_UNMET_FRS.
+    const claimedSection =
+      `# Already Claimed FR IDs\n\n` +
+      (claimedFrIds.length > 0
+        ? `These FR identifiers are already covered by existing phase plans. ` +
+          `DO NOT include them in fr_ids_in_scope unless this phase is explicitly superseding a prior plan. ` +
+          `If all FRs in the provided documents are already claimed and there is nothing left to plan, ` +
+          `return: {"error": "NO_UNMET_FRS", "message": "All known FRs are already covered by existing phases."}\n\n` +
+          claimedFrIds.map((id) => `- ${id}`).join("\n")
+        : `No prior phase plans exist. ALL FR identifiers in the provided documents are unclaimed. ` +
+          `You MUST produce a phase plan covering at least the first logical set of FRs. ` +
+          `NOTE: "Phase 1" or "Phase 2" labels that appear inside FR acceptance criteria are ` +
+          `implementation scoping notes within the requirement — they are NOT delivery pipeline ` +
+          `phase plans and do NOT make those FRs already claimed.`);
 
     const contentSections = [frSection, adrSection, tdnSection, claimedSection].filter(Boolean);
     const userContent =
