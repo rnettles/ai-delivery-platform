@@ -138,8 +138,20 @@ class ProjectGitService {
     try {
       if (existsSync(join(clonePath, ".git"))) {
         if (needsSync) {
-          logger.info("git: pulling (TTL expired)", { project: project.name, clonePath });
-          this.git(clonePath, ["pull", "--ff-only"]);
+          // fetch + reset --hard when forcePull is set so local modifications written
+          // by prior executions (governance templates, planning artifacts) never block
+          // the update. git pull --ff-only aborts when local changes conflict with the
+          // incoming merge and that error was previously swallowed, leaving the clone
+          // permanently stale. forcePull is used for pre-execution gate reads only;
+          // in-progress branch work uses the TTL path and is never reset.
+          if (forcePull) {
+            logger.info("git: fetch + reset (force-pull)", { project: project.name, clonePath });
+            this.git(clonePath, ["fetch", "origin"]);
+            this.git(clonePath, ["reset", "--hard", `origin/${project.default_branch}`]);
+          } else {
+            logger.info("git: pulling (TTL expired)", { project: project.name, clonePath });
+            this.git(clonePath, ["pull", "--ff-only"]);
+          }
           state.lastSyncAt = Date.now();
         }
       } else {
