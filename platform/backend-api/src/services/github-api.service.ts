@@ -14,6 +14,13 @@ export interface GithubPullRequestReview {
   user_login: string;
 }
 
+export interface GithubPullRequestLookupOptions {
+  repoUrl: string;
+  base?: string;
+  head?: string;
+  title?: string;
+}
+
 interface RepoRef {
   owner: string;
   repo: string;
@@ -39,57 +46,41 @@ function parseRepoUrl(repoUrl: string): RepoRef {
 }
 
 class GithubApiService {
-  async createPullRequest(opts: {
-    repoUrl: string;
-    title: string;
-    body: string;
-    head: string;
-    base: string;
-  }): Promise<GithubPullRequest> {
+  private async request<T>(repoUrl: string, endpointPath: string, method: "GET" | "POST" | "PUT", body?: unknown): Promise<T> {
     const token = config.githubToken;
     if (!token) {
       throw new Error("GitHub API token not configured. Set GITHUB_TOKEN (or GIT_PAT fallback).");
     }
 
-    const { owner, repo } = parseRepoUrl(opts.repoUrl);
-    const endpoint = `${config.githubApiBaseUrl}/repos/${owner}/${repo}/pulls`;
+    const { owner, repo } = parseRepoUrl(repoUrl);
+    const endpoint = `${config.githubApiBaseUrl}/repos/${owner}/${repo}${endpointPath}`;
 
     const response = await fetch(endpoint, {
-      method: "POST",
+      method,
       headers: {
         Accept: "application/vnd.github+json",
         Authorization: `Bearer ${token}`,
         "X-GitHub-Api-Version": "2022-11-28",
-        "Content-Type": "application/json",
+        ...(body ? { "Content-Type": "application/json" } : {}),
       },
-      body: JSON.stringify({
-        title: opts.title,
-        body: opts.body,
-        head: opts.head,
-        base: opts.base,
-      }),
+      ...(body ? { body: JSON.stringify(body) } : {}),
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`GitHub createPullRequest failed: ${response.status} ${response.statusText} ${errorText}`);
+      throw new Error(`GitHub request failed: ${response.status} ${response.statusText} ${errorText}`);
     }
 
-    const payload = (await response.json()) as {
-      number: number;
-      url: string;
-      html_url: string;
-      state: string;
-      merged?: boolean;
-    };
+    return (await response.json()) as T;
+  }
 
-    logger.info("GitHub PR created", {
-      owner,
-      repo,
-      pr_number: payload.number,
-      pr_url: payload.html_url,
-    });
-
+  private mapPullRequest(payload: {
+    number: number;
+    url: string;
+    html_url: string;
+    state: string;
+    merged?: boolean;
+  }): GithubPullRequest {
     return {
       number: payload.number,
       url: payload.url,
@@ -99,44 +90,91 @@ class GithubApiService {
     };
   }
 
-  async getPullRequest(opts: { repoUrl: string; number: number }): Promise<GithubPullRequest> {
-    const token = config.githubToken;
-    if (!token) {
-      throw new Error("GitHub API token not configured. Set GITHUB_TOKEN (or GIT_PAT fallback).");
-    }
-
-    const { owner, repo } = parseRepoUrl(opts.repoUrl);
-    const endpoint = `${config.githubApiBaseUrl}/repos/${owner}/${repo}/pulls/${opts.number}`;
-
-    const response = await fetch(endpoint, {
-      method: "GET",
-      headers: {
-        Accept: "application/vnd.github+json",
-        Authorization: `Bearer ${token}`,
-        "X-GitHub-Api-Version": "2022-11-28",
-      },
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`GitHub getPullRequest failed: ${response.status} ${response.statusText} ${errorText}`);
-    }
-
-    const payload = (await response.json()) as {
+  async createPullRequest(opts: {
+    repoUrl: string;
+    title: string;
+    body: string;
+    head: string;
+    base: string;
+  }): Promise<GithubPullRequest> {
+    const payload = await this.request<{
       number: number;
       url: string;
       html_url: string;
       state: string;
       merged?: boolean;
-    };
+    }>(opts.repoUrl, "/pulls", "POST", {
+        title: opts.title,
+        body: opts.body,
+        head: opts.head,
+        base: opts.base,
+    });
 
-    return {
-      number: payload.number,
-      url: payload.url,
-      html_url: payload.html_url,
-      state: payload.state,
-      merged: payload.merged ?? false,
-    };
+    const { owner, repo } = parseRepoUrl(opts.repoUrl);
+
+    logger.info("GitHub PR created", {
+      owner,
+      repo,
+      pr_number: payload.number,
+      pr_url: payload.html_url,
+    });
+
+    return this.mapPullRequest(payload);
+  }
+
+  async findOpenPullRequestByHead(opts: Omit<GithubPullRequestLookupOptions, "title">): Promise<GithubPullRequest | null> {
+    const { owner } = parseRepoUrl(opts.repoUrl);
+    if (!opts.head) {
+      return null;
+    }
+
+    const params = new URLSearchParams({
+      state: "open",
+      head: `${owner}:${opts.head}`,
+      ...(opts.base ? { base: opts.base } : {}),
+      per_page: "20",
+    });
+
+    const payload = await this.request<Array<{ number: number; url: string; html_url: string; state: string; merged?: boolean }>>(
+      opts.repoUrl,
+      `/pulls?${params.toString()}`,
+      "GET"
+    );
+
+    return payload.length > 0 ? this.mapPullRequest(payload[0]) : null;
+  }
+
+  async findOpenPullRequestByTitle(opts: Omit<GithubPullRequestLookupOptions, "head">): Promise<GithubPullRequest | null> {
+    if (!opts.title) {
+      return null;
+    }
+
+    const params = new URLSearchParams({
+      state: "open",
+      ...(opts.base ? { base: opts.base } : {}),
+      per_page: "50",
+    });
+
+    const payload = await this.request<Array<{ number: number; url: string; html_url: string; state: string; merged?: boolean; title?: string }>>(
+      opts.repoUrl,
+      `/pulls?${params.toString()}`,
+      "GET"
+    );
+
+    const match = payload.find((pr) => (pr.title ?? "") === opts.title);
+    return match ? this.mapPullRequest(match) : null;
+  }
+
+  async getPullRequest(opts: { repoUrl: string; number: number }): Promise<GithubPullRequest> {
+    const payload = await this.request<{
+      number: number;
+      url: string;
+      html_url: string;
+      state: string;
+      merged?: boolean;
+    }>(opts.repoUrl, `/pulls/${opts.number}`, "GET");
+
+    return this.mapPullRequest(payload);
   }
 
   async listPullRequestReviews(opts: { repoUrl: string; number: number }): Promise<GithubPullRequestReview[]> {

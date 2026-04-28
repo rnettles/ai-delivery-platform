@@ -51,6 +51,21 @@ export interface PlannerOutput {
   sprint_branch?: string;
 }
 
+interface PlannerCloseoutContext {
+  closeout: PlannerOutput;
+  metadata: {
+    reused_closeout_artifact: boolean;
+    reused_existing_pr: boolean;
+  };
+}
+
+type NextModeState =
+  | { kind: "open_sprint"; sprint: { sprint_id: string; status: string; sprint_plan_path: string } }
+  | { kind: "sprint_ready"; phasePlan: { content: string; filePath: string } }
+  | { kind: "needs_fr_evaluation" }
+  | { kind: "phase_planning" }
+  | { kind: "no_work" };
+
 const SPRINT_READY_PHASE_STATUSES = new Set(["Planning", "Approved"]);
 const OPEN_SPRINT_STATUSES = new Set(["staged", "Planning", "Active", "ready_for_verification"]);
 const APPROVED_STATUSES = new Set(["approved", "accepted"]);
@@ -102,40 +117,43 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
       previousArtifacts.filter((p) => p.includes("sprint_closeout.json"))
     );
 
+    let closeoutContext: PlannerCloseoutContext | undefined;
+
     if (verificationArtifact && sprintCloseOutArtifact) {
-      return this.runSprintCloseOut(
+      closeoutContext = await this.runSprintCloseOut(
         pipelineId,
         previousArtifacts,
         verificationArtifact.content,
         sprintCloseOutArtifact.content,
         context
       );
+
+      if (executionMode !== "next") {
+        return closeoutContext.closeout;
+      }
+
+      context.notify("✅ Sprint closeout complete. Evaluating next Planner step...");
     }
 
-    // Sprint planning mode: execution_mode "next" with an open Planning-status phase plan in the repo
+    // Sprint planning mode: execution_mode "next" resolves in a strict order.
     if (executionMode === "next") {
-      const openRepoSprint = await this.findOpenRepoSprint(pipelineId);
-      if (openRepoSprint) {
-        throw new HttpError(
-          409,
-          "OPEN_SPRINT_EXISTS",
-          `Sprint ${openRepoSprint.sprint_id} is already staged and awaiting review (status: ${openRepoSprint.status}). Review the staged sprint artifacts before requesting another Planner next step.`,
-          {
-            sprint_id: openRepoSprint.sprint_id,
-            status: openRepoSprint.status,
-            sprint_plan_path: openRepoSprint.sprint_plan_path,
-            execution_mode: executionMode,
-          }
-        );
+      const nextState = await this.resolveNextModeState(pipelineId);
+      if (nextState.kind === "open_sprint") {
+        this.throwOpenSprintExists(nextState.sprint, executionMode);
       }
 
-      const sprintPlan = await this.findOpenPhasePlan(pipelineId);
-      if (sprintPlan) {
+      if (nextState.kind === "sprint_ready") {
         context.log("Planner sprint planning mode detected", { execution_mode: executionMode });
-        return this.runSprintPlanning(pipelineId, sprintPlan.content, description, context);
+        return this.runSprintPlanning(pipelineId, nextState.phasePlan.content, description, context);
       }
-      // No Planning-status phase found — check for unclaimed FRs before deciding
-      // Will provide comprehensive feedback after loading design inputs
+
+      if (closeoutContext?.metadata.reused_closeout_artifact) {
+        context.log("Planner next mode: detected prior closeout artifact and continuing decision flow", {
+          execution_mode: executionMode,
+          closeout_artifact: closeoutContext.closeout.artifact_path,
+        });
+      }
+
       context.log("Planner next mode: no Planning-status phases found, will check for unclaimed FRs");
     }
 
@@ -182,11 +200,7 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
     if (executionMode === "next") {
       const planningPhases = await this.findAllPhases(pipelineId);
       const planningCount = planningPhases.filter((p) => SPRINT_READY_PHASE_STATUSES.has(p.status ?? "")).length;
-      const unclaimedFrIds = designInputs.fr_context
-        .flatMap((f) => {
-          const matches = f.content.match(/^-\s+(FR-\d+)/gm);
-          return matches ? matches.map((m) => m.replace(/^-\s+/, "")) : [];
-        })
+      const unclaimedFrIds = [...new Set(designInputs.fr_context.flatMap((f) => this.extractFrIds(f.content)))]
         .filter((id) => !claimedFrIds.includes(id));
 
       const statusLines = [
@@ -194,7 +208,19 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
         `**Unclaimed FRs:** ${unclaimedFrIds.length} (available for new phase planning)`,
       ];
 
-      if (planningCount === 0 && unclaimedFrIds.length === 0) {
+      const nextState = await this.resolveNextModeState(pipelineId, unclaimedFrIds.length);
+      if (nextState.kind === "open_sprint") {
+        this.throwOpenSprintExists(nextState.sprint, executionMode);
+      }
+
+      if (nextState.kind === "sprint_ready") {
+        context.log("Planner next mode: sprint-ready phase became available during FR evaluation", {
+          execution_mode: executionMode,
+        });
+        return this.runSprintPlanning(pipelineId, nextState.phasePlan.content, description, context);
+      }
+
+      if (nextState.kind === "no_work") {
         throw new HttpError(
           409,
           "NO_WORK_AVAILABLE",
@@ -204,14 +230,9 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
         );
       }
 
-      if (planningCount === 0 && unclaimedFrIds.length > 0) {
-        throw new HttpError(
-          409,
-          "NO_PLANNING_PHASES",
-          statusLines.join("\n") +
-          "\n\nTo stage a sprint, approve a phase plan. To plan new phases, use execution_mode='full' or no mode restriction.",
-          { planning_phases: planningCount, unclaimed_frs: unclaimedFrIds.length, execution_mode: executionMode }
-        );
+      if (nextState.kind === "phase_planning") {
+        // In next mode, unclaimed FRs mean Planner should draft the next logical phase.
+        context.notify(`ℹ️ ${statusLines.join(" | ")} — No sprint-ready phase found; drafting the next phase.`);
       }
 
       if (planningCount > 0 && unclaimedFrIds.length === 0) {
@@ -402,7 +423,7 @@ ${designArtifacts}
     verificationJson: string,
     sprintCloseOutJson: string,
     context: ScriptExecutionContext
-  ): Promise<PlannerOutput> {
+  ): Promise<PlannerCloseoutContext> {
     const verification = JSON.parse(verificationJson) as { result?: string; summary?: string; task_id?: string };
     if (verification.result !== "PASS") {
       throw new Error("Planner sprint close-out called before verifier PASS");
@@ -414,6 +435,37 @@ ${designArtifacts}
       sprint_complete_artifacts?: string[];
       verifier_summary?: string;
     };
+
+    const existingPlannerCloseoutArtifact = await artifactService.findFirst(
+      previousArtifacts.filter((p) => p.includes("planner_sprint_closeout.json"))
+    );
+
+    if (existingPlannerCloseoutArtifact?.content) {
+      const parsed = JSON.parse(existingPlannerCloseoutArtifact.content) as {
+        pr_number?: number;
+        pr_url?: string;
+        sprint_branch?: string;
+      };
+      const existingBranch = parsed.sprint_branch ?? sprintCloseOut.sprint_branch;
+      if (parsed.pr_number && parsed.pr_url && existingBranch) {
+        await pipelineService.setPrDetails(pipelineId, parsed.pr_number, parsed.pr_url, existingBranch);
+        context.notify(`ℹ️ Reusing existing planner closeout PR #${parsed.pr_number}: <${parsed.pr_url}|View Pull Request>`);
+        return {
+          closeout: {
+            phase_id: "closeout",
+            artifact_path: existingPlannerCloseoutArtifact.path,
+            closeout_mode: "sprint",
+            pr_number: parsed.pr_number,
+            pr_url: parsed.pr_url,
+            sprint_branch: existingBranch,
+          },
+          metadata: {
+            reused_closeout_artifact: true,
+            reused_existing_pr: true,
+          },
+        };
+      }
+    }
 
     context.notify("🏁 Planner closing sprint from PASS gate artifacts and task closeout evidence...");
 
@@ -453,7 +505,21 @@ ${designArtifacts}
       .filter(Boolean)
       .join("\n");
 
-    const pr = await githubApiService.createPullRequest({
+    const existingBranchPr = await githubApiService.findOpenPullRequestByHead({
+      repoUrl: project.repo_url,
+      head: sprintBranch,
+      base: project.default_branch,
+    });
+
+    const existingTitlePr = existingBranchPr
+      ? null
+      : await githubApiService.findOpenPullRequestByTitle({
+        repoUrl: project.repo_url,
+        title,
+        base: project.default_branch,
+      });
+
+    const pr = existingBranchPr ?? existingTitlePr ?? await githubApiService.createPullRequest({
       repoUrl: project.repo_url,
       title,
       body,
@@ -461,8 +527,14 @@ ${designArtifacts}
       base: project.default_branch,
     });
 
+    const reusedExistingPr = Boolean(existingBranchPr ?? existingTitlePr);
+
     await pipelineService.setPrDetails(pipelineId, pr.number, pr.html_url, sprintBranch);
-    context.notify(`🔗 Planner opened PR #${pr.number}: <${pr.html_url}|View Pull Request>`);
+    if (reusedExistingPr) {
+      context.notify(`ℹ️ Reusing existing open PR #${pr.number}: <${pr.html_url}|View Pull Request>`);
+    } else {
+      context.notify(`🔗 Planner opened PR #${pr.number}: <${pr.html_url}|View Pull Request>`);
+    }
 
     const closeOutPath = await artifactService.write(
       pipelineId,
@@ -493,13 +565,64 @@ ${designArtifacts}
     });
 
     return {
-      phase_id: "closeout",
-      artifact_path: closeOutPath,
-      closeout_mode: "sprint",
-      pr_number: pr.number,
-      pr_url: pr.html_url,
-      sprint_branch: sprintBranch,
+      closeout: {
+        phase_id: "closeout",
+        artifact_path: closeOutPath,
+        closeout_mode: "sprint",
+        pr_number: pr.number,
+        pr_url: pr.html_url,
+        sprint_branch: sprintBranch,
+      },
+      metadata: {
+        reused_closeout_artifact: false,
+        reused_existing_pr: reusedExistingPr,
+      },
     };
+  }
+
+  private async resolveNextModeState(pipelineId: string, unclaimedFrCount?: number): Promise<NextModeState> {
+    const openRepoSprint = await this.findOpenRepoSprint(pipelineId);
+    if (openRepoSprint) {
+      return { kind: "open_sprint", sprint: openRepoSprint };
+    }
+
+    const sprintPlan = await this.findOpenPhasePlan(pipelineId);
+    if (sprintPlan) {
+      return { kind: "sprint_ready", phasePlan: sprintPlan };
+    }
+
+    if (typeof unclaimedFrCount !== "number") {
+      return { kind: "needs_fr_evaluation" };
+    }
+
+    if (unclaimedFrCount > 0) {
+      return { kind: "phase_planning" };
+    }
+
+    return { kind: "no_work" };
+  }
+
+  private throwOpenSprintExists(
+    openRepoSprint: { sprint_id: string; status: string; sprint_plan_path: string },
+    executionMode: string | undefined
+  ): never {
+    const sprintStatus = (openRepoSprint.status ?? "").toLowerCase();
+    const sprintReadiness = sprintStatus === "staged" || sprintStatus === "planning"
+      ? "ready for Sprint Controller"
+      : sprintStatus === "active" || sprintStatus === "ready_for_verification"
+        ? "in progress"
+        : "already open";
+    throw new HttpError(
+      409,
+      "OPEN_SPRINT_EXISTS",
+      `Sprint ${openRepoSprint.sprint_id} is already open (status: ${openRepoSprint.status}) and is ${sprintReadiness}. Review current sprint artifacts before requesting another Planner next step.`,
+      {
+        sprint_id: openRepoSprint.sprint_id,
+        status: openRepoSprint.status,
+        sprint_plan_path: openRepoSprint.sprint_plan_path,
+        execution_mode: executionMode,
+      }
+    );
   }
 
   private assertApprovedDependencies(plan: PlannerPhasePlan, designInputs: DesignInputGateResult): void {
@@ -854,7 +977,10 @@ ${designArtifacts}
     let sprintBranch: string | undefined;
 
     if (project) {
-      sprintBranch = `feature/${llm.first_task.task_id}`;
+      const sprintBranchSuffix =
+        llm.first_task?.task_id ??
+        llm.sprint_plan.sprint_id.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+      sprintBranch = `feature/${sprintBranchSuffix}`;
       await projectGitService.ensureReady(project);
       await projectGitService.createBranch(project, sprintBranch);
       await pipelineService.setSprintBranch(pipelineId, sprintBranch);
