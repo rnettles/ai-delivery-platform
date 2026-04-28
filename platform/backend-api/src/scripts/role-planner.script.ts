@@ -310,17 +310,57 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
     if (typeof planAsRecord["error"] === "string") {
       const errorCode = planAsRecord["error"] as string;
       let errorMsg = (planAsRecord["message"] as string | undefined) ?? `Planner stopped with error code: ${errorCode}`;
+      const errorDetails: Record<string, unknown> = {
+        claimed_fr_ids: claimedFrIds,
+        fr_context_files: designInputs.fr_context.map((f) => f.path),
+        execution_mode: executionMode,
+      };
       
       // Provide context-aware message for NO_UNMET_FRS
       if (errorCode === "NO_UNMET_FRS") {
         errorMsg = "No unclaimed FR work available to plan. All FR requirements are staged in existing phases. Approve a phase plan to stage a sprint.";
       }
+
+      // Provide context-aware message for NO_APPROVED_FRDS with detailed FRD list
+      if (errorCode === "NO_APPROVED_FRDS") {
+        const draftFrds = (planAsRecord["draft_frds"] ?? []) as unknown[];
+        const approvedFrds = (planAsRecord["approved_frds"] ?? []) as unknown[];
+
+        let draftList = "None";
+        if (Array.isArray(draftFrds) && draftFrds.length > 0) {
+          draftList = draftFrds
+            .map((frd: unknown) => {
+              if (typeof frd === "object" && frd !== null) {
+                const id = (frd as Record<string, unknown>)["id"] ?? "?";
+                const title = (frd as Record<string, unknown>)["title"] ?? "?";
+                const status = (frd as Record<string, unknown>)["status"] ?? "?";
+                return `- **${id}** (${title}) — Status: ${status}`;
+              }
+              return `- ${frd}`;
+            })
+            .join("\n");
+        }
+
+        let approvedList = "None";
+        if (Array.isArray(approvedFrds) && approvedFrds.length > 0) {
+          approvedList = approvedFrds
+            .map((frd: unknown) => {
+              if (typeof frd === "object" && frd !== null) {
+                const id = (frd as Record<string, unknown>)["id"] ?? "?";
+                const title = (frd as Record<string, unknown>)["title"] ?? "?";
+                return `- **${id}** (${title})`;
+              }
+              return `- ${frd}`;
+            })
+            .join("\n");
+        }
+
+        errorMsg = `Planner cannot create a phase plan because no FRDs with Status: Approved were found.\n\n**FRDs requiring approval:**\n${draftList}\n\n**Already approved FRDs (if any):**\n${approvedList}\n\nApprove all required FRDs in docs/functional_requirements/ and docs/prd/, then rerun Planner.`;
+        errorDetails["draft_frds"] = draftFrds;
+        errorDetails["approved_frds"] = approvedFrds;
+      }
       
-      throw new HttpError(422, errorCode, errorMsg, {
-        claimed_fr_ids: claimedFrIds,
-        fr_context_files: designInputs.fr_context.map((f) => f.path),
-        execution_mode: executionMode,
-      });
+      throw new HttpError(422, errorCode, errorMsg, errorDetails);
     }
 
     if (!plan.phase_id || !Array.isArray(plan.objectives) || !Array.isArray(plan.deliverables)) {

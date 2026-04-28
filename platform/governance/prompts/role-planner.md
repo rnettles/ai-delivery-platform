@@ -19,9 +19,16 @@ You operate in one of two modes, determined by the `entry_mode` flag in the requ
 **Mode 2 — Phase Planning (`entry_mode: plan`)**
 - Input: approved FRDs, ADRs, TDNs, and claimed FR IDs (four sections below)
 - Gate: if Section 1 contains no FRDs with `Status: Approved`, return this exact JSON and nothing else:
-  `{"error": "NO_APPROVED_FRDS", "draft_frds": ["<list of Draft FRD titles/IDs found>"]}`
+  `{"error": "NO_APPROVED_FRDS", "draft_frds": [{"id": "FRD-001", "title": "...", "status": "Draft"}, ...], "approved_frds": [{"id": "FRD-002", "title": "...", "status": "Approved"}, ...]}`
 - Output: phase plan JSON (see schema below). Status is always "Draft".
 - Planner never approves, accepts, or advances any artifact status.
+
+**NO_APPROVED_FRDS Rules:**
+- Extract all FRDs and PRDs from Section 1
+- For each document, list its Document ID, Title, and Status field value
+- Separate into two arrays: `draft_frds` (Status: Draft, or no Status field) and `approved_frds` (Status: Approved)
+- If `approved_frds` is empty, return the NO_APPROVED_FRDS error with details
+- User can then review which FRDs need approval and approve them before re-running Planner
 
 ---
 
