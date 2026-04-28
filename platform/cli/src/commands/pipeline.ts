@@ -10,6 +10,8 @@ import {
   formatStagedPhases,
   formatStagedSprints,
   formatStagedTasks,
+  formatAdminOperationCreate,
+  formatAdminOperationStatus,
 } from "../formatters";
 import type {
   PipelineRun,
@@ -20,6 +22,9 @@ import type {
   StagedSprintsResult,
   StagedTasksResult,
   CreatePipelineRequest,
+  CreateAdminOpsJobRequest,
+  AdminOpsCreateResponse,
+  AdminOpsStatusResponse,
 } from "../types";
 import type { ExecutionListResponse } from "../types";
 
@@ -245,7 +250,7 @@ export function registerPipelineCommands(program: Command): void {
   // ── pipeline-summary ───────────────────────────────────────────────────────
   program
     .command("pipeline-summary")
-    .description("Get enriched status summary for a pipeline")
+    .description("Get enriched status summary for a pipeline, including latest admin recovery operation telemetry")
     .option("--pipeline-id <id>", "Pipeline ID (falls back to active)")
     .option("--json", "Output raw JSON")
     .action(async (opts) => {
@@ -266,6 +271,138 @@ export function registerPipelineCommands(program: Command): void {
         method: "GET",
         path: `/pipeline/${pipelineId}/status-summary`,
         formatterSummary: formatPipelineSummary(res),
+      });
+    });
+
+  // ── admin-op-create ───────────────────────────────────────────────────────
+  program
+    .command("admin-op-create")
+    .description("Queue an async admin operation: diagnose|reconcile|reset-workspace|retry")
+    .requiredOption("--action <action>", "diagnose|reconcile|reset-workspace|retry")
+    .option("--project-id <id>", "Project ID")
+    .option("--pipeline-id <id>", "Pipeline ID (falls back to active for retry)")
+    .option("--actor <name>", "Actor name", "operator")
+    .option("--branch <name>", "Optional branch hint")
+    .option("--base-branch <name>", "Optional base branch hint")
+    .option("--head-branch <name>", "Optional head branch hint")
+    .option("--json", "Output raw JSON")
+    .action(async (opts) => {
+      const pipelineId = opts.action === "retry" ? requirePipelineId(opts.pipelineId) : resolvePipelineId(opts.pipelineId);
+      const body: CreateAdminOpsJobRequest = {
+        action: opts.action,
+        actor: opts.actor,
+        ...(opts.projectId ? { project_id: opts.projectId } : {}),
+        ...(pipelineId ? { pipeline_id: pipelineId } : {}),
+      };
+
+      const options: NonNullable<CreateAdminOpsJobRequest["options"]> = {};
+      if (opts.branch) options.branch = opts.branch;
+      if (opts.baseBranch) options.base_branch = opts.baseBranch;
+      if (opts.headBranch) options.head_branch = opts.headBranch;
+      if (Object.keys(options).length > 0) body.options = options;
+
+      const res = await request<AdminOpsCreateResponse>({
+        method: "POST",
+        path: "/admin/ops",
+        body,
+      });
+
+      if (opts.json) {
+        console.log(JSON.stringify(res, null, 2));
+      } else {
+        console.log(formatAdminOperationCreate(res));
+      }
+
+      await sendNotification({
+        status: "INFO",
+        command: "admin-op-create",
+        method: "POST",
+        path: "/admin/ops",
+        formatterSummary: formatAdminOperationCreate(res),
+      });
+    });
+
+  // ── admin-op-status ───────────────────────────────────────────────────────
+  program
+    .command("admin-op-status")
+    .description("Get async admin operation status by operation ID")
+    .requiredOption("--operation-id <id>", "Operation ID")
+    .option("--json", "Output raw JSON")
+    .action(async (opts) => {
+      const res = await request<AdminOpsStatusResponse>({
+        path: `/admin/ops/${opts.operationId}`,
+      });
+
+      if (opts.json) {
+        console.log(JSON.stringify(res, null, 2));
+      } else {
+        console.log(formatAdminOperationStatus(res));
+      }
+
+      await sendNotification({
+        status: "INFO",
+        command: "admin-op-status",
+        method: "GET",
+        path: `/admin/ops/${opts.operationId}`,
+        formatterSummary: formatAdminOperationStatus(res),
+      });
+    });
+
+  // ── pipeline-retry-op ─────────────────────────────────────────────────────
+  program
+    .command("pipeline-retry-op")
+    .description("Queue the gated async retry operation for a pipeline")
+    .option("--pipeline-id <id>", "Pipeline ID (falls back to active)")
+    .option("--actor <name>", "Actor name", "operator")
+    .option("--json", "Output raw JSON")
+    .action(async (opts) => {
+      const pipelineId = requirePipelineId(opts.pipelineId);
+      const res = await request<AdminOpsCreateResponse>({
+        method: "POST",
+        path: `/pipeline/${pipelineId}/ops/retry`,
+        body: { actor: opts.actor },
+      });
+
+      if (opts.json) {
+        console.log(JSON.stringify(res, null, 2));
+      } else {
+        console.log(formatAdminOperationCreate(res));
+      }
+
+      await sendNotification({
+        status: "INFO",
+        command: "pipeline-retry-op",
+        method: "POST",
+        path: `/pipeline/${pipelineId}/ops/retry`,
+        formatterSummary: formatAdminOperationCreate(res),
+      });
+    });
+
+  // ── pipeline-op-status ────────────────────────────────────────────────────
+  program
+    .command("pipeline-op-status")
+    .description("Get a pipeline-linked admin operation status")
+    .requiredOption("--operation-id <id>", "Operation ID")
+    .option("--pipeline-id <id>", "Pipeline ID (falls back to active)")
+    .option("--json", "Output raw JSON")
+    .action(async (opts) => {
+      const pipelineId = requirePipelineId(opts.pipelineId);
+      const res = await request<AdminOpsStatusResponse>({
+        path: `/pipeline/${pipelineId}/ops/${opts.operationId}`,
+      });
+
+      if (opts.json) {
+        console.log(JSON.stringify(res, null, 2));
+      } else {
+        console.log(formatAdminOperationStatus(res));
+      }
+
+      await sendNotification({
+        status: "INFO",
+        command: "pipeline-op-status",
+        method: "GET",
+        path: `/pipeline/${pipelineId}/ops/${opts.operationId}`,
+        formatterSummary: formatAdminOperationStatus(res),
       });
     });
 

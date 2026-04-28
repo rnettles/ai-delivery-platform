@@ -7,6 +7,9 @@ import type {
   StagedPhasesResult,
   StagedSprintsResult,
   StagedTasksResult,
+  AdminOpsJob,
+  AdminOpsCreateResponse,
+  AdminOpsStatusResponse,
   HealthResponse,
   GitSyncResponse,
   GitStatusResponse,
@@ -120,7 +123,46 @@ export function formatPipelineSummary(r: PipelineStatusSummary): string {
     if (taskId) base += ` | current_task: ${taskId}`;
   }
 
-  return base;
+  if (!r.latest_operation) {
+    return base;
+  }
+
+  const op = r.latest_operation;
+  const opHeader =
+    `\nlatest_operation: ${op.action} (${op.status})` +
+    ` | id: ${op.operation_id}` +
+    ` | updated: ${fmt(op.updated_at)}`;
+
+  const opEscalation = op.escalation_summary
+    ? `\n  summary: ${op.escalation_summary}`
+    : op.escalation_reason
+      ? `\n  summary: ${op.escalation_reason}`
+      : "";
+
+  const opChecklist = op.human_action_checklist?.length
+    ? `\n  human_action_checklist:\n${op.human_action_checklist.map((item, index) => `    ${index + 1}. ${item}`).join("\n")}`
+    : "";
+
+  const opSteps = op.attempted_steps?.length
+    ? `\n  attempted_steps: ${op.attempted_steps.map((step) => `${step.name}:${step.status}`).join(", ")}`
+    : "";
+
+  const beforeAfter = (() => {
+    const fields: string[] = [];
+    if (op.before_git) {
+      fields.push(
+        `before(branch=${op.before_git.current_branch ?? "?"}, shallow=${String(op.before_git.shallow ?? "?")}, tracking=${op.before_git.upstream_tracking ?? "none"})`
+      );
+    }
+    if (op.after_git) {
+      fields.push(
+        `after(branch=${op.after_git.current_branch ?? "?"}, shallow=${String(op.after_git.shallow ?? "?")}, tracking=${op.after_git.upstream_tracking ?? "none"})`
+      );
+    }
+    return fields.length ? `\n  git_state: ${fields.join(" | ")}` : "";
+  })();
+
+  return `${base}${opHeader}${opEscalation}${opChecklist}${opSteps}${beforeAfter}`;
 }
 
 export function formatPipelineList(r: ChannelPipelineStatusListResult): string {
@@ -236,4 +278,36 @@ export function formatGitStatus(r: GitStatusResponse): string {
       `${(repo.head_commit ?? "").slice(0, 8)}  ${repo.repo_url}`
   );
   return `${r.repos.length} repo(s):\n${lines.join("\n")}`;
+}
+
+export function formatAdminOperation(job: AdminOpsJob): string {
+  const scope = job.pipeline_id
+    ? `pipeline=${job.pipeline_id}`
+    : job.project_id
+      ? `project=${job.project_id}`
+      : "scope=global";
+
+  const summary = job.outcome?.escalation_summary ?? job.outcome?.escalation_reason;
+  const checklist = job.outcome?.human_action_checklist?.length
+    ? `\nchecklist:\n${job.outcome.human_action_checklist.map((item, index) => `  ${index + 1}. ${item}`).join("\n")}`
+    : "";
+  const steps = job.outcome?.attempted_steps?.length
+    ? `\nsteps: ${job.outcome.attempted_steps.map((step) => `${step.name}:${step.status}`).join(", ")}`
+    : "";
+
+  return (
+    `operation_id: ${job.job_id} | action: ${job.action} | status: ${job.status}` +
+    ` | ${scope} | updated: ${fmt(job.updated_at)}` +
+    (summary ? `\nsummary: ${summary}` : "") +
+    checklist +
+    steps
+  );
+}
+
+export function formatAdminOperationCreate(r: AdminOpsCreateResponse): string {
+  return `${formatAdminOperation(r.operation)}\nstatus_url: ${r.status_url}`;
+}
+
+export function formatAdminOperationStatus(r: AdminOpsStatusResponse): string {
+  return formatAdminOperation(r.operation);
 }

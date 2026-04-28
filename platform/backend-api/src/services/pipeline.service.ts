@@ -3,7 +3,8 @@ import fs from "fs/promises";
 import path from "path";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db/client";
-import { pipelineRuns } from "../db/schema";
+import { pipelineRuns, state } from "../db/schema";
+import { AdminOpsAction, AdminOpsGitSummary, AdminOpsJob, AdminOpsStatus } from "../domain/admin-ops.types";
 import {
   CreatePipelineRequest,
   GateOutcome,
@@ -39,6 +40,27 @@ export interface PipelineStatusSummary extends PipelineRun {
   prior_step_detail?: PipelineStepRecord;
   current_step_detail?: PipelineStepRecord;
   execution_signals?: PipelineExecutionSignal[];
+  latest_operation?: PipelineLatestOperationSummary;
+}
+
+export interface PipelineLatestOperationSummary {
+  operation_id: string;
+  action: AdminOpsAction;
+  status: AdminOpsStatus;
+  updated_at: string;
+  started_at?: string;
+  completed_at?: string;
+  escalation_reason?: string;
+  escalation_summary?: string;
+  human_action_checklist?: string[];
+  attempted_steps?: Array<{
+    name: string;
+    status: string;
+    started_at: string;
+    completed_at?: string;
+  }>;
+  before_git?: AdminOpsGitSummary;
+  after_git?: AdminOpsGitSummary;
 }
 
 export interface PipelineExecutionSignal {
@@ -65,6 +87,14 @@ export interface AwaitingPrReviewRun {
   pipeline_id: string;
   project_id?: string;
   pr_number?: number;
+}
+
+export interface PipelineOperationLink {
+  operation_id: string;
+  action: string;
+  status: string;
+  created_at: string;
+  details?: Record<string, unknown>;
 }
 
 export type CurrentPipelineStatusResult =
@@ -236,6 +266,24 @@ function buildExecutionSignals(run: PipelineRun, summary: PipelineStatusSummary)
     });
   }
 
+  if (summary.latest_operation?.status === "blocked") {
+    signals.push({
+      level: "error",
+      code: "LATEST_OPERATION_BLOCKED",
+      message: summary.latest_operation.escalation_summary ?? "Latest admin recovery operation is blocked and needs human action.",
+      since: summary.latest_operation.updated_at,
+    });
+  }
+
+  if (summary.latest_operation?.status === "failed") {
+    signals.push({
+      level: "error",
+      code: "LATEST_OPERATION_FAILED",
+      message: "Latest admin recovery operation failed before reaching a stable result.",
+      since: summary.latest_operation.updated_at,
+    });
+  }
+
   if (run.status === "awaiting_approval") {
     signals.push({
       level: "waiting",
@@ -287,6 +335,28 @@ function buildExecutionSignals(run: PipelineRun, summary: PipelineStatusSummary)
   }
 
   return signals;
+}
+
+function summarizeOperationJob(job: AdminOpsJob): PipelineLatestOperationSummary {
+  return {
+    operation_id: job.job_id,
+    action: job.action,
+    status: job.status,
+    updated_at: job.updated_at,
+    started_at: job.started_at,
+    completed_at: job.completed_at,
+    escalation_reason: job.outcome?.escalation_reason,
+    escalation_summary: job.outcome?.escalation_summary,
+    human_action_checklist: job.outcome?.human_action_checklist,
+    attempted_steps: job.telemetry?.attempted_steps?.map((step) => ({
+      name: step.name,
+      status: step.status,
+      started_at: step.started_at,
+      completed_at: step.completed_at,
+    })),
+    before_git: job.outcome?.before_git,
+    after_git: job.outcome?.after_git,
+  };
 }
 
 export class PipelineService {
@@ -961,6 +1031,28 @@ export class PipelineService {
     return this.saveAndMaybeCleanup(run, { status: "complete" });
   }
 
+  async linkOperation(pipelineId: string, link: PipelineOperationLink): Promise<PipelineRun> {
+    const run = await this.get(pipelineId);
+    const metadata = (run.metadata ?? {}) as Record<string, unknown>;
+    const existing = Array.isArray(metadata["operations"]) ? (metadata["operations"] as PipelineOperationLink[]) : [];
+
+    const next = [
+      ...existing,
+      link,
+    ].slice(-50);
+
+    return this.save(run, {
+      metadata: {
+        source: (metadata["source"] as "slack" | "api") ?? "api",
+        ...metadata,
+        operations: next,
+        last_operation_id: link.operation_id,
+        last_operation_action: link.action,
+        last_operation_status: link.status,
+      },
+    });
+  }
+
   async listAwaitingPrReviewRuns(): Promise<AwaitingPrReviewRun[]> {
     const rows = await db
       .select({
@@ -1190,6 +1282,30 @@ export class PipelineService {
         if (record && record.errors && record.errors.length > 0) {
           const { code, message, details } = record.errors[0];
           summary.last_error = { code, message, details };
+        }
+      } catch {
+        // non-fatal
+      }
+    }
+
+    const latestOperationId = typeof run.metadata?.last_operation_id === "string"
+      ? run.metadata.last_operation_id
+      : undefined;
+
+    if (latestOperationId) {
+      try {
+        const [opRow] = await db
+          .select()
+          .from(state)
+          .where(eq(state.state_id, latestOperationId));
+
+        if (opRow?.data) {
+          const opJob = opRow.data as AdminOpsJob;
+          summary.latest_operation = summarizeOperationJob({
+            ...opJob,
+            status: (opRow.status as AdminOpsStatus) ?? opJob.status,
+            version: opRow.version,
+          });
         }
       } catch {
         // non-fatal

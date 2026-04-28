@@ -3,6 +3,7 @@ import {
   approvePipeline,
   cancelPipeline,
   createPipeline,
+  createPipelineRetryOperation,
   getChannelPipelineStatusList,
   getCurrentPipelineStatusSummary,
   getPipeline,
@@ -14,6 +15,7 @@ import {
   getPipelineStagedSprints,
   getPipelineStagedTasks,
   getPipelineStatusSummary,
+  getPipelineOperationStatus,
   handoffPipeline,
   notifyCliCommand,
   retryPipeline,
@@ -40,6 +42,8 @@ router.post("/pipeline/:pipelineId/cancel", cancelPipeline);
 router.post("/pipeline/:pipelineId/approve", approvePipeline);
 router.post("/pipeline/:pipelineId/takeover", takeoverPipeline);
 router.post("/pipeline/:pipelineId/retry", retryPipeline);
+router.post("/pipeline/:pipelineId/ops/retry", createPipelineRetryOperation);
+router.get("/pipeline/:pipelineId/ops/:operationId", getPipelineOperationStatus);
 router.post("/pipeline/:pipelineId/handoff", handoffPipeline);
 router.post("/pipeline/:pipelineId/skip", skipPipeline);
 

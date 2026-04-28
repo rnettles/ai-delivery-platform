@@ -14,6 +14,7 @@ param(
 
   # Common identifiers
   [string]$PipelineId = "",
+  [string]$OperationId = "",
   [string]$ExecutionId = "",
   [string]$ProjectId = "",
   [string]$CoordinationId = "",
@@ -24,8 +25,12 @@ param(
   [string]$Description = "local test feature",
   [string]$SlackChannel = "",
   [string]$Actor = "operator",
+  [string]$OpsAction = "diagnose",
   [string]$ArtifactPath = "",
   [string]$Justification = "skip via api-cli",
+  [string]$Branch = "",
+  [string]$BaseBranch = "",
+  [string]$HeadBranch = "",
 
   # Execute endpoint
   [string]$TargetType = "script",
@@ -106,8 +111,12 @@ Pipeline commands:
   pipeline-cancel
   pipeline-takeover
   pipeline-retry
+  pipeline-retry-op
+  pipeline-op-status
   pipeline-handoff
   pipeline-skip
+  admin-op-create
+  admin-op-status
   sprint                     # sprint plan + task list for a pipeline
 
 Project commands:
@@ -134,6 +143,9 @@ Quick examples:
   ./api-cli.ps1 execute -ScriptName test.echo -Message "hello-local"
   ./api-cli.ps1 pipeline-list -ChannelId C12345678
   ./api-cli.ps1 pipeline-create -Description "Add health endpoint" -EntryPoint planner -ExecutionMode next-flow
+  ./api-cli.ps1 admin-op-create -OpsAction diagnose -ProjectId <project-id>
+  ./api-cli.ps1 pipeline-retry-op -PipelineId <pipeline-id>
+  ./api-cli.ps1 pipeline-op-status -PipelineId <pipeline-id> -OperationId <operation-id>
   ./api-cli.ps1 projects
   ./api-cli.ps1 projects -ExcludeChannels
   ./api-cli.ps1 env-load
@@ -182,6 +194,25 @@ Details by command:
     Require: -EntryPoint, -Description
     Optional: -ExecutionMode (next-flow|full-sprint)
 
+  pipeline-summary:
+    Includes latest admin recovery operation telemetry and blocked-operation checklist when present.
+
+  admin-op-create:
+    Queue an async admin operation.
+    Require: -OpsAction diagnose|reconcile|reset-workspace|retry
+    Optional: -ProjectId, -PipelineId, -Actor, -Branch, -BaseBranch, -HeadBranch
+
+  admin-op-status:
+    Require: -OperationId
+
+  pipeline-retry-op:
+    Queue the gated async retry flow for a failed pipeline.
+    Require: -PipelineId
+    Optional: -Actor
+
+  pipeline-op-status:
+    Require: -PipelineId, -OperationId
+
   pipeline-approve/pipeline-cancel/pipeline-approve/pipeline-takeover/pipeline-retry/pipeline-handoff/pipeline-skip:
     Require: -PipelineId
     Optional: -Actor, -ArtifactPath (handoff), -Justification (skip)
@@ -228,6 +259,16 @@ function Require-Value {
   }
 }
 
+function Get-StringOrEmpty {
+  param([object]$Value)
+
+  if ($null -ne $Value) {
+    return [string]$Value
+  }
+
+  return ""
+}
+
 function Load-ActiveState {
   if (-not (Test-Path -Path $script:StateFile -PathType Leaf)) {
     return @{}
@@ -239,9 +280,11 @@ function Load-ActiveState {
       return @{}
     }
     $obj = $raw | ConvertFrom-Json
+    $channelId = Get-StringOrEmpty $obj.channel_id
+    $pipelineId = Get-StringOrEmpty $obj.pipeline_id
     return @{
-      channel_id = [string]($obj.channel_id ?? "")
-      pipeline_id = [string]($obj.pipeline_id ?? "")
+      channel_id = $channelId
+      pipeline_id = $pipelineId
     }
   } catch {
     return @{}
@@ -256,9 +299,19 @@ function Save-ActiveState {
     New-Item -ItemType Directory -Path $dir | Out-Null
   }
 
+  $channelId = ""
+  if ($State.ContainsKey("channel_id")) {
+    $channelId = Get-StringOrEmpty $State["channel_id"]
+  }
+
+  $pipelineId = ""
+  if ($State.ContainsKey("pipeline_id")) {
+    $pipelineId = Get-StringOrEmpty $State["pipeline_id"]
+  }
+
   $payload = @{
-    channel_id = [string]($State["channel_id"] ?? "")
-    pipeline_id = [string]($State["pipeline_id"] ?? "")
+    channel_id = $channelId
+    pipeline_id = $pipelineId
   }
 
   $payload | ConvertTo-Json -Depth 5 | Set-Content -Path $script:StateFile -Encoding UTF8
@@ -314,10 +367,10 @@ function Show-ActiveContextIfUsed {
 
   $parts = @()
   if ($usedChannel) {
-    $parts += ("channel_id={0}" -f [string]($script:activeState["channel_id"] ?? ""))
+    $parts += ("channel_id={0}" -f (Get-StringOrEmpty $script:activeState["channel_id"]))
   }
   if ($usedPipeline) {
-    $parts += ("pipeline_id={0}" -f [string]($script:activeState["pipeline_id"] ?? ""))
+    $parts += ("pipeline_id={0}" -f (Get-StringOrEmpty $script:activeState["pipeline_id"]))
   }
 
   Write-Host ("Using active context: " + ($parts -join ", ")) -ForegroundColor Cyan
@@ -339,7 +392,10 @@ function Build-Uri {
   )
 
   $base = $BaseUrl.TrimEnd("/")
-  $path = if ($RelativePath.StartsWith("/")) { $RelativePath } else { "/$RelativePath" }
+  $path = "/$RelativePath"
+  if ($RelativePath.StartsWith("/")) {
+    $path = $RelativePath
+  }
 
   $uri = "$base$path"
 
@@ -445,9 +501,11 @@ function Get-BoolEnv {
     [bool]$Default = $false
   )
 
-  $raw = [string]([Environment]::GetEnvironmentVariable($Name, "Process") ?? "")
+  $processValue = [Environment]::GetEnvironmentVariable($Name, "Process")
+  $raw = Get-StringOrEmpty $processValue
   if ([string]::IsNullOrWhiteSpace($raw)) {
-    $raw = [string]([Environment]::GetEnvironmentVariable($Name, "User") ?? "")
+    $userValue = [Environment]::GetEnvironmentVariable($Name, "User")
+    $raw = Get-StringOrEmpty $userValue
   }
   if ([string]::IsNullOrWhiteSpace($raw)) {
     return $Default
@@ -491,8 +549,12 @@ function Test-ShouldNotifyCommand {
     "pipeline-cancel",
     "pipeline-takeover",
     "pipeline-retry",
+    "pipeline-retry-op",
+    "pipeline-op-status",
     "pipeline-handoff",
     "pipeline-skip",
+    "admin-op-create",
+    "admin-op-status",
     "projects",
     "project",
     "project-create",
@@ -515,12 +577,25 @@ function Get-ResponsePrimaryId {
 
   if ($null -eq $Response) { return "" }
 
-  foreach ($name in @("pipeline_id", "execution_id", "project_id", "coordination_id", "id")) {
+  foreach ($name in @("pipeline_id", "execution_id", "project_id", "coordination_id", "job_id", "operation_id", "id")) {
     $prop = $Response.PSObject.Properties[$name]
     if ($null -ne $prop) {
       $value = [string]$prop.Value
       if (-not [string]::IsNullOrWhiteSpace($value)) {
         return $value
+      }
+    }
+  }
+
+  $operationProp = $Response.PSObject.Properties["operation"]
+  if ($null -ne $operationProp -and $null -ne $operationProp.Value) {
+    foreach ($name in @("job_id", "operation_id", "id")) {
+      $nested = $operationProp.Value.PSObject.Properties[$name]
+      if ($null -ne $nested) {
+        $value = [string]$nested.Value
+        if (-not [string]::IsNullOrWhiteSpace($value)) {
+          return $value
+        }
       }
     }
   }
@@ -557,7 +632,10 @@ function Build-CliNotificationMessage {
   )
 
   $normalizedStatus = ([string]$Status).Trim().ToUpperInvariant()
-  $verb = if ($normalizedStatus -eq "ERROR") { "failed" } else { "succeeded" }
+  $verb = "succeeded"
+  if ($normalizedStatus -eq "ERROR") {
+    $verb = "failed"
+  }
   $summary = "CLI command '{0}' {1}." -f $CommandName, $verb
   $endpoint = "Endpoint: {0} {1}" -f $HttpMethod, $RelativePath
 
@@ -609,7 +687,7 @@ function Resolve-NotificationChannelId {
     return $SlackChannel
   }
 
-  if ($null -ne $script:activeState -and -not [string]::IsNullOrWhiteSpace([string]($script:activeState["channel_id"] ?? ""))) {
+  if ($null -ne $script:activeState -and -not [string]::IsNullOrWhiteSpace((Get-StringOrEmpty $script:activeState["channel_id"]))) {
     return [string]$script:activeState["channel_id"]
   }
 
@@ -677,10 +755,9 @@ function Invoke-Adp {
 
   try {
     if ($null -ne $BodyObject) {
-      $bodyPayload = if ($BodyObject -is [string]) {
-        $BodyObject
-      } else {
-        $BodyObject | ConvertTo-Json -Depth 30
+      $bodyPayload = $BodyObject
+      if (-not ($BodyObject -is [string])) {
+        $bodyPayload = $BodyObject | ConvertTo-Json -Depth 30
       }
 
       $response = Invoke-RestMethod -Method $HttpMethod -Uri $uri -Headers $headers -ContentType "application/json" -Body $bodyPayload
@@ -689,6 +766,7 @@ function Invoke-Adp {
     }
 
     Write-Result -Result $response
+    $script:lastAdpResponse = $response
 
     if (Test-ShouldNotifyCommand -Name $script:commandName) {
       $id = Get-ResponsePrimaryId -Response $response
@@ -719,7 +797,10 @@ function Invoke-Adp {
     }
 
     if (Test-ShouldNotifyCommand -Name $script:commandName) {
-      $detailText = if (-not [string]::IsNullOrWhiteSpace($details)) { $details } else { $errorMessage }
+      $detailText = $errorMessage
+      if (-not [string]::IsNullOrWhiteSpace($details)) {
+        $detailText = $details
+      }
       $message = Build-CliNotificationMessage `
         -Status "ERROR" `
         -CommandName $script:commandName `
@@ -877,7 +958,10 @@ function Parse-SprintTasksFromMarkdown {
     if ($inTasks -and $line -match "^\s*-\s+(.+?)\s*$") {
       $raw = $Matches[1].Trim()
       $taskIdMatch = [regex]::Match($raw, "[A-Z]{2,}-\d+")
-      $taskId = if ($taskIdMatch.Success) { $taskIdMatch.Value } else { $raw }
+      $taskId = $raw
+      if ($taskIdMatch.Success) {
+        $taskId = $taskIdMatch.Value
+      }
       $tasks.Add([PSCustomObject]@{
         task_id = $taskId
         label = $raw
@@ -1064,8 +1148,8 @@ switch ($commandName) {
     }
 
     $next = @{
-      channel_id = [string]($script:activeState["channel_id"] ?? "")
-      pipeline_id = [string]($script:activeState["pipeline_id"] ?? "")
+      channel_id = Get-StringOrEmpty $script:activeState["channel_id"]
+      pipeline_id = Get-StringOrEmpty $script:activeState["pipeline_id"]
     }
 
     if (-not [string]::IsNullOrWhiteSpace($ChannelId)) {
@@ -1084,8 +1168,8 @@ switch ($commandName) {
 
   "active-show" {
     Write-Result -Result @{ ok = $true; active = @{
-      channel_id = [string]($script:activeState["channel_id"] ?? "")
-      pipeline_id = [string]($script:activeState["pipeline_id"] ?? "")
+      channel_id = Get-StringOrEmpty $script:activeState["channel_id"]
+      pipeline_id = Get-StringOrEmpty $script:activeState["pipeline_id"]
     }}
     Send-LocalCommandNotification -CommandName $script:commandName -Detail "Active context retrieved."
     break
@@ -1117,10 +1201,11 @@ switch ($commandName) {
   }
 
   "execute" {
-    $payload = if (-not [string]::IsNullOrWhiteSpace($BodyJson)) {
-      $BodyJson
+    $payload = $null
+    if (-not [string]::IsNullOrWhiteSpace($BodyJson)) {
+      $payload = $BodyJson
     } else {
-      @{
+      $payload = @{
         target = @{
           type = $TargetType
           name = $ScriptName
@@ -1158,8 +1243,9 @@ switch ($commandName) {
   }
 
   "pipeline-create" {
-    $payload = if (-not [string]::IsNullOrWhiteSpace($BodyJson)) {
-      $BodyJson
+    $payload = $null
+    if (-not [string]::IsNullOrWhiteSpace($BodyJson)) {
+      $payload = $BodyJson
     } else {
       $metadata = @{ source = "api" }
       $effectiveChannelId = Resolve-ChannelId -ExplicitChannelId $SlackChannel
@@ -1167,7 +1253,7 @@ switch ($commandName) {
         $metadata.slack_channel = $effectiveChannelId
       }
 
-      $obj = @{
+  $obj = @{
         entry_point = $EntryPoint
         input = @{ description = $Description }
         metadata = $metadata
@@ -1177,7 +1263,7 @@ switch ($commandName) {
         $obj.execution_mode = $ExecutionMode
       }
 
-      $obj
+      $payload = $obj
     }
 
     Invoke-Adp -HttpMethod "POST" -RelativePath "/pipeline" -BodyObject $payload
@@ -1319,7 +1405,7 @@ switch ($commandName) {
           }
         }
       } catch {
-        # Artifact not accessible (container restart or remote env) — fall back to first_task only
+        # Artifact not accessible (container restart or remote env) - fall back to first_task only
         $tasks = $null
       }
     }
@@ -1347,9 +1433,12 @@ switch ($commandName) {
       }
     } else {
       # Fallback: show first_task from execution output
-      Write-Host "Tasks (first task only — full plan artifact not accessible):"
+      Write-Host "Tasks (first task only - full plan artifact not accessible):"
       $ft     = $out.first_task
-      $ftStat = if ($completedTaskIds -contains $ft.task_id) { "completed" } else { $ft.status }
+      $ftStat = $ft.status
+      if ($completedTaskIds -contains $ft.task_id) {
+        $ftStat = "completed"
+      }
       Write-Host "  $($ft.task_id)  $($ft.title)  [$ftStat]"
     }
 
@@ -1378,6 +1467,19 @@ switch ($commandName) {
   "pipeline-retry" {
     $effectivePipelineId = Resolve-PipelineId -ExplicitPipelineId $PipelineId -Required
     Invoke-Adp -HttpMethod "POST" -RelativePath "/pipeline/$effectivePipelineId/retry" -BodyObject @{ actor = $Actor }
+    break
+  }
+
+  "pipeline-retry-op" {
+    $effectivePipelineId = Resolve-PipelineId -ExplicitPipelineId $PipelineId -Required
+    Invoke-Adp -HttpMethod "POST" -RelativePath "/pipeline/$effectivePipelineId/ops/retry" -BodyObject @{ actor = $Actor }
+    break
+  }
+
+  "pipeline-op-status" {
+    $effectivePipelineId = Resolve-PipelineId -ExplicitPipelineId $PipelineId -Required
+    Require-Value -Value $OperationId -Name "OperationId"
+    Invoke-Adp -HttpMethod "GET" -RelativePath "/pipeline/$effectivePipelineId/ops/$OperationId"
     break
   }
 
@@ -1454,6 +1556,61 @@ switch ($commandName) {
     break
   }
 
+  "admin-op-create" {
+    $payload = @{
+      action = $OpsAction
+      actor = $Actor
+    }
+
+    $effectiveProjectId = $ProjectId
+    $effectivePipelineId = Resolve-PipelineId -ExplicitPipelineId $PipelineId
+
+    if (-not [string]::IsNullOrWhiteSpace($effectiveProjectId)) {
+      $payload.project_id = $effectiveProjectId
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($effectivePipelineId)) {
+      $payload.pipeline_id = $effectivePipelineId
+    }
+
+    $options = @{}
+    if (-not [string]::IsNullOrWhiteSpace($Branch)) {
+      $options.branch = $Branch
+    }
+    if (-not [string]::IsNullOrWhiteSpace($BaseBranch)) {
+      $options.base_branch = $BaseBranch
+    }
+    if (-not [string]::IsNullOrWhiteSpace($HeadBranch)) {
+      $options.head_branch = $HeadBranch
+    }
+    if ($options.Count -gt 0) {
+      $payload.options = $options
+    }
+
+    $script:lastAdpResponse = $null
+    Invoke-Adp -HttpMethod "POST" -RelativePath "/admin/ops" -BodyObject $payload
+    $lastJobId = ""
+    if ($null -ne $script:lastAdpResponse) {
+      $opProp = $script:lastAdpResponse.PSObject.Properties["operation"]
+      if ($null -ne $opProp -and $null -ne $opProp.Value) {
+        $jobIdProp = $opProp.Value.PSObject.Properties["job_id"]
+        $lastJobId = if ($null -ne $jobIdProp) { [string]$jobIdProp.Value } else { "" }
+      }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($lastJobId)) {
+      Write-Host ""
+      Write-Host "Operation queued. Poll for results:" -ForegroundColor Cyan
+      Write-Host "  .\api-cli.bat admin-op-status -OperationId $lastJobId" -ForegroundColor Cyan
+    }
+    break
+  }
+
+  "admin-op-status" {
+    Require-Value -Value $OperationId -Name "OperationId"
+    Invoke-Adp -HttpMethod "GET" -RelativePath "/admin/ops/$OperationId"
+    break
+  }
+
   "coord-create" {
     Require-Value -Value $BodyJson -Name "BodyJson"
     Invoke-Adp -HttpMethod "POST" -RelativePath "/coordination" -BodyObject $BodyJson
@@ -1474,7 +1631,10 @@ switch ($commandName) {
   }
 
   "coord-query" {
-    $payload = if (-not [string]::IsNullOrWhiteSpace($BodyJson)) { $BodyJson } else { "{}" }
+    $payload = "{}"
+    if (-not [string]::IsNullOrWhiteSpace($BodyJson)) {
+      $payload = $BodyJson
+    }
     Invoke-Adp -HttpMethod "POST" -RelativePath "/coordination/query" -BodyObject $payload
     break
   }
@@ -1495,12 +1655,18 @@ switch ($commandName) {
     if ($isCurrentSummary -and -not $alreadyHasChannel) {
       $effectiveChannelId = Resolve-ChannelId -ExplicitChannelId $ChannelId
       if (-not [string]::IsNullOrWhiteSpace($effectiveChannelId)) {
-        $sep = if ($effectivePath.Contains("?")) { "&" } else { "?" }
+        $sep = "?"
+        if ($effectivePath.Contains("?")) {
+          $sep = "&"
+        }
         $effectivePath = "$effectivePath${sep}channel_id=$([uri]::EscapeDataString($effectiveChannelId))"
       }
     }
 
-    $body = if ([string]::IsNullOrWhiteSpace($BodyJson)) { $null } else { $BodyJson }
+    $body = $BodyJson
+    if ([string]::IsNullOrWhiteSpace($BodyJson)) {
+      $body = $null
+    }
     Invoke-Adp -HttpMethod $Method.ToUpperInvariant() -RelativePath $effectivePath -BodyObject $body
     break
   }

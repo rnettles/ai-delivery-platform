@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import * as fs from "fs";
 import * as path from "path";
 import { pipelineService } from "../services/pipeline.service";
+import { adminOpsService } from "../services/admin-ops.service";
 import { pipelineNotifierService } from "../services/pipeline-notifier.service";
 import { executionService } from "../services/execution.service";
 import { projectService } from "../services/project.service";
@@ -327,6 +328,38 @@ export async function retryPipeline(req: Request, res: Response, next: NextFunct
     }
 
     res.status(200).json(run);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function createPipelineRetryOperation(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const pipelineId = String(req.params.pipelineId);
+    const actor = getSlackActor(req);
+
+    const operation = await adminOpsService.createJob({
+      action: "retry",
+      actor,
+      pipeline_id: pipelineId,
+    });
+
+    res.status(202).json({
+      ok: true,
+      operation,
+      status_url: `/pipeline/${pipelineId}/ops/${operation.job_id}`,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function getPipelineOperationStatus(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const pipelineId = String(req.params.pipelineId);
+    const operationId = String(req.params.operationId);
+    const operation = await adminOpsService.getPipelineJob(pipelineId, operationId);
+    res.status(200).json({ ok: true, operation });
   } catch (error) {
     next(error);
   }

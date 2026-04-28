@@ -8,10 +8,19 @@ vi.mock("../services/pipeline.service", () => ({
   pipelineService: {
     create: vi.fn(),
     get: vi.fn(),
+    getStatusSummary: vi.fn(),
     approve: vi.fn(),
     takeover: vi.fn(),
     handoff: vi.fn(),
     skip: vi.fn(),
+    retry: vi.fn(),
+  },
+}));
+
+vi.mock("../services/admin-ops.service", () => ({
+  adminOpsService: {
+    createJob: vi.fn(),
+    getPipelineJob: vi.fn(),
   },
 }));
 
@@ -31,6 +40,7 @@ vi.mock("../services/logger.service", () => ({
 
 import { app } from "../app";
 import { pipelineService } from "../services/pipeline.service";
+import { adminOpsService } from "../services/admin-ops.service";
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -178,6 +188,28 @@ describe("Pipeline HTTP routes", () => {
     });
   });
 
+  describe("GET /pipeline/:pipelineId/status-summary", () => {
+    it("returns latest operation telemetry when present", async () => {
+      vi.mocked(pipelineService.getStatusSummary).mockResolvedValueOnce({
+        ...mockRun,
+        latest_operation: {
+          operation_id: "op-123",
+          action: "retry",
+          status: "blocked",
+          updated_at: "2026-04-19T01:00:00.000Z",
+          escalation_summary: "Pipeline retry was blocked because git diagnostics did not return to a healthy state.",
+          human_action_checklist: ["Review diagnostics", "Repair git state", "Enqueue retry again"],
+        },
+      } as never);
+
+      const res = await request(app).get("/pipeline/pipe-2026-04-19-test1234/status-summary");
+
+      expect(res.status).toBe(200);
+      expect(res.body.latest_operation.operation_id).toBe("op-123");
+      expect(res.body.latest_operation.human_action_checklist).toHaveLength(3);
+    });
+  });
+
   // ── POST /pipeline/:pipelineId/approve ─────────────────────────────────────
 
   describe("POST /pipeline/:pipelineId/approve", () => {
@@ -251,6 +283,39 @@ describe("Pipeline HTTP routes", () => {
 
       expect(res.status).toBe(200);
       expect(res.body.current_step).toBe("sprint-controller");
+    });
+  });
+
+  describe("POST /pipeline/:pipelineId/ops/retry", () => {
+    it("returns 202 and enqueues retry operation", async () => {
+      vi.mocked(adminOpsService.createJob).mockResolvedValueOnce({
+        job_id: "op-123",
+        action: "retry",
+        status: "queued",
+      } as never);
+
+      const res = await request(app)
+        .post("/pipeline/pipe-2026-04-19-test1234/ops/retry")
+        .send({ actor: "user-1" });
+
+      expect(res.status).toBe(202);
+      expect(res.body.operation.job_id).toBe("op-123");
+    });
+  });
+
+  describe("GET /pipeline/:pipelineId/ops/:operationId", () => {
+    it("returns operation status", async () => {
+      vi.mocked(adminOpsService.getPipelineJob).mockResolvedValueOnce({
+        job_id: "op-123",
+        action: "retry",
+        status: "running",
+      } as never);
+
+      const res = await request(app)
+        .get("/pipeline/pipe-2026-04-19-test1234/ops/op-123");
+
+      expect(res.status).toBe(200);
+      expect(res.body.operation.status).toBe("running");
     });
   });
 });

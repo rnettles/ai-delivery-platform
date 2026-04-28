@@ -66,6 +66,97 @@ export interface PipelineExecutionSignal {
   minutes?: number;
 }
 
+export type AdminOpsAction = "diagnose" | "reconcile" | "reset-workspace" | "retry";
+export type AdminOpsStatus = "queued" | "running" | "succeeded" | "failed" | "blocked";
+
+export interface AdminOpsGitSummary {
+  repo_path: string;
+  is_repo_accessible: boolean;
+  current_branch?: string;
+  detached_head?: boolean;
+  upstream_tracking?: string;
+  remote_ref_present?: boolean;
+  remote_refspec_broad?: boolean;
+  remote_refspecs?: string[];
+  shallow?: boolean;
+  merge_base_valid?: boolean;
+  rebase_in_progress?: boolean;
+}
+
+export interface PipelineLatestOperationSummary {
+  operation_id: string;
+  action: AdminOpsAction;
+  status: AdminOpsStatus;
+  updated_at: string;
+  started_at?: string;
+  completed_at?: string;
+  escalation_reason?: string;
+  escalation_summary?: string;
+  human_action_checklist?: string[];
+  attempted_steps?: Array<{
+    name: string;
+    status: string;
+    started_at: string;
+    completed_at?: string;
+  }>;
+  before_git?: AdminOpsGitSummary;
+  after_git?: AdminOpsGitSummary;
+}
+
+export interface CreateAdminOpsJobRequest {
+  action: AdminOpsAction;
+  actor?: string;
+  project_id?: string;
+  pipeline_id?: string;
+  options?: {
+    branch?: string;
+    base_branch?: string;
+    head_branch?: string;
+  };
+}
+
+export interface AdminOpsJob {
+  job_id: string;
+  action: AdminOpsAction;
+  status: AdminOpsStatus;
+  actor: string;
+  project_id?: string;
+  pipeline_id?: string;
+  queued_at: string;
+  started_at?: string;
+  completed_at?: string;
+  error?: {
+    code: string;
+    message: string;
+    details?: unknown;
+  };
+  outcome?: {
+    escalation_reason?: string;
+    escalation_summary?: string;
+    human_action_checklist?: string[];
+    attempted_steps: Array<{
+      name: string;
+      status: string;
+      started_at: string;
+      completed_at?: string;
+    }>;
+    before_git?: AdminOpsGitSummary;
+    after_git?: AdminOpsGitSummary;
+  };
+  updated_at: string;
+}
+
+export interface AdminOpsCreateResponse {
+  ok: boolean;
+  operation: AdminOpsJob;
+  status_url: string;
+}
+
+export interface AdminOpsStatusResponse {
+  ok: boolean;
+  operation: AdminOpsJob;
+}
+
 export interface PipelineStatusSummary extends PipelineRun {
   repo_url?: string;
   control_state?: {
@@ -80,6 +171,7 @@ export interface PipelineStatusSummary extends PipelineRun {
   prior_step_detail?: PipelineStepRecord;
   current_step_detail?: PipelineStepRecord;
   execution_signals?: PipelineExecutionSignal[];
+  latest_operation?: PipelineLatestOperationSummary;
 }
 
 export interface PipelineStatusChoice {

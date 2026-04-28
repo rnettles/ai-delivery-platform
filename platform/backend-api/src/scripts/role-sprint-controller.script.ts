@@ -7,7 +7,7 @@ import { governanceService } from "../services/governance.service";
 import { pipelineService } from "../services/pipeline.service";
 import { projectService } from "../services/project.service";
 import { projectGitService } from "../services/project-git.service";
-import { githubApiService } from "../services/github-api.service";
+import { prRemediationService } from "../services/pr-remediation.service";
 import { designInputGateService } from "../services/design-input-gate.service";
 import { HttpError } from "../utils/http-error";
 
@@ -330,8 +330,7 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       );
       await projectGitService.push(project, sprintBranch);
 
-      const pr = await githubApiService.createPullRequest({
-        repoUrl: project.repo_url,
+      const prResult = await prRemediationService.createPullRequestWithRecovery(project, {
         title: `[${llm.sprint_plan.sprint_id}] Stage sprint artifacts`,
         body: [
           "## Staged Sprint Review",
@@ -345,7 +344,11 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
         head: sprintBranch,
         base: project.default_branch,
       });
+      const pr = prResult.pr;
       await pipelineService.setPrDetails(pipelineId, pr.number, pr.html_url, sprintBranch);
+      if (prResult.remediation_performed) {
+        context.notify("🛠️ PR create was auto-remediated after a 404 and retried once.");
+      }
       context.notify(`📋 Sprint artifacts committed, pushed, and opened as PR #${pr.number}: <${pr.html_url}|View Pull Request>`);
     }
 

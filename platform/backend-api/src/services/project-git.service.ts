@@ -38,6 +38,22 @@ class ProjectGitService {
   }
 
   /**
+   * Like ensureReady but assumes the per-project lock is already held by the caller.
+   * Use this when calling from inside withProjectLock to avoid self-deadlock.
+   */
+  async ensureReadyUnderLock(project: Project, opts?: { forcePull?: boolean }): Promise<GitSyncContext> {
+    return this.doEnsureReady(project, opts?.forcePull ?? false);
+  }
+
+  /**
+   * Execute a custom git operation under the same per-project mutex used by built-in methods.
+   * This keeps admin repair operations serialized with normal pipeline git actions.
+   */
+  async withProjectLock<T>(projectId: string, fn: () => T | Promise<T>): Promise<T> {
+    return this.withLock(projectId, fn);
+  }
+
+  /**
    * Create and check out a new branch.
    *
    * Behavior:

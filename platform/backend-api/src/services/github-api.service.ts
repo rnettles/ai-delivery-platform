@@ -1,4 +1,5 @@
 import { config } from "../config";
+import { GithubRequestMetadata } from "../domain/admin-ops.types";
 import { logger } from "./logger.service";
 
 export interface GithubPullRequest {
@@ -21,15 +22,56 @@ export interface GithubPullRequestLookupOptions {
   title?: string;
 }
 
+export interface GithubPrPreflightResult {
+  ok: boolean;
+  blocked_reason?: "INVALID_REPO_URL" | "GITHUB_TOKEN_MISSING" | "REPO_NOT_FOUND" | "BASE_BRANCH_MISSING" | "HEAD_BRANCH_MISSING" | "API_UNREACHABLE";
+  owner?: string;
+  repo?: string;
+  repo_reachable: boolean;
+  base_branch_exists: boolean;
+  head_branch_exists: boolean;
+  request_metadata: GithubRequestMetadata[];
+}
+
 interface RepoRef {
   owner: string;
   repo: string;
 }
 
-function parseRepoUrl(repoUrl: string): RepoRef {
-  // Supports both HTTPS and SSH URLs:
-  // - https://github.com/owner/repo.git
-  // - git@github.com:owner/repo.git
+export class GithubApiError extends Error {
+  public readonly statusCode?: number;
+  public readonly metadata: GithubRequestMetadata;
+  public readonly responseBody?: string;
+
+  constructor(message: string, opts: { statusCode?: number; metadata: GithubRequestMetadata; responseBody?: string }) {
+    super(message);
+    this.name = "GithubApiError";
+    this.statusCode = opts.statusCode;
+    this.metadata = opts.metadata;
+    this.responseBody = opts.responseBody;
+  }
+}
+
+function sanitizeBody(body: unknown): Record<string, unknown> | undefined {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return undefined;
+  }
+
+  const payload = body as Record<string, unknown>;
+  const next: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(payload)) {
+    if (typeof value === "string" && value.length > 500) {
+      next[key] = `${value.slice(0, 500)}...(truncated)`;
+      continue;
+    }
+    next[key] = value;
+  }
+
+  return next;
+}
+
+export function parseRepoUrl(repoUrl: string): RepoRef {
   const normalized = repoUrl.replace(/\.git$/, "");
 
   const httpsMatch = normalized.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+)$/i);
@@ -42,14 +84,38 @@ function parseRepoUrl(repoUrl: string): RepoRef {
     return { owner: sshMatch[1], repo: sshMatch[2] };
   }
 
-  throw new Error(`Unsupported GitHub repo URL format: ${repoUrl}`);
+  throw new GithubApiError(`Unsupported GitHub repo URL format: ${repoUrl}`, {
+    metadata: {
+      endpoint: "repo-url-parse",
+      sanitized_body: { repoUrl },
+    },
+  });
 }
 
 class GithubApiService {
-  private async request<T>(repoUrl: string, endpointPath: string, method: "GET" | "POST" | "PUT", body?: unknown): Promise<T> {
+  getApiDiagnostics(): { base_url: string; token_configured: boolean } {
+    return {
+      base_url: config.githubApiBaseUrl,
+      token_configured: Boolean(config.githubToken),
+    };
+  }
+
+  private async request<T>(
+    repoUrl: string,
+    endpointPath: string,
+    method: "GET" | "POST" | "PUT",
+    body?: unknown,
+    metadata?: Omit<GithubRequestMetadata, "endpoint" | "status_code" | "sanitized_body">
+  ): Promise<T> {
     const token = config.githubToken;
     if (!token) {
-      throw new Error("GitHub API token not configured. Set GITHUB_TOKEN (or GIT_PAT fallback).");
+      throw new GithubApiError("GitHub API token not configured. Set GITHUB_TOKEN (or GIT_PAT fallback).", {
+        metadata: {
+          endpoint: endpointPath,
+          ...metadata,
+          sanitized_body: sanitizeBody(body),
+        },
+      });
     }
 
     const { owner, repo } = parseRepoUrl(repoUrl);
@@ -68,7 +134,21 @@ class GithubApiService {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`GitHub request failed: ${response.status} ${response.statusText} ${errorText}`);
+      throw new GithubApiError(
+        `GitHub request failed: ${response.status} ${response.statusText}`,
+        {
+          statusCode: response.status,
+          responseBody: errorText,
+          metadata: {
+            endpoint,
+            owner,
+            repo,
+            ...metadata,
+            status_code: response.status,
+            sanitized_body: sanitizeBody(body),
+          },
+        }
+      );
     }
 
     return (await response.json()) as T;
@@ -90,6 +170,144 @@ class GithubApiService {
     };
   }
 
+  async preflightPullRequest(opts: { repoUrl: string; base: string; head: string }): Promise<GithubPrPreflightResult> {
+    const requestMetadata: GithubRequestMetadata[] = [];
+
+    let owner = "";
+    let repo = "";
+
+    try {
+      const parsed = parseRepoUrl(opts.repoUrl);
+      owner = parsed.owner;
+      repo = parsed.repo;
+    } catch {
+      return {
+        ok: false,
+        blocked_reason: "INVALID_REPO_URL",
+        repo_reachable: false,
+        base_branch_exists: false,
+        head_branch_exists: false,
+        request_metadata: requestMetadata,
+      };
+    }
+
+    if (!config.githubToken) {
+      return {
+        ok: false,
+        blocked_reason: "GITHUB_TOKEN_MISSING",
+        owner,
+        repo,
+        repo_reachable: false,
+        base_branch_exists: false,
+        head_branch_exists: false,
+        request_metadata: requestMetadata,
+      };
+    }
+
+    try {
+      await this.request<{ id: number }>(opts.repoUrl, "", "GET", undefined, {
+        owner,
+        repo,
+      });
+      requestMetadata.push({
+        endpoint: `${config.githubApiBaseUrl}/repos/${owner}/${repo}`,
+        owner,
+        repo,
+        status_code: 200,
+      });
+    } catch (error) {
+      if (error instanceof GithubApiError) {
+        requestMetadata.push(error.metadata);
+        return {
+          ok: false,
+          blocked_reason: error.statusCode === 404 ? "REPO_NOT_FOUND" : "API_UNREACHABLE",
+          owner,
+          repo,
+          repo_reachable: false,
+          base_branch_exists: false,
+          head_branch_exists: false,
+          request_metadata: requestMetadata,
+        };
+      }
+      throw error;
+    }
+
+    let baseBranchExists = false;
+    let headBranchExists = false;
+
+    try {
+      await this.request(opts.repoUrl, `/branches/${encodeURIComponent(opts.base)}`, "GET", undefined, {
+        owner,
+        repo,
+        base: opts.base,
+      });
+      baseBranchExists = true;
+      requestMetadata.push({
+        endpoint: `${config.githubApiBaseUrl}/repos/${owner}/${repo}/branches/${encodeURIComponent(opts.base)}`,
+        owner,
+        repo,
+        base: opts.base,
+        status_code: 200,
+      });
+    } catch (error) {
+      if (error instanceof GithubApiError) {
+        requestMetadata.push(error.metadata);
+        return {
+          ok: false,
+          blocked_reason: error.statusCode === 404 ? "BASE_BRANCH_MISSING" : "API_UNREACHABLE",
+          owner,
+          repo,
+          repo_reachable: true,
+          base_branch_exists: false,
+          head_branch_exists: false,
+          request_metadata: requestMetadata,
+        };
+      }
+      throw error;
+    }
+
+    try {
+      await this.request(opts.repoUrl, `/branches/${encodeURIComponent(opts.head)}`, "GET", undefined, {
+        owner,
+        repo,
+        head: opts.head,
+      });
+      headBranchExists = true;
+      requestMetadata.push({
+        endpoint: `${config.githubApiBaseUrl}/repos/${owner}/${repo}/branches/${encodeURIComponent(opts.head)}`,
+        owner,
+        repo,
+        head: opts.head,
+        status_code: 200,
+      });
+    } catch (error) {
+      if (error instanceof GithubApiError) {
+        requestMetadata.push(error.metadata);
+        return {
+          ok: false,
+          blocked_reason: error.statusCode === 404 ? "HEAD_BRANCH_MISSING" : "API_UNREACHABLE",
+          owner,
+          repo,
+          repo_reachable: true,
+          base_branch_exists: baseBranchExists,
+          head_branch_exists: false,
+          request_metadata: requestMetadata,
+        };
+      }
+      throw error;
+    }
+
+    return {
+      ok: true,
+      owner,
+      repo,
+      repo_reachable: true,
+      base_branch_exists: baseBranchExists,
+      head_branch_exists: headBranchExists,
+      request_metadata: requestMetadata,
+    };
+  }
+
   async createPullRequest(opts: {
     repoUrl: string;
     title: string;
@@ -104,10 +322,13 @@ class GithubApiService {
       state: string;
       merged?: boolean;
     }>(opts.repoUrl, "/pulls", "POST", {
-        title: opts.title,
-        body: opts.body,
-        head: opts.head,
-        base: opts.base,
+      title: opts.title,
+      body: opts.body,
+      head: opts.head,
+      base: opts.base,
+    }, {
+      base: opts.base,
+      head: opts.head,
     });
 
     const { owner, repo } = parseRepoUrl(opts.repoUrl);
@@ -138,7 +359,9 @@ class GithubApiService {
     const payload = await this.request<Array<{ number: number; url: string; html_url: string; state: string; merged?: boolean }>>(
       opts.repoUrl,
       `/pulls?${params.toString()}`,
-      "GET"
+      "GET",
+      undefined,
+      { base: opts.base, head: opts.head }
     );
 
     return payload.length > 0 ? this.mapPullRequest(payload[0]) : null;
@@ -158,7 +381,9 @@ class GithubApiService {
     const payload = await this.request<Array<{ number: number; url: string; html_url: string; state: string; merged?: boolean; title?: string }>>(
       opts.repoUrl,
       `/pulls?${params.toString()}`,
-      "GET"
+      "GET",
+      undefined,
+      { base: opts.base }
     );
 
     const match = payload.find((pr) => (pr.title ?? "") === opts.title);
@@ -180,7 +405,11 @@ class GithubApiService {
   async listPullRequestReviews(opts: { repoUrl: string; number: number }): Promise<GithubPullRequestReview[]> {
     const token = config.githubToken;
     if (!token) {
-      throw new Error("GitHub API token not configured. Set GITHUB_TOKEN (or GIT_PAT fallback).");
+      throw new GithubApiError("GitHub API token not configured. Set GITHUB_TOKEN (or GIT_PAT fallback).", {
+        metadata: {
+          endpoint: "listPullRequestReviews",
+        },
+      });
     }
 
     const { owner, repo } = parseRepoUrl(opts.repoUrl);
@@ -197,7 +426,16 @@ class GithubApiService {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`GitHub listPullRequestReviews failed: ${response.status} ${response.statusText} ${errorText}`);
+      throw new GithubApiError(`GitHub listPullRequestReviews failed: ${response.status} ${response.statusText}`, {
+        statusCode: response.status,
+        responseBody: errorText,
+        metadata: {
+          endpoint,
+          owner,
+          repo,
+          status_code: response.status,
+        },
+      });
     }
 
     const payload = (await response.json()) as Array<{ state?: string; user?: { login?: string } }>;
@@ -210,11 +448,19 @@ class GithubApiService {
   async mergePullRequest(opts: { repoUrl: string; number: number; commitTitle?: string }): Promise<void> {
     const token = config.githubToken;
     if (!token) {
-      throw new Error("GitHub API token not configured. Set GITHUB_TOKEN (or GIT_PAT fallback).");
+      throw new GithubApiError("GitHub API token not configured. Set GITHUB_TOKEN (or GIT_PAT fallback).", {
+        metadata: {
+          endpoint: "mergePullRequest",
+        },
+      });
     }
 
     const { owner, repo } = parseRepoUrl(opts.repoUrl);
     const endpoint = `${config.githubApiBaseUrl}/repos/${owner}/${repo}/pulls/${opts.number}/merge`;
+
+    const body = {
+      ...(opts.commitTitle ? { commit_title: opts.commitTitle } : {}),
+    };
 
     const response = await fetch(endpoint, {
       method: "PUT",
@@ -224,14 +470,22 @@ class GithubApiService {
         "X-GitHub-Api-Version": "2022-11-28",
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        ...(opts.commitTitle ? { commit_title: opts.commitTitle } : {}),
-      }),
+      body: JSON.stringify(body),
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`GitHub mergePullRequest failed: ${response.status} ${response.statusText} ${errorText}`);
+      throw new GithubApiError(`GitHub mergePullRequest failed: ${response.status} ${response.statusText}`, {
+        statusCode: response.status,
+        responseBody: errorText,
+        metadata: {
+          endpoint,
+          owner,
+          repo,
+          status_code: response.status,
+          sanitized_body: sanitizeBody(body),
+        },
+      });
     }
 
     logger.info("GitHub PR merged", {

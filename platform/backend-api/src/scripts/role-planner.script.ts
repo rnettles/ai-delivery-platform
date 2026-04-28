@@ -8,6 +8,7 @@ import { pipelineService } from "../services/pipeline.service";
 import { projectService } from "../services/project.service";
 import { projectGitService } from "../services/project-git.service";
 import { githubApiService } from "../services/github-api.service";
+import { prRemediationService } from "../services/pr-remediation.service";
 import { designInputGateService, EntryMode, DesignInputGateResult } from "../services/design-input-gate.service";
 import { HttpError } from "../utils/http-error";
 
@@ -559,13 +560,16 @@ ${designArtifacts}
         base: project.default_branch,
       });
 
-    const pr = existingBranchPr ?? existingTitlePr ?? await githubApiService.createPullRequest({
-      repoUrl: project.repo_url,
-      title,
-      body,
-      head: sprintBranch,
-      base: project.default_branch,
-    });
+    const remediated = existingBranchPr || existingTitlePr
+      ? null
+      : await prRemediationService.createPullRequestWithRecovery(project, {
+        title,
+        body,
+        head: sprintBranch,
+        base: project.default_branch,
+      });
+
+    const pr = existingBranchPr ?? existingTitlePr ?? remediated!.pr;
 
     const reusedExistingPr = Boolean(existingBranchPr ?? existingTitlePr);
 
@@ -573,6 +577,9 @@ ${designArtifacts}
     if (reusedExistingPr) {
       context.notify(`ℹ️ Reusing existing open PR #${pr.number}: <${pr.html_url}|View Pull Request>`);
     } else {
+      if (remediated?.remediation_performed) {
+        context.notify("🛠️ PR create hit a 404 and was auto-remediated (reconcile + push + retry). ");
+      }
       context.notify(`🔗 Planner opened PR #${pr.number}: <${pr.html_url}|View Pull Request>`);
     }
 
@@ -1061,8 +1068,7 @@ ${designArtifacts}
       );
       await projectGitService.push(project, sprintBranch);
 
-      const pr = await githubApiService.createPullRequest({
-        repoUrl: project.repo_url,
+      const prResult = await prRemediationService.createPullRequestWithRecovery(project, {
         title: `[${llm.sprint_plan.sprint_id}] Stage sprint artifacts`,
         body: [
           "## Staged Sprint Review",
@@ -1075,7 +1081,11 @@ ${designArtifacts}
         head: sprintBranch,
         base: project.default_branch,
       });
+      const pr = prResult.pr;
       await pipelineService.setPrDetails(pipelineId, pr.number, pr.html_url, sprintBranch);
+      if (prResult.remediation_performed) {
+        context.notify("🛠️ PR create was auto-remediated after a 404 and retried once.");
+      }
       context.notify(`📋 Sprint artifacts committed, pushed, and opened as PR #${pr.number}: <${pr.html_url}|View Pull Request>`);
     }
 
