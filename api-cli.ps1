@@ -1167,10 +1167,31 @@ switch ($commandName) {
   }
 
   "active-show" {
-    Write-Result -Result @{ ok = $true; active = @{
-      channel_id = Get-StringOrEmpty $script:activeState["channel_id"]
-      pipeline_id = Get-StringOrEmpty $script:activeState["pipeline_id"]
-    }}
+    $channelId = Get-StringOrEmpty $script:activeState["channel_id"]
+    $pipelineId = Get-StringOrEmpty $script:activeState["pipeline_id"]
+    
+    $result = @{
+      ok = $true
+      active = @{
+        channel_id = $channelId
+        pipeline_id = $pipelineId
+      }
+    }
+
+    # If channel_id is set, fetch the projects linked to this channel
+    if ($channelId) {
+      try {
+        $uri = Build-Uri -RelativePath "/projects/by-channel" -Query @{ channel_id = $channelId }
+        $headers = Build-Headers
+        $projects = Invoke-RestMethod -Method GET -Uri $uri -Headers $headers
+        $result.projects = $projects
+      } catch {
+        # If fetching projects fails, still show the active context
+        Write-Warning "Failed to fetch projects for channel: $_"
+      }
+    }
+
+    Write-Result -Result $result
     Send-LocalCommandNotification -CommandName $script:commandName -Detail "Active context retrieved."
     break
   }

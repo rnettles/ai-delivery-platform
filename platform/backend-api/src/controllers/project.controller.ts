@@ -29,6 +29,20 @@ export async function listProjects(req: Request, res: Response, next: NextFuncti
   }
 }
 
+export async function listProjectsByChannel(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const channelId = String(req.query.channel_id ?? "").trim();
+    if (!channelId) {
+      throw new HttpError(400, "CHANNEL_ID_REQUIRED", "channel_id query parameter is required");
+    }
+
+    const projects = await projectService.listByChannelId(channelId);
+    res.status(200).json(projects);
+  } catch (error) {
+    next(error);
+  }
+}
+
 export async function getProject(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const projectId = String(req.params.projectId ?? "");

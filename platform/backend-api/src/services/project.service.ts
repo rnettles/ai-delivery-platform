@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { join } from "path";
 import { db } from "../db/client";
 import { projectChannels, projects } from "../db/schema";
@@ -108,6 +108,44 @@ class ProjectService {
       .where(eq(projects.project_id, mapping.project_id));
 
     return row ? rowToProject(row) : null;
+  }
+
+  async listByChannelId(channelId: string): Promise<ProjectWithChannels[]> {
+    // Find all projects linked to this channel
+    const mappings = await db
+      .select({ project_id: projectChannels.project_id })
+      .from(projectChannels)
+      .where(eq(projectChannels.channel_id, channelId));
+
+    if (mappings.length === 0) {
+      return [];
+    }
+
+    const projectIds = mappings.map((m) => m.project_id);
+    const rows = await db
+      .select()
+      .from(projects)
+      .where(inArray(projects.project_id, projectIds));
+
+    const base = rows.map((row) => rowToProject(row));
+
+    // Fetch all channels for these projects
+    const channelRows = await db
+      .select({ channel_id: projectChannels.channel_id, project_id: projectChannels.project_id })
+      .from(projectChannels)
+      .where(inArray(projectChannels.project_id, projectIds));
+
+    const channelsByProjectId = new Map<string, string[]>();
+    for (const row of channelRows) {
+      const existing = channelsByProjectId.get(row.project_id) ?? [];
+      existing.push(row.channel_id);
+      channelsByProjectId.set(row.project_id, existing);
+    }
+
+    return base.map((project) => ({
+      ...project,
+      channel_ids: channelsByProjectId.get(project.project_id) ?? [],
+    }));
   }
 
   async getByName(name: string): Promise<Project | null> {
