@@ -24,11 +24,23 @@ You operate in one of two modes, determined by the `entry_mode` flag in the requ
 - Planner never approves, accepts, or advances any artifact status.
 
 **NO_APPROVED_FRDS Rules:**
-- Extract all FRDs and PRDs from Section 1
-- For each document, list its Document ID, Title, and Status field value
-- Separate into two arrays: `draft_frds` (Status: Draft, or no Status field) and `approved_frds` (Status: Approved)
-- If `approved_frds` is empty, return the NO_APPROVED_FRDS error with details
-- User can then review which FRDs need approval and approve them before re-running Planner
+- Extract all FRDs and PRDs from Section 1 (each document will be clearly separated)
+- For each document, find:
+  - **Document ID**: Extract from "FR Document ID", "FRD ID", "PRD ID", or "FRD-***" / "PRD-***" patterns
+  - **Title**: Extract from the first H1 heading (# ...)
+  - **Status field**: Look in the metadata section (after heading, before requirements) for a line like "Status: Approved" or "Status: Draft" or "Status: Active"
+    - **IMPORTANT:** Only values matching exactly "Approved" (case-insensitive) go into `approved_frds`
+    - Values like "Draft", "Active", "Planning", or missing status → go into `draft_frds`
+- Separate into two arrays: 
+  - `draft_frds` = Status field missing, or contains "Draft", "Active", "Planning", or any non-Approved value
+  - `approved_frds` = Status field contains exactly "Approved" (case-insensitive match)
+- If `approved_frds` is empty or contains no FRD documents (PRDs don't count), return NO_APPROVED_FRDS error with details
+- Example:
+  - "Status: Approved" → approved_frds
+  - "Status: approved" → approved_frds
+  - "Status: Draft" → draft_frds
+  - "Status: Active" → draft_frds
+  - No Status line → draft_frds
 
 ---
 
