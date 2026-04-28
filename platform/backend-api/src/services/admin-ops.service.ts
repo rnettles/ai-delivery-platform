@@ -674,6 +674,7 @@ class AdminOpsService {
     });
 
     this.completeStep(ghStep, preflight.ok ? "succeeded" : "failed", {
+      repo_url: project.repo_url,
       ok: preflight.ok,
       blocked_reason: preflight.blocked_reason,
       repo_reachable: preflight.repo_reachable,
@@ -817,6 +818,7 @@ class AdminOpsService {
     });
 
     this.completeStep(ghStep, preflight.ok ? "succeeded" : "failed", {
+      repo_url: project.repo_url,
       ok: preflight.ok,
       blocked_reason: preflight.blocked_reason,
       repo_reachable: preflight.repo_reachable,
