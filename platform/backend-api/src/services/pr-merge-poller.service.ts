@@ -74,34 +74,13 @@ class PrMergePollerService {
           continue;
         }
 
-        const reviews = await githubApiService.listPullRequestReviews({
-          repoUrl: project.repo_url,
-          number: run.pr_number,
+        // Gate mode: sprint closes only after an explicit merge is observed.
+        logger.info("PR merge gate waiting for explicit merge", {
+          pipeline_id: run.pipeline_id,
+          pr_number: run.pr_number,
+          pr_url: pr.html_url,
+          pr_state: pr.state,
         });
-        const approved = reviews.some((review) => review.state.toUpperCase() === "APPROVED");
-        if (!approved) {
-          continue;
-        }
-
-        try {
-          await githubApiService.mergePullRequest({
-            repoUrl: project.repo_url,
-            number: run.pr_number,
-            commitTitle: `Merge PR #${run.pr_number}`,
-          });
-          await pipelineService.markPrMerged(run.pipeline_id);
-          logger.info("PR auto-merged after approval", {
-            pipeline_id: run.pipeline_id,
-            pr_number: run.pr_number,
-            pr_url: pr.html_url,
-          });
-        } catch (err) {
-          logger.info("PR auto-merge not ready yet", {
-            pipeline_id: run.pipeline_id,
-            pr_number: run.pr_number,
-            error: String(err),
-          });
-        }
       }
     } finally {
       this.isTickRunning = false;

@@ -16,6 +16,12 @@ export interface PrRemediationResult {
 }
 
 class PrRemediationService {
+  private isDuplicatePrValidationError(error: GithubApiError): boolean {
+    if (error.statusCode !== 422) return false;
+    const body = (error.responseBody ?? "").toLowerCase();
+    return body.includes("a pull request already exists") || body.includes("validation failed");
+  }
+
   private resolveRepoPath(clonePath: string): string {
     return path.isAbsolute(clonePath) ? clonePath : path.join(process.cwd(), clonePath);
   }
@@ -107,6 +113,25 @@ class PrRemediationService {
     head: string;
     base: string;
   }): Promise<PrRemediationResult> {
+    const existingBeforeCreate = await githubApiService.findOpenPullRequestByHead({
+      repoUrl: project.repo_url,
+      head: opts.head,
+      base: opts.base,
+    });
+    if (existingBeforeCreate) {
+      logger.info("GitHub PR already exists for head/base; reusing existing PR", {
+        project_id: project.project_id,
+        head: opts.head,
+        base: opts.base,
+        pr_number: existingBeforeCreate.number,
+      });
+      return {
+        pr: existingBeforeCreate,
+        preflight_metadata: [],
+        remediation_performed: false,
+      };
+    }
+
     const firstPreflight = await githubApiService.preflightPullRequest({
       repoUrl: project.repo_url,
       base: opts.base,
@@ -144,6 +169,28 @@ class PrRemediationService {
         remediation_performed: false,
       };
     } catch (error) {
+      if (error instanceof GithubApiError && this.isDuplicatePrValidationError(error)) {
+        const existingAfter422 = await githubApiService.findOpenPullRequestByHead({
+          repoUrl: project.repo_url,
+          head: opts.head,
+          base: opts.base,
+        });
+        if (existingAfter422) {
+          logger.warn("GitHub PR create returned 422 duplicate; using existing PR", {
+            project_id: project.project_id,
+            head: opts.head,
+            base: opts.base,
+            pr_number: existingAfter422.number,
+            metadata: error.metadata,
+          });
+          return {
+            pr: existingAfter422,
+            preflight_metadata: firstPreflight.request_metadata,
+            remediation_performed: false,
+          };
+        }
+      }
+
       if (!(error instanceof GithubApiError) || error.statusCode !== 404) {
         throw error;
       }

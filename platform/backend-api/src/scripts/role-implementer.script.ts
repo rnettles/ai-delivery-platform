@@ -2,7 +2,9 @@ import { Script, ScriptExecutionContext } from "./script.interface";
 import { llmFactory } from "../services/llm/llm-factory.service";
 import { artifactService } from "../services/artifact.service";
 import { governanceService } from "../services/governance.service";
+import { githubApiService } from "../services/github-api.service";
 import { pipelineService } from "../services/pipeline.service";
+import { prRemediationService } from "../services/pr-remediation.service";
 import { projectService } from "../services/project.service";
 import { projectGitService } from "../services/project-git.service";
 import { designInputGateService } from "../services/design-input-gate.service";
@@ -28,6 +30,8 @@ export interface ImplementerOutput {
   summary: string;
   files_changed: FileChange[];
   commit_sha?: string;
+  pr_number?: number;
+  pr_url?: string;
   artifact_path: string;
 }
 
@@ -319,6 +323,8 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
 
     // Commit + push are mandatory for durable implementer work.
     let commitSha: string | undefined;
+    let prNumber: number | undefined;
+    let prUrl: string | undefined;
     try {
       const message = `feat(${finishPayload.task_id}): implement task\n\n${finishPayload.summary}`;
       commitSha = await projectGitService.commitAll(project, sprintBranch, message);
@@ -326,12 +332,43 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       context.log("Implementer: committed", { commit_sha: commitSha, sprint_branch: sprintBranch });
       context.log("Implementer: pushed", { commit_sha: commitSha, sprint_branch: sprintBranch });
       context.notify(`💾 Committed ${finishPayload!.files_changed.length} file(s) to \`${sprintBranch}\` (${commitSha?.slice(0, 7)})`);
+
+      const prTitle = `[${finishPayload.task_id}] ${finishPayload.summary}`;
+      const prBody = [
+        "## Implementation Summary",
+        finishPayload.summary,
+        "",
+        "## Task",
+        `- Task ID: ${finishPayload.task_id}`,
+        `- Sprint ID: ${finishPayload.sprint_id}`,
+        `- Commit: ${commitSha}`,
+        `- Branch: ${sprintBranch}`,
+      ].join("\n");
+
+      const existingPr = await githubApiService.findOpenPullRequestByHead({
+        repoUrl: project.repo_url,
+        head: sprintBranch,
+        base: project.default_branch,
+      });
+
+      const pr = existingPr ?? (await prRemediationService.createPullRequestWithRecovery(project, {
+        title: prTitle,
+        body: prBody,
+        head: sprintBranch,
+        base: project.default_branch,
+      })).pr;
+
+      prNumber = pr.number;
+      prUrl = pr.html_url;
+      await pipelineService.setPrDetails(pipelineId, pr.number, pr.html_url, sprintBranch);
+      context.notify(`🔗 Implementer opened PR #${pr.number}: <${pr.html_url}|View Pull Request>`);
+      context.notify("⏳ PR remains open for sprint-end merge gate.");
     } catch (err) {
       context.log("Implementer: git commit/push failed", {
         error: String(err),
         sprint_branch: sprintBranch,
       });
-      throw new Error(`Implementer failed to persist work to remote branch: ${String(err)}`);
+      throw new Error(`Implementer failed to persist work and update PR state: ${String(err)}`);
     }
 
     // Write evidence artifact
@@ -352,6 +389,8 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
     return {
       ...finishPayload,
       commit_sha: commitSha,
+      pr_number: prNumber,
+      pr_url: prUrl,
       artifact_path: artifactPath,
     } satisfies ImplementerOutput;
   }

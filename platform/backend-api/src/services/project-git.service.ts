@@ -145,8 +145,9 @@ class ProjectGitService {
           project: project.name,
           branch: branchName,
         });
+        this.ensureRemoteBranchRef(project.clone_path, branchName, project.name);
+
         try {
-          this.git(project.clone_path, ["fetch", "origin", "--update-shallow"]);
           this.git(project.clone_path, ["rebase", `origin/${branchName}`]);
         } catch (rebaseErr) {
           try { this.git(project.clone_path, ["rebase", "--abort"]); } catch { /* best-effort */ }
@@ -156,6 +157,32 @@ class ProjectGitService {
         }
         // Retry push after successful rebase.
         this.git(project.clone_path, ["push", "--set-upstream", "origin", branchName]);
+      }
+    });
+  }
+
+  /**
+   * After a PR merge, reattach the workspace to the default branch, sync it,
+   * delete the remote feature branch, and remove the local feature branch.
+   */
+  async finalizeMergedBranch(project: Project, branchName: string): Promise<void> {
+    return this.withLock(project.project_id, () => {
+      logger.info("git: finalizing merged branch", {
+        project: project.name,
+        branch: branchName,
+        default_branch: project.default_branch,
+      });
+
+      this.git(project.clone_path, ["fetch", "origin", "--prune"]);
+      this.git(project.clone_path, ["checkout", project.default_branch]);
+      this.git(project.clone_path, ["pull", "--ff-only", "origin", project.default_branch]);
+
+      if (this.branchExistsRemote(project.clone_path, branchName)) {
+        this.git(project.clone_path, ["push", "origin", "--delete", branchName]);
+      }
+
+      if (this.branchExistsLocal(project.clone_path, branchName)) {
+        this.deleteLocalBranch(project.clone_path, branchName);
       }
     });
   }
@@ -323,6 +350,40 @@ class ProjectGitService {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  private ensureRemoteBranchRef(clonePath: string, branchName: string, projectName: string): void {
+    // Ensure origin fetches all heads into refs/remotes/origin/* before rebase.
+    this.git(clonePath, ["config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"]);
+    this.git(clonePath, ["fetch", "origin", "--prune", "--update-shallow"]);
+
+    if (this.branchExistsRemote(clonePath, branchName)) {
+      return;
+    }
+
+    logger.warn("git: upstream branch ref missing after full fetch; attempting explicit ref fetch", {
+      project: projectName,
+      branch: branchName,
+      clonePath,
+    });
+
+    // Explicitly hydrate the single branch remote-tracking ref.
+    try {
+      this.git(clonePath, [
+        "fetch",
+        "origin",
+        "--update-shallow",
+        `+refs/heads/${branchName}:refs/remotes/origin/${branchName}`,
+      ]);
+    } catch {
+      // Fall through and validate existence below.
+    }
+
+    if (!this.branchExistsRemote(clonePath, branchName)) {
+      throw new Error(
+        `git: push rejected but upstream branch is missing on origin/${branchName}; cannot rebase local history`
+      );
     }
   }
 
