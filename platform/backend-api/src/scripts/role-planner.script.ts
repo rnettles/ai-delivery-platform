@@ -628,11 +628,20 @@ ${designArtifacts}
   private assertApprovedDependencies(plan: PlannerPhasePlan, designInputs: DesignInputGateResult): void {
     const frDependencyIssues = this.findUnapprovedFrDependencies(plan, designInputs);
     if (frDependencyIssues.length > 0) {
+      const issueList = frDependencyIssues
+        .map((issue) => {
+          if (issue.reason === "not_found") {
+            return `- **${issue.fr_id}** (not found)`;
+          } else {
+            return `- **${issue.fr_id}** (not approved, in: ${issue.paths.join(", ")})`;
+          }
+        })
+        .join("\n");
+      
       throw new HttpError(
         422,
         "FR_DEPENDENCIES_NOT_APPROVED",
-        "Planner cannot create a phase plan because one or more FR dependencies are not human-approved. " +
-          "Approve dependent FR documents first, then rerun Planner.",
+        `Planner cannot create a phase plan because one or more FR dependencies are not human-approved:\n\n${issueList}\n\nApprove these FR documents first, then rerun Planner.`,
         {
           phase_id: plan.phase_id,
           fr_dependencies_pending_approval: frDependencyIssues,
@@ -642,11 +651,20 @@ ${designArtifacts}
 
     const tdnDependencyIssues = this.findUnapprovedTdnDependencies(plan, designInputs);
     if (tdnDependencyIssues.length > 0) {
+      const issueList = tdnDependencyIssues
+        .map((issue) => {
+          if (issue.reason === "missing") {
+            return `- **${issue.title}** (not found in docs/design/tdn/)`;
+          } else {
+            return `- **${issue.title}** (not approved, Status: ${issue.status || "missing"}, in: ${issue.path || "unknown"})`;
+          }
+        })
+        .join("\n");
+      
       throw new HttpError(
         422,
         "TDN_DEPENDENCIES_NOT_APPROVED",
-        "Planner cannot create a phase plan because required TDN dependencies are missing or not human-approved. " +
-          "Approve all required TDNs first, then rerun Planner.",
+        `Planner cannot create a phase plan because required TDN dependencies are missing or not human-approved:\n\n${issueList}\n\nCreate or approve these TDNs, then rerun Planner.`,
         {
           phase_id: plan.phase_id,
           tdn_dependencies_pending_approval: tdnDependencyIssues,
