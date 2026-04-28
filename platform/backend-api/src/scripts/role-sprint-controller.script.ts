@@ -220,9 +220,11 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       }
     }
 
+    const nextSprintNum = await this.getNextSprintNumber(designInputs.clone_path);
+    const sprintLabel = `Sprint ${nextSprintNum}`;
     const userContent = phasePlanArtifact
-      ? `Phase plan:\n\n${phasePlanArtifact.content}\n\nProduce a sprint plan and implementation brief for Sprint 1, Task 1.`
-      : "No phase plan found. Produce a generic 2-task Sprint 1 with a foundational first task.";
+      ? `Phase plan:\n\n${phasePlanArtifact.content}\n\nProduce a sprint plan and implementation brief for ${sprintLabel}, Task 1.`
+      : `No phase plan found. Produce a generic 2-task ${sprintLabel} with a foundational first task.`;
 
     const systemPrompt = await governanceService.getComposedPrompt("sprint-controller");
     const provider = await llmFactory.forRole("sprint-controller");
@@ -561,5 +563,32 @@ ${flagLines}
       }
     }
     return blocking;
+  }
+
+  /**
+   * Scans active/ and history/ directories for sprint_plan_sNN.md files and returns
+   * the next sprint number (max found + 1, or 1 if none exist).
+   */
+  private async getNextSprintNumber(clonePath: string): Promise<number> {
+    const dirsToScan = [
+      path.join(clonePath, "project_work", "ai_project_tasks", "active"),
+      path.join(clonePath, "project_work", "ai_project_tasks", "history"),
+    ];
+    let maxSprint = 0;
+    for (const dir of dirsToScan) {
+      try {
+        const entries = await fs.readdir(dir);
+        for (const name of entries) {
+          const m = /^sprint_plan_s(\d+)\.md$/i.exec(name);
+          if (m) {
+            const n = parseInt(m[1], 10);
+            if (n > maxSprint) maxSprint = n;
+          }
+        }
+      } catch {
+        // dir doesn't exist — non-fatal
+      }
+    }
+    return maxSprint + 1;
   }
 }

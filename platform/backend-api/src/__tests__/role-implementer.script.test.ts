@@ -195,7 +195,7 @@ describe("ImplementerScript post-commit PR flow", () => {
       context
     );
 
-    expect(mocks.commitAll).toHaveBeenCalledWith(expect.anything(), "feature/S01-001", expect.stringContaining("feat(S01-001): implement task"));
+    expect(mocks.commitAll).toHaveBeenCalledWith(expect.anything(), "feature/S01-001", expect.stringContaining("feat(S01-001): Implement feature"));
     expect(mocks.push).toHaveBeenCalledWith(expect.anything(), "feature/S01-001");
     expect(mocks.createPullRequestWithRecovery).toHaveBeenCalledWith(
       expect.anything(),

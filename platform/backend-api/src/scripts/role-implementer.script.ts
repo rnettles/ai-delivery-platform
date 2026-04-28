@@ -326,7 +326,9 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
     let prNumber: number | undefined;
     let prUrl: string | undefined;
     try {
-      const message = `feat(${finishPayload.task_id}): implement task\n\n${finishPayload.summary}`;
+      const subjectLine = finishPayload.summary.split(/\n/)[0].trim().slice(0, 60);
+      const fileLines = finishPayload.files_changed.map((f) => `- ${f.action}: ${f.path}`).join("\n");
+      const message = `feat(${finishPayload.task_id}): ${subjectLine}\n\n${fileLines}`;
       commitSha = await projectGitService.commitAll(project, sprintBranch, message);
       await projectGitService.push(project, sprintBranch);
       context.log("Implementer: committed", { commit_sha: commitSha, sprint_branch: sprintBranch });
