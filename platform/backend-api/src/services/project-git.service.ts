@@ -54,9 +54,17 @@ class ProjectGitService {
       this.git(project.clone_path, ["fetch", "origin"]);
 
       if (this.branchExistsRemote(project.clone_path, branchName)) {
-        const message = `git: branch already exists on origin (${branchName})`;
-        logger.error(message, { project: project.name, branch: branchName, clonePath: project.clone_path });
-        throw new Error(message);
+        // Branch already exists on origin — adopt it so re-runs are idempotent.
+        logger.warn("git: branch already exists on origin; checking out existing remote branch", {
+          project: project.name,
+          branch: branchName,
+          clonePath: project.clone_path,
+        });
+        if (this.branchExistsLocal(project.clone_path, branchName)) {
+          this.deleteLocalBranch(project.clone_path, branchName);
+        }
+        this.git(project.clone_path, ["checkout", "--track", `origin/${branchName}`]);
+        return;
       }
 
       if (this.branchExistsLocal(project.clone_path, branchName)) {
@@ -100,11 +108,39 @@ class ProjectGitService {
 
   /**
    * Push a branch to origin.
+   *
+   * Recovery: if the push is rejected due to non-fast-forward (the remote branch
+   * diverged — e.g. a prior pipeline run already pushed commits), we fetch with
+   * --update-shallow (safe for shallow clones) then rebase local onto the remote
+   * tip and retry once.  If rebase exits non-zero (conflict) we abort and throw
+   * a descriptive error so the pipeline step can surface it to the operator.
    */
   async push(project: Project, branchName: string): Promise<void> {
     return this.withLock(project.project_id, () => {
       logger.info("git: pushing", { project: project.name, branch: branchName });
-      this.git(project.clone_path, ["push", "--set-upstream", "origin", branchName]);
+      try {
+        this.git(project.clone_path, ["push", "--set-upstream", "origin", branchName]);
+      } catch (pushErr) {
+        const stderr = (pushErr as any)?.stderr ?? String(pushErr);
+        if (!/non-fast-forward|rejected/.test(stderr)) throw pushErr;
+
+        // Remote branch has diverged — rebase local onto remote then retry.
+        logger.warn("git: push rejected (non-fast-forward); rebasing onto remote", {
+          project: project.name,
+          branch: branchName,
+        });
+        try {
+          this.git(project.clone_path, ["fetch", "origin", "--update-shallow"]);
+          this.git(project.clone_path, ["rebase", `origin/${branchName}`]);
+        } catch (rebaseErr) {
+          try { this.git(project.clone_path, ["rebase", "--abort"]); } catch { /* best-effort */ }
+          throw new Error(
+            `git: push rejected and rebase failed (conflict or history mismatch) on ${branchName}: ${String(rebaseErr)}`
+          );
+        }
+        // Retry push after successful rebase.
+        this.git(project.clone_path, ["push", "--set-upstream", "origin", branchName]);
+      }
     });
   }
 
@@ -156,8 +192,25 @@ class ProjectGitService {
             this.git(clonePath, ["checkout", project.default_branch]);
             this.git(clonePath, ["reset", "--hard", `origin/${project.default_branch}`]);
           } else {
+            // Reattach a detached HEAD before pulling — detached state causes pull to fail.
+            this.ensureAttachedHead(clonePath, project.default_branch);
+            // Discard any uncommitted local changes that would block the pull.
+            this.cleanWorkingTree(clonePath);
             logger.info("git: pulling (TTL expired)", { project: project.name, clonePath });
-            this.git(clonePath, ["pull", "--ff-only"]);
+            try {
+              this.git(clonePath, ["pull", "--ff-only"]);
+            } catch (pullErr) {
+              // Fall back to fetch + reset when fast-forward is not possible
+              // (local branch diverged from remote — e.g. shallow clone extended).
+              const currentBranch = this.git(clonePath, ["rev-parse", "--abbrev-ref", "HEAD"]).trim();
+              logger.warn("git: pull --ff-only failed; falling back to fetch + reset", {
+                project: project.name,
+                branch: currentBranch,
+                error: String(pullErr),
+              });
+              this.git(clonePath, ["fetch", "origin"]);
+              this.git(clonePath, ["reset", "--hard", `origin/${currentBranch}`]);
+            }
           }
           state.lastSyncAt = Date.now();
         }
@@ -192,6 +245,36 @@ class ProjectGitService {
       this.syncState.set(projectId, { lastSyncAt: 0, lock: Promise.resolve() });
     }
     return this.syncState.get(projectId)!;
+  }
+
+  /**
+   * Detect and recover from a detached HEAD by checking out the default branch.
+   * A detached HEAD happens when a prior git operation checked out a commit directly
+   * rather than a branch ref, leaving subsequent pull/push operations in an undefined state.
+   */
+  private ensureAttachedHead(clonePath: string, defaultBranch: string): void {
+    try {
+      this.git(clonePath, ["symbolic-ref", "--quiet", "HEAD"]);
+    } catch {
+      logger.warn("git: detached HEAD detected; re-attaching to default branch", { clonePath, defaultBranch });
+      this.git(clonePath, ["checkout", defaultBranch]);
+    }
+  }
+
+  /**
+   * Discard uncommitted local changes (tracked files) and untracked files/dirs
+   * that would block a pull or checkout.  Only called on the TTL sync path where
+   * no in-flight sprint work should be present in the working tree.
+   */
+  private cleanWorkingTree(clonePath: string): void {
+    try {
+      this.git(clonePath, ["diff", "--quiet"]);
+      this.git(clonePath, ["diff", "--cached", "--quiet"]);
+    } catch {
+      logger.warn("git: dirty working tree detected; discarding local changes", { clonePath });
+      this.git(clonePath, ["checkout", "--", "."]);
+      this.git(clonePath, ["clean", "-fd"]);
+    }
   }
 
   private git(cwd: string, args: string[]): string {

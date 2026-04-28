@@ -31,12 +31,39 @@ export class GitSyncService {
     try {
       if (existsSync(join(clonePath, ".git"))) {
         logger.info("git-sync: pulling", { clonePath });
-        execFileSync("git", ["pull", "--ff-only"], {
-          cwd: clonePath,
-          encoding: "utf8",
-          stdio: ["ignore", "pipe", "pipe"],
-          env: this.gitEnv(),
-        });
+        try {
+          execFileSync("git", ["pull", "--ff-only"], {
+            cwd: clonePath,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+            env: this.gitEnv(),
+          });
+        } catch (pullErr) {
+          // Fast-forward not possible (shallow clone extended or local diverged) \u2014
+          // fall back to fetch + reset --hard on the current branch.
+          const currentBranch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+            cwd: clonePath,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "ignore"],
+            env: this.gitEnv(),
+          }).trim();
+          logger.warn("git-sync: pull --ff-only failed; falling back to fetch + reset", {
+            branch: currentBranch,
+            error: String(pullErr),
+          });
+          execFileSync("git", ["fetch", "origin"], {
+            cwd: clonePath,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+            env: this.gitEnv(),
+          });
+          execFileSync("git", ["reset", "--hard", `origin/${currentBranch}`], {
+            cwd: clonePath,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+            env: this.gitEnv(),
+          });
+        }
       } else {
         logger.info("git-sync: cloning", { repoUrl: this.redactedUrl(repoUrl), clonePath });
         execFileSync("git", ["clone", "--depth", "1", repoUrl, clonePath], {
