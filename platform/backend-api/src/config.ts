@@ -1,6 +1,7 @@
 import dotenv from "dotenv";
 
 dotenv.config();
+dotenv.config({ path: ".env.local", override: true });
 
 function cleanEnvValue(value: string | undefined): string {
   if (!value) return "";
