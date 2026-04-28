@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { execFileSync } from "child_process";
 import fs from "fs/promises";
 import path from "path";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { db } from "../db/client";
 import { state, stateHistory } from "../db/schema";
 import {
@@ -209,6 +209,50 @@ class AdminOpsService {
     }, 0);
 
     return job;
+  }
+
+  /**
+   * On server startup, reschedule any jobs that were `queued` or `running`
+   * when the process last died. Without this, those jobs are permanently orphaned
+   * because the setTimeout that drives them is lost on restart.
+   */
+  async recoverOrphanedJobs(): Promise<void> {
+    const rows = await db
+      .select()
+      .from(state)
+      .where(
+        eq(state.type, OPS_STATE_TYPE)
+      );
+
+    const orphaned = rows.filter(
+      (r) => r.status === "queued" || r.status === "running"
+    );
+
+    if (orphaned.length === 0) return;
+
+    logger.info("admin-ops: recovering orphaned jobs on startup", {
+      count: orphaned.length,
+      job_ids: orphaned.map((r) => r.state_id),
+    });
+
+    for (const row of orphaned) {
+      // Jobs that were mid-flight (running) need to be reset to queued
+      // so runJob's status guard doesn't skip them.
+      if (row.status === "running") {
+        const job = this.deserializeJob(row.data, "queued", row.version);
+        job.started_at = undefined;
+        await this.persistUpdate(job);
+      }
+
+      setTimeout(() => {
+        this.runJob(row.state_id).catch((error) => {
+          logger.error("admin-ops: orphan recovery job failed", {
+            job_id: row.state_id,
+            error: String(error),
+          });
+        });
+      }, 0);
+    }
   }
 
   async getJob(jobId: string): Promise<AdminOpsJob> {
@@ -612,6 +656,53 @@ class AdminOpsService {
       outcome.after_git = outcome.before_git;
     }
 
+    // After local reconciliation, verify the GitHub repo is still reachable.
+    // If GitHub is down, local reconciliation can't help — escalate immediately.
+    const ghStep = this.startStep(job, "reconcile-github-preflight", {
+      repo_url: project.repo_url,
+    });
+    await this.persistUpdate(job);
+
+    const headBranch = outcome.after_git?.current_branch && !outcome.after_git?.detached_head
+      ? outcome.after_git.current_branch
+      : project.default_branch;
+
+    const preflight = await githubApiService.preflightPullRequest({
+      repoUrl: project.repo_url,
+      base: project.default_branch,
+      head: headBranch,
+    });
+
+    this.completeStep(ghStep, preflight.ok ? "succeeded" : "failed", {
+      ok: preflight.ok,
+      blocked_reason: preflight.blocked_reason,
+      repo_reachable: preflight.repo_reachable,
+      base_branch_exists: preflight.base_branch_exists,
+      head_branch_exists: preflight.head_branch_exists,
+    });
+
+    if (!preflight.ok && preflight.blocked_reason) {
+      outcome.escalation_reason = `GITHUB_PREFLIGHT_${preflight.blocked_reason}`;
+      outcome.details = {
+        github_api: githubApiService.getApiDiagnostics(),
+        github_preflight: {
+          ok: preflight.ok,
+          blocked_reason: preflight.blocked_reason ?? null,
+          repo_reachable: preflight.repo_reachable,
+          base_branch_exists: preflight.base_branch_exists,
+          head_branch_exists: preflight.head_branch_exists,
+          base: project.default_branch,
+          head: headBranch,
+          owner: preflight.owner,
+          repo: preflight.repo,
+        },
+        stop_condition: "github_unreachable_blocks_merge_after_reconcile",
+      };
+    }
+
+    job.updated_at = toIsoNow();
+    await this.persistUpdate(job);
+
     return outcome;
   }
 
@@ -707,6 +798,53 @@ class AdminOpsService {
     if (!isGitHealthy(outcome.after_git)) {
       outcome.escalation_reason = "RESET_DID_NOT_RESTORE_HEALTH";
     }
+
+    // After local reset, verify the GitHub repo is still reachable.
+    // If GitHub is down, local reset can't help — escalate immediately.
+    const ghStep = this.startStep(job, "reset-github-preflight", {
+      repo_url: project.repo_url,
+    });
+    await this.persistUpdate(job);
+
+    const headBranch = outcome.after_git?.current_branch && !outcome.after_git?.detached_head
+      ? outcome.after_git.current_branch
+      : project.default_branch;
+
+    const preflight = await githubApiService.preflightPullRequest({
+      repoUrl: project.repo_url,
+      base: project.default_branch,
+      head: headBranch,
+    });
+
+    this.completeStep(ghStep, preflight.ok ? "succeeded" : "failed", {
+      ok: preflight.ok,
+      blocked_reason: preflight.blocked_reason,
+      repo_reachable: preflight.repo_reachable,
+      base_branch_exists: preflight.base_branch_exists,
+      head_branch_exists: preflight.head_branch_exists,
+    });
+
+    if (!preflight.ok && preflight.blocked_reason) {
+      outcome.escalation_reason = `GITHUB_PREFLIGHT_${preflight.blocked_reason}`;
+      outcome.details = {
+        github_api: githubApiService.getApiDiagnostics(),
+        github_preflight: {
+          ok: preflight.ok,
+          blocked_reason: preflight.blocked_reason ?? null,
+          repo_reachable: preflight.repo_reachable,
+          base_branch_exists: preflight.base_branch_exists,
+          head_branch_exists: preflight.head_branch_exists,
+          base: project.default_branch,
+          head: headBranch,
+          owner: preflight.owner,
+          repo: preflight.repo,
+        },
+        stop_condition: "github_unreachable_blocks_merge_after_reset",
+      };
+    }
+
+    job.updated_at = toIsoNow();
+    await this.persistUpdate(job);
 
     return outcome;
   }

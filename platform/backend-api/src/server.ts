@@ -2,6 +2,7 @@ import { app } from "./app";
 import { config } from "./config";
 import { logger } from "./services/logger.service";
 import { pipelineService } from "./services/pipeline.service";
+import { adminOpsService } from "./services/admin-ops.service";
 import { pipelineNotifierService } from "./services/pipeline-notifier.service";
 import { prMergePollerService } from "./services/pr-merge-poller.service";
 import { projectService } from "./services/project.service";
@@ -37,6 +38,11 @@ app.listen(config.port, () => {
 
   // Cancel any pipelines that were `running` when the container last died (orphaned by restart)
   pipelineService.reconcileOrphanedRuns().catch((err) => {
+    logger.error("Startup reconciliation threw unexpectedly", { error: String(err) });
+  });
+
+  // Reschedule any admin-ops jobs that were queued/running when the server last died.
+  adminOpsService.recoverOrphanedJobs().catch((err) => {
     logger.error("Startup reconciliation threw unexpectedly", { error: String(err) });
   });
 
