@@ -5,6 +5,9 @@
 		},
 		{
 			"path": "../ai-project_template"
+		},
+		{
+			"path": "../Personal Health Knowledge System"
 		}
 	],
 	"settings": {}

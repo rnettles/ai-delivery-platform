@@ -9,7 +9,7 @@ import { HttpError } from "../utils/http-error";
 // Document roots by category — searched in priority order within each category
 const FR_ROOTS = ["docs/functional_requirements", "docs/prd"];
 const ADR_ROOTS = ["docs/adr"];
-const TDN_ROOTS = ["docs/design"];  // TDNs only — docs/architecture contains reference docs that don't block gates
+const TDN_ROOTS = ["docs/design/tdn"];  // TDNs only in tdn/ subdirectory — design_system.md, ux_principles.md etc. are reference docs
 const DESIGN_ROOTS = [...FR_ROOTS, ...ADR_ROOTS, ...TDN_ROOTS];
 const INTAKE_ROOT = "project_work/ai_project_tasks/intake";
 
@@ -252,6 +252,9 @@ export class DesignInputGateService {
       const abs = path.join(absoluteDir, entry.name);
 
       if (entry.isDirectory()) {
+        // Skip archive/superseded directories — don't load old/replaced artifacts
+        if (/^superseded$/i.test(entry.name)) continue;
+        
         const nested = await this.collectFiles(abs, repoRoot, depth + 1, maxDepth, limit - out.length);
         out.push(...nested);
         continue;
