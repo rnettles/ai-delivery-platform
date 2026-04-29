@@ -22,6 +22,7 @@ import { logger } from "./logger.service";
 import { artifactService } from "./artifact.service";
 import { projectGitService } from "./project-git.service";
 import { Project, projectService } from "./project.service";
+import { pipelineNotifierService } from "./pipeline-notifier.service";
 import { executionRecordModel } from "../domain/execution.model";
 
 const TERMINAL_SUCCESS_STATUSES: PipelineStatus[] = ["complete", "awaiting_pr_review"];
@@ -810,7 +811,17 @@ export class PipelineService {
           pipeline_id: run.pipeline_id,
           implementer_attempts: attempts,
         });
-        return this.save(run, { current_step: role, status: "cancelled", steps });
+        const cancelled = await this.save(run, { current_step: role, status: "cancelled", steps });
+        pipelineNotifierService.notify({
+          pipeline_id: cancelled.pipeline_id,
+          step: cancelled.current_step,
+          status: cancelled.status,
+          gate_required: false,
+          artifact_paths: [],
+          metadata: cancelled.metadata,
+          agent_caller: "System",
+        }).catch((err) => logger.error("Failed to send cancel notification (fixer limit)", { error: String(err) }));
+        return cancelled;
       }
       steps.push(this.newRunningStep("implementer", now));
       return this.save(run, { current_step: "implementer", status: "running", steps, implementer_attempts: attempts });
@@ -1724,7 +1735,26 @@ export class PipelineService {
             .where(eq(pipelineRuns.pipeline_id, row.pipeline_id));
           
           (isStepComplete ? completed : cancelled).push(row.pipeline_id);
-          
+
+          // Notify operator so the Slack stream reflects the terminal state of
+          // orphaned pipelines detected on startup. Without this, the operator
+          // sees no update and assumes the pipeline is still running.
+          if (!isStepComplete) {
+            pipelineNotifierService.notify({
+              pipeline_id: row.pipeline_id,
+              step: row.current_step as PipelineRole,
+              status: "cancelled",
+              gate_required: false,
+              artifact_paths: [],
+              metadata: {},
+              agent_caller: "System",
+              message: "Pipeline cancelled — server restarted while step was running",
+            }).catch((err) => logger.error("Startup reconciliation: failed to send cancel notification", {
+              pipeline_id: row.pipeline_id,
+              error: String(err),
+            }));
+          }
+
           logger.info("Startup reconciliation: pipeline reconciled", {
             pipeline_id: row.pipeline_id,
             current_step: row.current_step,

@@ -277,6 +277,16 @@ export async function cancelPipeline(req: Request, res: Response, next: NextFunc
     const pipelineId = String(req.params.pipelineId);
     const actor = getSlackActor(req);
     const run = await pipelineService.cancel(pipelineId, actor);
+    await pipelineNotifierService.notify({
+      pipeline_id: run.pipeline_id,
+      step: run.current_step,
+      status: run.status,
+      gate_required: false,
+      artifact_paths: [],
+      metadata: run.metadata,
+      agent_caller: "System",
+      message: `Pipeline cancelled by ${actor}`,
+    });
     res.status(200).json(run);
   } catch (error) {
     next(error);
