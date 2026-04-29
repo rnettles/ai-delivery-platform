@@ -216,10 +216,11 @@ describe("PipelineService", () => {
       expect(run.status).toBe("failed");
     });
 
-    it("auto-advances to sprint-controller when verifier passes", async () => {
+    it("auto-advances to sprint-controller when verifier passes (full-sprint mode)", async () => {
       const verifierRow = makeRow({
         current_step: "verifier",
         status: "running",
+        metadata: { source: "slack", execution_mode: "full-sprint" },
         steps: [
           { role: "planner", status: "complete", gate_outcome: "approved", artifact_paths: [], actor: "user-1", started_at: "2026-04-19T00:00:00.000Z", completed_at: "2026-04-19T01:00:00.000Z" },
           { role: "sprint-controller", status: "complete", gate_outcome: "approved", artifact_paths: [], actor: "user-1", started_at: "2026-04-19T01:00:00.000Z", completed_at: "2026-04-19T02:00:00.000Z" },
@@ -245,10 +246,39 @@ describe("PipelineService", () => {
       expect(run.current_step).toBe("sprint-controller");
     });
 
-    it("routes to implementer when verifier fails (verificationPassed=false)", async () => {
+    it("mode=next: verifier PASS pauses for operator handoff to sprint-controller", async () => {
+      const verifierRow = makeRow({
+        entry_point: "verifier",
+        current_step: "verifier",
+        status: "running",
+        metadata: { source: "api", execution_mode: "next" },
+        steps: [
+          { role: "verifier", status: "running", gate_outcome: null, artifact_paths: [], actor: "system", started_at: "2026-04-19T00:00:00.000Z" },
+        ],
+      });
+
+      mocks.selectWhere.mockResolvedValueOnce([verifierRow]);
+      const savedRow = makeRow({ current_step: "verifier", status: "paused_takeover" });
+      mocks.updateReturning.mockResolvedValueOnce([savedRow]);
+
+      const run = await service.completeStep(
+        "pipe-2026-04-19-test1234",
+        "verifier",
+        "exec-002",
+        ["artifacts/report.md"],
+        false,
+        true // verificationPassed
+      );
+
+      expect(run.status).toBe("paused_takeover");
+      expect(run.current_step).toBe("verifier");
+    });
+
+    it("auto-routes to implementer when verifier fails (full-sprint mode)", async () => {
       const verifierRow = makeRow({
         current_step: "verifier",
         status: "running",
+        metadata: { source: "slack", execution_mode: "full-sprint" },
         steps: [
           { role: "planner", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T00:00:00.000Z", completed_at: "2026-04-19T01:00:00.000Z" },
           { role: "sprint-controller", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T01:00:00.000Z", completed_at: "2026-04-19T02:00:00.000Z" },
@@ -274,7 +304,35 @@ describe("PipelineService", () => {
       expect(run.status).toBe("running");
     });
 
-    it("cancels pipeline when implementer retry limit is reached", async () => {
+    it("mode=next: verifier FAIL pauses for operator handoff with pending_next_step=implementer", async () => {
+      const verifierRow = makeRow({
+        entry_point: "verifier",
+        current_step: "verifier",
+        status: "running",
+        metadata: { source: "api", execution_mode: "next" },
+        steps: [
+          { role: "verifier", status: "running", gate_outcome: null, artifact_paths: [], actor: "system", started_at: "2026-04-19T00:00:00.000Z" },
+        ],
+      });
+
+      mocks.selectWhere.mockResolvedValueOnce([verifierRow]);
+      const savedRow = makeRow({ current_step: "verifier", status: "paused_takeover", metadata: { source: "api", execution_mode: "next", pending_next_step: "implementer" } });
+      mocks.updateReturning.mockResolvedValueOnce([savedRow]);
+
+      const run = await service.completeStep(
+        "pipe-2026-04-19-test1234",
+        "verifier",
+        "exec-002",
+        ["artifacts/verification_result.json"],
+        false,
+        false // verificationPassed
+      );
+
+      expect(run.status).toBe("paused_takeover");
+      expect(run.current_step).toBe("verifier");
+    });
+
+    it("pauses at paused_takeover when implementer retry limit is reached", async () => {
       const verifierRow = makeRow({
         current_step: "verifier",
         status: "running",
@@ -288,7 +346,7 @@ describe("PipelineService", () => {
       });
 
       mocks.selectWhere.mockResolvedValueOnce([verifierRow]);
-      const savedRow = makeRow({ current_step: "verifier", status: "cancelled" });
+      const savedRow = makeRow({ current_step: "verifier", status: "paused_takeover" });
       mocks.updateReturning.mockResolvedValueOnce([savedRow]);
 
       const run = await service.completeStep(
@@ -300,7 +358,7 @@ describe("PipelineService", () => {
         false // verificationPassed — implementer_attempts already at limit
       );
 
-      expect(run.status).toBe("cancelled");
+      expect(run.status).toBe("paused_takeover");
     });
 
     // ── Execution mode tests ─────────────────────────────────────────────────
@@ -332,6 +390,34 @@ describe("PipelineService", () => {
 
       expect(run.status).toBe("complete");
       expect(run.current_step).toBe("complete");
+    });
+
+    it("mode=next: implementer pauses at paused_takeover when verifier step exists in history", async () => {
+      const row = makeRow({
+        entry_point: "implementer",
+        current_step: "implementer",
+        status: "running",
+        metadata: { source: "api", execution_mode: "next" },
+        steps: [
+          { role: "implementer", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T00:00:00.000Z", completed_at: "2026-04-19T01:00:00.000Z" },
+          { role: "verifier", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T01:00:00.000Z", completed_at: "2026-04-19T02:00:00.000Z" },
+          { role: "implementer", status: "running", gate_outcome: null, artifact_paths: [], actor: "system", started_at: "2026-04-19T02:00:00.000Z" },
+        ],
+      });
+
+      mocks.selectWhere.mockResolvedValueOnce([row]);
+      const savedRow = makeRow({ current_step: "implementer", status: "paused_takeover" });
+      mocks.updateReturning.mockResolvedValueOnce([savedRow]);
+
+      const run = await service.completeStep(
+        "pipe-2026-04-19-test1234",
+        "implementer",
+        "exec-011",
+        ["artifacts/implementation_summary.md"],
+        false
+      );
+
+      expect(run.status).toBe("paused_takeover");
     });
 
     it("mode=next: planner stops without advancing to sprint-controller", async () => {
@@ -729,6 +815,25 @@ describe("PipelineService", () => {
       await expect(
         service.handoff("pipe-2026-04-19-test1234", { actor: "user-1" })
       ).rejects.toMatchObject({ statusCode: 409, code: "INVALID_PIPELINE_STATUS" });
+    });
+
+    it("uses pending_next_step override and clears it from metadata", async () => {
+      const pausedRow = makeRow({
+        current_step: "verifier",
+        status: "paused_takeover",
+        metadata: { source: "api", execution_mode: "next", pending_next_step: "implementer" },
+        steps: [
+          { role: "verifier", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T00:00:00.000Z", completed_at: "2026-04-19T01:00:00.000Z" },
+        ],
+      });
+      mocks.selectWhere.mockResolvedValueOnce([pausedRow]);
+      const nextRow = makeRow({ current_step: "implementer", status: "running", metadata: { source: "api", execution_mode: "next" } });
+      mocks.updateReturning.mockResolvedValueOnce([nextRow]);
+
+      const run = await service.handoff("pipe-2026-04-19-test1234", { actor: "user-1" });
+
+      expect(run.current_step).toBe("implementer");
+      expect(run.status).toBe("running");
     });
   });
 

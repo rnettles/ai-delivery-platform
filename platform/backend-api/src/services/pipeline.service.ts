@@ -810,8 +810,8 @@ export class PipelineService {
 
     // ── Execution mode: "next" ────────────────────────────────────────────────
     // Stop immediately after the entry role completes — do not advance downstream.
-    // Exception: verifier always routes based on PASS/FAIL regardless of mode, so
-    // operator-triggered verifier pipelines still loop back to implementer or sprint-controller.
+    // Non-verifier roles stop unconditionally. Verifier is handled by PASS/FAIL blocks below,
+    // which pause at paused_takeover for operator pipeline-handoff in next mode.
     const executionMode = run.metadata.execution_mode as string | undefined;
     if (executionMode === "next" && role === run.entry_point && role !== "verifier") {
       logger.info("Pipeline stopping after entry role (mode=next); PR merge gate deferred until sprint close-out", {
@@ -822,7 +822,31 @@ export class PipelineService {
       return this.saveAndMaybeCleanup(run, { current_step: "complete", status: "complete", steps });
     }
 
-    // Verifier FAIL: route back to Implementer with retry context (ADR-030)
+    // ── Implementer complete in next mode — pause for operator handoff to verifier ────────
+    // When implementer is part of a manual loop (verifier was the entry or appears in history),
+    // pause instead of auto-advancing so operator can review before verifier re-runs.
+    if (
+      role === "implementer" &&
+      executionMode === "next" &&
+      steps.some((s) => s.role === "verifier")
+    ) {
+      logger.info("Implementer complete in next mode — pausing for operator handoff to verifier", {
+        pipeline_id: run.pipeline_id,
+      });
+      const paused = await this.save(run, { current_step: role, status: "paused_takeover", steps });
+      pipelineNotifierService.notify({
+        pipeline_id: paused.pipeline_id,
+        step: paused.current_step,
+        status: paused.status,
+        gate_required: true,
+        artifact_paths: [],
+        metadata: paused.metadata,
+        agent_caller: "System",
+      }).catch((err) => logger.error("Failed to send paused_takeover notification (implementer→verifier)", { error: String(err) }));
+      return paused;
+    }
+
+    // Verifier FAIL: pause for operator handoff back to implementer (ADR-030)
     if (role === "verifier" && verificationPassed === false) {
       const attempts = (run.implementer_attempts ?? 0) + 1;
       if (attempts >= MAX_IMPLEMENTER_ATTEMPTS) {
@@ -842,8 +866,46 @@ export class PipelineService {
         }).catch((err) => logger.error("Failed to send takeover notification (fixer limit)", { error: String(err) }));
         return paused;
       }
+      // In next mode: pause and record the intended next step so handoff() routes correctly.
+      // In auto-flow modes (full-sprint, next-flow): advance directly.
+      if (executionMode === "next") {
+        logger.info("Verifier FAIL in next mode — pausing for operator handoff to implementer", {
+          pipeline_id: run.pipeline_id,
+          implementer_attempts: attempts,
+        });
+        const metadata = { ...run.metadata, pending_next_step: "implementer" } as typeof run.metadata;
+        const paused = await this.save(run, { current_step: role, status: "paused_takeover", steps, metadata, implementer_attempts: attempts });
+        pipelineNotifierService.notify({
+          pipeline_id: paused.pipeline_id,
+          step: paused.current_step,
+          status: paused.status,
+          gate_required: true,
+          artifact_paths: [],
+          metadata: paused.metadata,
+          agent_caller: "System",
+        }).catch((err) => logger.error("Failed to send paused_takeover notification (verifier FAIL)", { error: String(err) }));
+        return paused;
+      }
       steps.push(this.newRunningStep("implementer", now));
       return this.save(run, { current_step: "implementer", status: "running", steps, implementer_attempts: attempts });
+    }
+
+    // Verifier PASS in next mode: pause for operator handoff to sprint-controller
+    if (role === "verifier" && verificationPassed !== false && executionMode === "next") {
+      logger.info("Verifier PASS in next mode — pausing for operator handoff to sprint-controller", {
+        pipeline_id: run.pipeline_id,
+      });
+      const paused = await this.save(run, { current_step: role, status: "paused_takeover", steps });
+      pipelineNotifierService.notify({
+        pipeline_id: paused.pipeline_id,
+        step: paused.current_step,
+        status: paused.status,
+        gate_required: true,
+        artifact_paths: [],
+        metadata: paused.metadata,
+        agent_caller: "System",
+      }).catch((err) => logger.error("Failed to send paused_takeover notification (verifier PASS)", { error: String(err) }));
+      return paused;
     }
 
     // ── Execution mode: "next-flow" (non-planner entry) ─────────────────────────
@@ -1010,14 +1072,24 @@ export class PipelineService {
         : steps[stepIdx].artifact_paths,
     };
 
-    const next = nextRoleAfter(run.current_step as PipelineRole);
+    // Check for a pending_next_step override (set by verifier FAIL in next mode to route
+    // back to implementer instead of following NEXT_ROLE which maps verifier→sprint-controller).
+    const pendingNext = run.metadata.pending_next_step as PipelineRole | undefined;
+    const next: PipelineRole | "complete" = pendingNext ?? nextRoleAfter(run.current_step as PipelineRole);
+
+    // Clear the override from metadata before saving
+    const updatedMetadata = pendingNext
+      ? (Object.fromEntries(
+          Object.entries(run.metadata).filter(([k]) => k !== "pending_next_step")
+        ) as typeof run.metadata)
+      : undefined;
 
     if (next === "complete") {
-      return this.saveAndMaybeCleanup(run, { current_step: "complete", status: "complete", steps });
+      return this.saveAndMaybeCleanup(run, { current_step: "complete", status: "complete", steps, ...(updatedMetadata ? { metadata: updatedMetadata } : {}) });
     }
 
     steps.push(this.newRunningStep(next, now));
-    return this.save(run, { current_step: next, status: "running", steps });
+    return this.save(run, { current_step: next, status: "running", steps, ...(updatedMetadata ? { metadata: updatedMetadata } : {}) });
   }
 
   // ─── PR MANAGEMENT (ADR-030) ──────────────────────────────────────────────
