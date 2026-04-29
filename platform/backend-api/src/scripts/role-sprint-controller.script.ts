@@ -69,6 +69,7 @@ export interface SprintControllerOutput {
 }
 
 const SPRINT_READY_PHASE_STATUSES = new Set(["Planning", "Approved"]);
+const OPEN_TASK_STATUSES = new Set(["pending", "in_progress", "active", "open"]);
 
 interface LlmResponse {
   sprint_plan: SprintPlan;
@@ -79,6 +80,16 @@ interface LlmResponse {
 interface CanonicalIds {
   sprintId: string;
   taskId: string;
+}
+
+interface ActiveTaskPackage {
+  sprintPlanName: string;
+  sprintPlanContent: string;
+  briefContent: string;
+  currentTaskContent: string;
+  sprintPlan: SprintPlan;
+  firstTask: SprintTask;
+  taskFlags: TaskFlags;
 }
 
 function slug(value: string): string {
@@ -139,31 +150,19 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
   ): Promise<SprintControllerOutput> {
     context.notify("🗂️ Breaking phase plan into sprint tasks and drafting implementation brief...");
 
-    // Pre-condition: no open sprint exists (process_invariants §Sprint Lifecycle Gates, ADR-031)
-    try {
-      const staged = await pipelineService.listStagedSprints(pipelineId);
-      const OPEN_SPRINT_STATUSES = ["staged", "Planning", "Active", "ready_for_verification"];
-      const openSprint = staged.sprints.find((s) => OPEN_SPRINT_STATUSES.includes(s.status));
-      if (openSprint) {
-        throw new HttpError(
-          409,
-          "OPEN_SPRINT_EXISTS",
-          `A sprint is already open (${openSprint.sprint_id}, status: ${openSprint.status}). ` +
-            "Close the open sprint before staging a new one (process_invariants §Sprint Lifecycle Gates).",
-          { sprint_id: openSprint.sprint_id, status: openSprint.status }
-        );
-      }
-    } catch (err) {
-      if (err instanceof HttpError) throw err;
-      // Artifact read failure on a fresh pipeline is non-fatal.
-      context.log("Sprint Controller: open-sprint pre-condition check skipped", { reason: String(err) });
-    }
-
     const designInputs = await designInputGateService.requireRelevantDesignInputs(pipelineId, "sprint-controller");
     context.notify(
       `📚 Design inputs validated (${designInputs.sample_files.length} found). ` +
       `Using project: \`${designInputs.project_name}\``
     );
+
+    const activeTaskPackage = await this.loadOpenActiveTaskPackage(designInputs.clone_path);
+    if (activeTaskPackage) {
+      context.notify(
+        `♻️ Reusing open task package ${activeTaskPackage.firstTask.task_id} from ${activeTaskPackage.sprintPlan.sprint_id}.`
+      );
+      return this.publishExistingTaskPackage(pipelineId, activeTaskPackage, context);
+    }
 
     let phasePlanArtifact = await artifactService.findFirst(
       previousArtifacts.filter((p) => p.includes("phase_plan")).concat(previousArtifacts)
@@ -644,5 +643,174 @@ ${flagLines}
     }
 
     return maxTaskNum + 1;
+  }
+
+  private async loadOpenActiveTaskPackage(clonePath: string): Promise<ActiveTaskPackage | null> {
+    const activeDir = path.join(clonePath, "project_work", "ai_project_tasks", "active");
+    const briefPath = path.join(activeDir, "AI_IMPLEMENTATION_BRIEF.md");
+    const currentTaskPath = path.join(activeDir, "current_task.json");
+
+    try {
+      const entries = await fs.readdir(activeDir, { withFileTypes: true });
+      const sprintPlanEntry = entries.find((entry) => entry.isFile() && /^sprint_plan_.*\.md$/i.test(entry.name));
+      if (!sprintPlanEntry) {
+        return null;
+      }
+
+      const sprintPlanName = sprintPlanEntry.name;
+      const sprintPlanContent = await fs.readFile(path.join(activeDir, sprintPlanName), "utf-8");
+      const briefContent = await fs.readFile(briefPath, "utf-8");
+      const currentTaskContent = await fs.readFile(currentTaskPath, "utf-8");
+      const currentTask = JSON.parse(currentTaskContent) as {
+        task_id?: string;
+        title?: string;
+        description?: string;
+        status?: string;
+      };
+
+      const status = String(currentTask.status ?? "pending").toLowerCase();
+      if (!currentTask.task_id || !OPEN_TASK_STATUSES.has(status)) {
+        return null;
+      }
+
+      const sprintPlan = this.parseActiveSprintPlan(sprintPlanContent, sprintPlanName, currentTask.task_id);
+      const parsedBrief = this.parseBriefContent(briefContent);
+
+      return {
+        sprintPlanName,
+        sprintPlanContent,
+        briefContent,
+        currentTaskContent,
+        sprintPlan,
+        firstTask: {
+          task_id: currentTask.task_id,
+          title: currentTask.title ?? "Open task",
+          description: currentTask.description ?? parsedBrief.description,
+          acceptance_criteria: parsedBrief.acceptanceCriteria,
+          estimated_effort: parsedBrief.estimatedEffort,
+          files_likely_affected: parsedBrief.filesLikelyAffected,
+          status: "pending",
+        },
+        taskFlags: parsedBrief.taskFlags,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  private async publishExistingTaskPackage(
+    pipelineId: string,
+    activeTaskPackage: ActiveTaskPackage,
+    context: ScriptExecutionContext
+  ): Promise<SprintControllerOutput> {
+    const sprintPlanPath = await artifactService.write(
+      pipelineId,
+      activeTaskPackage.sprintPlanName,
+      activeTaskPackage.sprintPlanContent
+    );
+    const briefPath = await artifactService.write(pipelineId, "AI_IMPLEMENTATION_BRIEF.md", activeTaskPackage.briefContent);
+    const currentTaskPath = await artifactService.write(pipelineId, "current_task.json", activeTaskPackage.currentTaskContent);
+
+    const run = await pipelineService.get(pipelineId);
+    const project = run.project_id
+      ? await projectService.getById(run.project_id)
+      : await projectService.getByName("default");
+
+    let sprintBranch: string | undefined;
+    if (project) {
+      sprintBranch = buildTaskFeatureBranch(activeTaskPackage.firstTask.task_id);
+      await pipelineService.setSprintBranch(pipelineId, sprintBranch);
+    }
+
+    context.log("Sprint Controller reused open task package", {
+      pipeline_id: pipelineId,
+      sprint_id: activeTaskPackage.sprintPlan.sprint_id,
+      task_id: activeTaskPackage.firstTask.task_id,
+      sprint_branch: sprintBranch,
+    });
+
+    return {
+      sprint_id: activeTaskPackage.sprintPlan.sprint_id,
+      phase_id: activeTaskPackage.sprintPlan.phase_id,
+      sprint_plan_path: sprintPlanPath,
+      brief_path: briefPath,
+      current_task_path: currentTaskPath,
+      task_flags: activeTaskPackage.taskFlags,
+      first_task: activeTaskPackage.firstTask,
+      sprint_branch: sprintBranch,
+      artifact_paths: [sprintPlanPath, briefPath, currentTaskPath],
+    };
+  }
+
+  private parseActiveSprintPlan(markdown: string, sprintPlanName: string, taskId: string): SprintPlan {
+    const sprintId = /^#\s*Sprint\s*Plan:\s*(.+?)\s*$/im.exec(markdown)?.[1]?.trim() ?? this.extractSprintId(sprintPlanName, "unknown");
+    const phaseId = /^\*\*Phase:\*\*\s+(.+)$/m.exec(markdown)?.[1]?.trim() ?? "unknown";
+    const name = /^\*\*Name:\*\*\s+(.+)$/m.exec(markdown)?.[1]?.trim() ?? `Sprint ${sprintId}`;
+    const status = /^\*\*Status:\*\*\s+(.+)$/m.exec(markdown)?.[1]?.trim() ?? "staged";
+    const tasks = this.extractSectionBullets(markdown, "Tasks");
+
+    return {
+      sprint_id: sprintId,
+      phase_id: phaseId,
+      name,
+      goals: this.extractSectionBullets(markdown, "Goals"),
+      tasks: tasks.length > 0 ? tasks : [taskId],
+      status: "staged",
+    };
+  }
+
+  private parseBriefContent(markdown: string): {
+    description: string;
+    filesLikelyAffected: string[];
+    acceptanceCriteria: string[];
+    estimatedEffort: SprintTask["estimated_effort"];
+    taskFlags: TaskFlags;
+  } {
+    return {
+      description: this.extractSectionText(markdown, "Task Description"),
+      filesLikelyAffected: this.extractSectionBullets(markdown, "Files Likely Affected").map((line) => line.replace(/^`|`$/g, "")),
+      acceptanceCriteria: this.extractSectionBullets(markdown, "Acceptance Criteria \\(Deliverables Checklist\\)").map((line) => line.replace(/^\[ \]\s*/, "")),
+      estimatedEffort: "M",
+      taskFlags: this.extractTaskFlags(markdown),
+    };
+  }
+
+  private extractSectionText(markdown: string, title: string): string {
+    const sectionRegex = new RegExp(`## ${title}\\n([\\s\\S]*?)(?:\\n## |$)`);
+    const match = sectionRegex.exec(markdown);
+    return match?.[1]?.trim() ?? "";
+  }
+
+  private extractSectionBullets(markdown: string, title: string): string[] {
+    return this.extractSectionText(markdown, title)
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith("- "))
+      .map((line) => line.slice(2).trim());
+  }
+
+  private extractTaskFlags(markdown: string): TaskFlags {
+    const sectionText = this.extractSectionText(markdown, "Task Flags");
+    const getValue = (key: string): unknown => {
+      const match = new RegExp(`- \\*\\*${key}:\\*\\* (.+)$`, "m").exec(sectionText);
+      if (!match) {
+        return undefined;
+      }
+      try {
+        return JSON.parse(match[1]);
+      } catch {
+        return match[1];
+      }
+    };
+
+    return {
+      fr_ids_in_scope: (getValue("fr_ids_in_scope") as string[] | undefined) ?? [],
+      architecture_contract_change: Boolean(getValue("architecture_contract_change")),
+      ui_evidence_required: Boolean(getValue("ui_evidence_required")),
+      incident_tier: (getValue("incident_tier") as TaskFlags["incident_tier"] | undefined) ?? "none",
+      schema_change: getValue("schema_change") as boolean | undefined,
+      migration_change: getValue("migration_change") as boolean | undefined,
+      cross_subsystem_change: getValue("cross_subsystem_change") as boolean | undefined,
+    };
   }
 }
