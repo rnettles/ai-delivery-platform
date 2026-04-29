@@ -180,7 +180,7 @@ const DEFAULT_VERIFY_COMMANDS = ["npm test", "npm run lint", "npx tsc --noEmit"]
 export class VerifierScript implements Script<Record<string, unknown>, unknown> {
   public readonly descriptor = {
     name: "role.verifier",
-    version: "2026.04.29",
+    version: "2026.04.19",
     description: "Quality gate — verifies implementation against acceptance criteria. Enforces REV-001 input gate, REV-002 10-check ordered pipeline, and REV-003/HND output contracts.",
     input_schema: {
       type: "object",
