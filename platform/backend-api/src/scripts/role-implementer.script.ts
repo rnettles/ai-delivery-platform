@@ -11,6 +11,7 @@ import { projectGitService } from "../services/project-git.service";
 import { designInputGateService } from "../services/design-input-gate.service";
 import { ToolDefinition, ToolCall } from "../services/llm/llm-provider.interface";
 import { HttpError } from "../utils/http-error";
+import { config } from "../config";
 import fs from "fs/promises";
 import path from "path";
 import { exec } from "child_process";
@@ -339,7 +340,7 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
     // Inject prior-run state so subsequent runs skip already-passing gates and continue from where
     // the prior run stopped rather than re-reading the brief and starting from scratch.
     if (clonePath) {
-      const priorCtx = await this.loadPriorRunContext(clonePath);
+      const priorCtx = await this.loadPriorRunContext(clonePath, project.project_id, sprintBranch ?? undefined);
       if (priorCtx) contextParts.push(`# Prior Run Context\n\n${priorCtx}`);
     }
 
@@ -529,8 +530,8 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
     if (clonePath) {
       await this.writeTestResultsToRepo(
         clonePath,
-        finishPayload?.task_id ?? resolvedTaskId,
-        finishPayload?.sprint_id ?? resolvedSprintId,
+        resolvedTaskId,
+        resolvedSprintId,
         gateResults,
         stopReason
       );
@@ -542,7 +543,7 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
     if (maxIterationsExceeded || !finishPayload) {
       const failureReason = maxIterationsExceeded ? "MAX_ITERATIONS" : "FINISH_NOT_CALLED";
       if (project && sprintBranch) {
-        await this.checkpointCommitOnFailure(project, sprintBranch, gateResults, writtenFiles, failureReason, context);
+        await this.checkpointCommitOnFailure(project, sprintBranch, gateResults, writtenFiles, failureReason, context, resolvedTaskId, resolvedSprintId);
       }
       if (maxIterationsExceeded) {
         throw new HttpError(
@@ -578,7 +579,7 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
     // This is an intentional platform override documented in ADR-031; governance inventory reflects ≤7.
     if (payload.files_changed.length > 5) {
       if (project && sprintBranch) {
-        await this.checkpointCommitOnFailure(project, sprintBranch, gateResults, writtenFiles, "INVARIANT_VIOLATION", context);
+        await this.checkpointCommitOnFailure(project, sprintBranch, gateResults, writtenFiles, "INVARIANT_VIOLATION", context, resolvedTaskId, resolvedSprintId);
       }
       throw new HttpError(
         422,
@@ -595,7 +596,7 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
     const failedGates = latestResultPerCommand(gateResults).filter((r) => r.exit_code !== 0);
     if (failedGates.length > 0) {
       if (project && sprintBranch) {
-        await this.checkpointCommitOnFailure(project, sprintBranch, gateResults, writtenFiles, "GATE_FAILURE", context);
+        await this.checkpointCommitOnFailure(project, sprintBranch, gateResults, writtenFiles, "GATE_FAILURE", context, resolvedTaskId, resolvedSprintId);
       }
       throw new HttpError(
         422,
@@ -870,17 +871,33 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
    * Injects a "Prior Run Context" section into the user prompt so subsequent runs skip
    * already-passing gates and continue from where the prior run left off rather than
    * re-reading the brief and starting from scratch.
+   *
+   * Falls back to the stable checkpoint file (written outside the git repo by
+   * checkpointCommitOnFailure) when the repo file is absent — this recovers prior
+   * context even when the checkpoint git commit failed (stash conflicts, push rejection).
    */
-  private async loadPriorRunContext(clonePath: string): Promise<string | null> {
-    const testResultsPath = path.join(
-      clonePath,
-      "project_work",
-      "ai_project_tasks",
-      "active",
-      "test_results.json"
-    );
+  private async loadPriorRunContext(
+    clonePath: string,
+    projectId?: string,
+    sprintBranch?: string
+  ): Promise<string | null> {
+    const repoPaths = [
+      path.join(clonePath, "project_work", "ai_project_tasks", "active", "test_results.json"),
+      ...(projectId && sprintBranch ? [this.stableCheckpointPath(projectId, sprintBranch)] : []),
+    ];
+
+    let raw: string | null = null;
+    for (const candidate of repoPaths) {
+      try {
+        raw = await fs.readFile(candidate, "utf-8");
+        break;
+      } catch {
+        // try next candidate
+      }
+    }
+    if (!raw) return null;
+
     try {
-      const raw = await fs.readFile(testResultsPath, "utf-8");
       const parsed = JSON.parse(raw) as {
         gate_results?: GateResult[];
         summary?: string;
@@ -962,6 +979,9 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
    * Allows the operator to review failure state locally (git checkout branch) and gives
    * the next run a clean starting point via the committed test_results.json.
    * Never throws — checkpoint failure must not mask the original error.
+   *
+   * Also writes a stable checkpoint JSON outside the git repo so loadPriorRunContext
+   * can recover prior gate state even when the git commit fails (e.g. stash conflicts).
    */
   private async checkpointCommitOnFailure(
     project: Project,
@@ -969,8 +989,36 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
     gateResults: GateResult[],
     writtenFiles: { path: string; action: string }[],
     stopReason: string,
-    context: ScriptExecutionContext
+    context: ScriptExecutionContext,
+    taskId: string = "unknown",
+    sprintId: string = "unknown"
   ): Promise<void> {
+    // ── Stable artifact (primary) ────────────────────────────────────────────
+    // Write test_results outside the git repo so loadPriorRunContext finds it
+    // even when the git commit fails (stash conflicts, push rejection, etc.).
+    try {
+      const stablePath = this.stableCheckpointPath(project.project_id, sprintBranch);
+      const latest = latestResultPerCommand(gateResults);
+      const summary =
+        latest.length > 0
+          ? latest.every((r) => r.exit_code === 0) ? "all_passed" : "failed"
+          : "no_gates_recorded";
+      const stablePayload = {
+        task_id: taskId,
+        sprint_id: sprintId,
+        executed_at: new Date().toISOString(),
+        stop_reason: stopReason,
+        gate_results: gateResults,
+        summary,
+      };
+      await fs.mkdir(path.dirname(stablePath), { recursive: true });
+      await fs.writeFile(stablePath, JSON.stringify(stablePayload, null, 2), "utf-8");
+      context.log("Implementer: stable checkpoint written", { path: stablePath, stop_reason: stopReason });
+    } catch (stableErr) {
+      context.log("Implementer: stable checkpoint write failed (best-effort)", { error: String(stableErr) });
+    }
+
+    // ── Git commit (secondary / operator visibility) ─────────────────────────
     try {
       const latest = latestResultPerCommand(gateResults);
       const passedCount = latest.filter((r) => r.exit_code === 0).length;
@@ -1014,6 +1062,17 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
         error: String(err),
       });
     }
+  }
+
+  /**
+   * Returns the absolute path to the stable checkpoint file for a project+branch.
+   * This file lives outside the git repo (in the artifact base dir) so it survives
+   * cleanWorkingTree and git-clean operations that would otherwise wipe an uncommitted
+   * test_results.json from the clone working tree.
+   */
+  private stableCheckpointPath(projectId: string, sprintBranch: string): string {
+    const key = `${projectId}-${sprintBranch.replace(/[^a-zA-Z0-9-]/g, "_")}`;
+    return path.join(config.artifactBasePath, "_checkpoints", `${key}.json`);
   }
 
   private formatMarkdown(

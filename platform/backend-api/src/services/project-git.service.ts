@@ -133,9 +133,34 @@ class ProjectGitService {
         try {
           this.git(project.clone_path, ["stash", "pop"]);
         } catch (stashErr) {
-          throw new Error(
-            `git: checkout recovery failed while reapplying local changes on ${branchName}: ${String(stashErr)}`
-          );
+          // Stash pop failed due to conflicts between the stashed implementer changes
+          // and the branch content.  Recovery: for each conflicted file accept the stash
+          // content ("theirs"), stage the resolution, then drop the stash entry.
+          // Untracked files stashed with -u (e.g. test_results.json) are already in the
+          // working tree from the partial application — they are not affected by this loop.
+          logger.warn("git: stash pop conflict; resolving by accepting stash content per file", {
+            project: project.name,
+            branch: branchName,
+          });
+          try {
+            const unmergedRaw = this.git(project.clone_path, ["diff", "--name-only", "--diff-filter=U"]);
+            const unmergedFiles = unmergedRaw.trim().split("\n").filter(Boolean);
+            for (const file of unmergedFiles) {
+              try {
+                this.git(project.clone_path, ["checkout", "--theirs", "--", file]);
+                this.git(project.clone_path, ["add", "--", file]);
+              } catch { /* best-effort: skip files that cannot be resolved individually */ }
+            }
+            this.git(project.clone_path, ["stash", "drop"]);
+          } catch (recoveryErr) {
+            // Even the per-file recovery failed.  Fall back to aborting the partial
+            // stash-pop with reset --merge so the clone is left in a clean state.
+            try { this.git(project.clone_path, ["reset", "--merge"]); } catch { /* best-effort */ }
+            try { this.git(project.clone_path, ["stash", "drop"]); } catch { /* best-effort */ }
+            throw new Error(
+              `git: checkout recovery failed while reapplying local changes on ${branchName}: ${String(stashErr)} / recovery: ${String(recoveryErr)}`
+            );
+          }
         }
       }
       this.git(project.clone_path, ["add", "-A"]);
@@ -338,6 +363,15 @@ class ProjectGitService {
       this.git(clonePath, ["diff", "--cached", "--quiet"]);
     } catch {
       logger.warn("git: dirty working tree detected; discarding local changes", { clonePath });
+      // Drop any stash entries accumulated from prior failed checkpoint commits.
+      // These are autostash entries created by commitAll's recovery path and are
+      // safe to discard since they represent in-progress work that failed to commit.
+      try { this.git(clonePath, ["stash", "clear"]); } catch { /* best-effort */ }
+      // Clear any unresolved merge / stash-pop conflict state from the index.
+      // git reset --mixed HEAD resets the index to HEAD without touching the working
+      // tree, so a subsequent `checkout -- .` can proceed without
+      // "error: path '...' is unmerged".
+      try { this.git(clonePath, ["reset", "--mixed", "HEAD"]); } catch { /* best-effort */ }
       this.git(clonePath, ["checkout", "--", "."]);
       this.git(clonePath, ["clean", "-fd"]);
     }

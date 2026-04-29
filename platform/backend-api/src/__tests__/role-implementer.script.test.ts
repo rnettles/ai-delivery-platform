@@ -658,6 +658,57 @@ describe("ImplementerScript gate execution and role boundaries", () => {
       expect.stringContaining("[MAX_ITERATIONS]")
     );
     expect(mocks.push).toHaveBeenCalled();
+    // Stable checkpoint written so next run loads prior context even if git commit fails.
+    const writeFileMock = fs.writeFile as unknown as ReturnType<typeof vi.fn>;
+    const stableWrite = (writeFileMock.mock.calls as Array<[string, string, string]>).find(
+      ([p]) => typeof p === "string" && p.includes("_checkpoints")
+    );
+    expect(stableWrite).toBeDefined();
+    const stablePayload = JSON.parse(stableWrite![1]);
+    expect(stablePayload).toMatchObject({ task_id: "S04-001", stop_reason: "MAX_ITERATIONS" });
+  });
+
+  it("prior-run context: reads from stable checkpoint when repo file is absent", async () => {
+    // Stable checkpoint has a prior failing gate result
+    const stableContent = JSON.stringify({
+      task_id: "S04-001",
+      sprint_id: "SPR-4",
+      executed_at: "2024-01-01T00:00:00.000Z",
+      stop_reason: "MAX_ITERATIONS",
+      gate_results: [{ command: "npm test", exit_code: 1, stdout: "", stderr: "test failed", timestamp: "2024-01-01T00:00:00.000Z" }],
+      summary: "failed",
+    });
+
+    const readFileMock = fs.readFile as unknown as ReturnType<typeof vi.fn>;
+    readFileMock.mockImplementation(async (filePath: string) => {
+      // Stable checkpoint contains "_checkpoints" in path; repo file does not exist
+      if (typeof filePath === "string" && filePath.includes("_checkpoints")) {
+        return stableContent;
+      }
+      throw new Error("not found");
+    });
+
+    let capturedUserContent: string | null = null;
+    mocks.chatWithTools.mockImplementation(
+      async (
+        messages: Array<{ role: string; content: string }>,
+        _tools: unknown,
+        exec: (call: { name: string; arguments: Record<string, unknown> }) => Promise<string>
+      ) => {
+        capturedUserContent = messages.find((m) => m.role === "user")?.content ?? null;
+        await exec({ name: "finish", arguments: { task_id: "S04-001", sprint_id: "SPR-4", summary: "Done", files_changed: "[]" } });
+      }
+    );
+
+    const script = new ImplementerScript();
+    await script.run(
+      { pipeline_id: "pipe-4", previous_artifacts: ["artifacts/AI_IMPLEMENTATION_BRIEF.md", "artifacts/current_task.json", "artifacts/sprint_plan_spr_4.md"] },
+      makeContext()
+    );
+
+    // Prior context should be injected from stable checkpoint path
+    expect(capturedUserContent).toContain("Prior Run Context");
+    expect(capturedUserContent).toContain("MAX_ITERATIONS");
   });
 
   it("gate success via run_command records results in test_results.json (Phase 4.2)", async () => {
