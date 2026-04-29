@@ -67,7 +67,15 @@ class ProjectGitService {
       logger.info("git: creating branch", { project: project.name, branch: branchName });
       this.checkoutWithIndexRecovery(project.clone_path, project.default_branch, project.name);
       this.git(project.clone_path, ["pull", "--ff-only"]);
-      this.git(project.clone_path, ["fetch", "origin"]);
+      // Fetch the specific branch by name so shallow clones with a narrow refspec
+      // (+refs/heads/main:refs/remotes/origin/main) still populate the remote ref
+      // for branchExistsRemote() and, if the branch already exists, for --track checkout.
+      // Tolerate failure (the branch may not exist yet on origin).
+      try {
+        this.git(project.clone_path, ["fetch", "origin", branchName]);
+      } catch {
+        // branch doesn't exist on origin yet — that's the expected path for a new branch
+      }
 
       if (this.branchExistsRemote(project.clone_path, branchName)) {
         // Branch already exists on origin — adopt it so re-runs are idempotent.
@@ -99,12 +107,21 @@ class ProjectGitService {
   /**
    * Check out an existing local or remote branch without creating a new one.
    * Caller must have called ensureReady() first.
+   *
+   * Uses an explicit `git fetch origin <branch>` so that shallow clones with a
+   * narrow refspec (fetch = +refs/heads/main:refs/remotes/origin/main) still
+   * retrieve the sprint branch. `git fetch origin` without a refspec argument
+   * only fetches what the config's fetch line covers, which for a --depth 1 clone
+   * is main only.
+   *
+   * Then `git checkout -B <branch> FETCH_HEAD` creates the local branch (or resets
+   * it if it already exists) to exactly the remote commit, so re-runs are idempotent.
    */
   async checkoutBranch(project: Project, branchName: string): Promise<void> {
     return this.withLock(project.project_id, () => {
       logger.info("git: checking out existing branch", { project: project.name, branch: branchName });
-      this.git(project.clone_path, ["fetch", "origin"]);
-      this.git(project.clone_path, ["checkout", branchName]);
+      this.git(project.clone_path, ["fetch", "origin", branchName]);
+      this.git(project.clone_path, ["checkout", "-B", branchName, "FETCH_HEAD"]);
     });
   }
 
