@@ -124,6 +124,7 @@ export async function createPipeline(req: Request, res: Response, next: NextFunc
     const run = await pipelineService.create({
       entry_point: entryPoint,
       execution_mode: body.execution_mode,
+      sprint_branch: body.sprint_branch,
       input: body.input ?? {},
       metadata: body.metadata ?? {},
     });
