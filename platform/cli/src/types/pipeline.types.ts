@@ -238,6 +238,8 @@ export interface CreatePipelineRequest {
   execution_mode?: PipelineMode;
   input?: Record<string, unknown>;
   metadata?: Partial<PipelineSlackMetadata> & Record<string, unknown>;
+  /** Sprint branch to checkout before running the entry role. Required when entry_point is verifier. */
+  sprint_branch?: string;
 }
 
 export interface HealthResponse {

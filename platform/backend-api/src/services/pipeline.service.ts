@@ -721,6 +721,7 @@ export class PipelineService {
         input: (req.input ?? {}) as Record<string, unknown>,
         implementer_attempts: 0,
         project_id: projectId,
+        sprint_branch: req.sprint_branch ?? null,
         created_at: new Date(),
         updated_at: new Date(),
       })

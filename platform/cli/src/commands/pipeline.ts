@@ -61,6 +61,7 @@ export function registerPipelineCommands(program: Command): void {
     .description("Create and start a new pipeline (auto-sets active pipeline_id on success)")
     .option("--entry-point <role>", "Entry point: planner|sprint-controller|implementer|verifier", "planner")
     .option("--execution-mode <mode>", "next|next-flow|full-sprint")
+    .option("--sprint-branch <branch>", "Sprint branch to checkout before running (required for verifier)")
     .option("--description <text>", "Pipeline description")
     .option("--slack-channel <id>", "Slack channel ID")
     .option("--actor <name>", "Actor name", "operator")
@@ -91,6 +92,7 @@ export function registerPipelineCommands(program: Command): void {
           metadata,
         };
         if (opts.executionMode) req.execution_mode = opts.executionMode;
+        if (opts.sprintBranch) req.sprint_branch = opts.sprintBranch;
         body = req;
       }
 
