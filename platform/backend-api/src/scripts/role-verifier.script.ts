@@ -85,6 +85,8 @@ export interface VerificationResult {
   /** REV-002: full 10-check ordered evidence record */
   checks: VerificationCheck[];
   verified_at: string;
+  /** Phase 7.1: FAIL handoff included in persisted JSON for machine-readable Fixer/Sprint Controller consumption (REV-003). */
+  handoff?: HandoffContract;
 }
 
 interface CommandResult {
@@ -137,6 +139,8 @@ export interface VerifierOutput {
   verification_result_path: string;
   artifact_path: string;
   handoff?: HandoffContract;
+  /** Phase 8.2: canonical active brief path carried in output for PTH-005 downstream evidence compliance. */
+  brief_path?: string;
 }
 
 interface Artifact {
@@ -308,12 +312,15 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
 
     let handoff: HandoffContract | undefined;
     if (!passed) {
-      handoff = this.buildFailHandoff(taskId, failedChecks, governanceResult.handoff);
+      // Phase 8.2: pass canonical active brief path so evidence_refs meets PTH-005
+      handoff = this.buildFailHandoff(taskId, failedChecks, governanceResult.handoff, CANONICAL_ACTIVE_BRIEF_PATH);
     }
 
     const verifiedAt = new Date().toISOString();
 
     // ── REV-003: write verification_result.json ───────────────────────────────
+    // Phase 7.1: handoff included in JSON so downstream agents have one canonical
+    // machine-readable truth (no separate markdown parsing required).
     const verificationResult: VerificationResult = {
       task_id: taskId,
       result: passed ? "PASS" : "FAIL",
@@ -322,6 +329,7 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
       command_results: commandResults,
       checks,
       verified_at: verifiedAt,
+      ...(handoff ? { handoff } : {}),
     };
     const verificationResultPath = await artifactService.write(
       pipelineId,
@@ -329,8 +337,9 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
       JSON.stringify(verificationResult, null, 2)
     );
 
-    // Write human-readable markdown summary
-    const artifactContent = this.formatMarkdown(verificationResult, handoff);
+    // Write human-readable markdown summary — Phase 7.3: derived from same verificationResult
+    // object as JSON so both outputs are always consistent (no separate data source).
+    const artifactContent = this.formatMarkdown(verificationResult, handoff, CANONICAL_ACTIVE_BRIEF_PATH);
     const artifactPath = await artifactService.write(
       pipelineId,
       "verification_result.md",
@@ -370,6 +379,8 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
       verification_result_path: verificationResultPath,
       artifact_path: artifactPath,
       handoff,
+      // Phase 8.2: canonical active brief path in output for downstream PTH-005 compliance
+      brief_path: CANONICAL_ACTIVE_BRIEF_PATH,
     } as VerifierOutput;
   }
 
@@ -452,6 +463,7 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
       evidence_refs: missing.map((m) => `required-input:${m}`),
     };
 
+    // Phase 7.1: include handoff in JSON so machine-readable contract is complete (REV-003)
     const verificationResult: VerificationResult = {
       task_id: taskId,
       result: "FAIL",
@@ -460,6 +472,7 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
       command_results: [],
       checks,
       verified_at: verifiedAt,
+      handoff,
     };
 
     const verificationResultPath = await artifactService.write(
@@ -467,6 +480,7 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
       "verification_result.json",
       JSON.stringify(verificationResult, null, 2)
     );
+    // Phase 7.3: brief_path omitted here — brief was not found (REV-001 gate)
     const artifactPath = await artifactService.write(
       pipelineId,
       "verification_result.md",
@@ -886,11 +900,13 @@ Be precise and evidence-based. Reference specific artifact content in evidence f
   private buildFailHandoff(
     taskId: string,
     failedChecks: VerificationCheck[],
-    llmHandoff?: HandoffContract
+    llmHandoff?: HandoffContract,
+    /** Phase 8.2: canonical active brief path to include in evidence_refs (PTH-005). */
+    briefPath?: string
   ): HandoffContract {
-    const deterministicRefs = failedChecks.map(
-      (c) => `check-${c.check_number}:${c.check_name}`
-    );
+    const checkRefs = failedChecks.map((c) => `check-${c.check_number}:${c.check_name}`);
+    // Phase 8.2: PTH-005 — canonical active brief path must be first in deterministic refs
+    const deterministicRefs: string[] = briefPath ? [briefPath, ...checkRefs] : checkRefs;
 
     const baseHandoff: HandoffContract = llmHandoff ?? {
       changed_scope: [],
@@ -906,8 +922,8 @@ Be precise and evidence-based. Reference specific artifact content in evidence f
         ? baseHandoff.open_risks
         : failedChecks.map((c) => c.failure_detail ?? c.evidence);
 
-    // Merge deterministic refs with LLM refs; ensure non-empty (HND-003)
-    const mergedRefs = dedup([...(baseHandoff.evidence_refs ?? []), ...deterministicRefs]);
+    // Merge deterministic refs (canonical path first) with LLM refs; ensure non-empty (HND-003)
+    const mergedRefs = dedup([...deterministicRefs, ...(baseHandoff.evidence_refs ?? [])]);
     return {
       ...baseHandoff,
       task_id: taskId,
@@ -1041,11 +1057,12 @@ Be precise and evidence-based. Reference specific artifact content in evidence f
     }
   }
 
-  private formatMarkdown(result: VerificationResult, handoff?: HandoffContract): string {
+  private formatMarkdown(result: VerificationResult, handoff?: HandoffContract, briefPath?: string): string {
     const corrections =
       result.required_corrections.length > 0
         ? result.required_corrections.map((c) => `- ${c}`).join("\n")
         : "None — all acceptance criteria met.";
+    const briefPathLine = briefPath ? `\n**Brief path:** \`${briefPath}\`` : "";
 
     const commandSection = result.command_results
       .map((r) => `- [${r.ok ? "PASS" : "FAIL"}] \`${r.command}\` (exit=${r.exit_code})`)
@@ -1066,7 +1083,7 @@ Be precise and evidence-based. Reference specific artifact content in evidence f
 
 ## Status: ${result.result}
 
-**Verified at:** ${result.verified_at}
+**Verified at:** ${result.verified_at}${briefPathLine}
 
 ## Summary
 ${result.summary}
@@ -1089,6 +1106,11 @@ ${handoffSection}
 // ─────────────────────────────────────────────────────────────────────────────
 // Module-level constants (REV-002 check catalogue)
 // ─────────────────────────────────────────────────────────────────────────────
+
+// Phase 8.2: PTH-005 — canonical active brief path for evidence_refs in FAIL handoffs
+const CANONICAL_ACTIVE_BRIEF_PATH = path.join(
+  "project_work", "ai_project_tasks", "active", "AI_IMPLEMENTATION_BRIEF.md"
+);
 
 const REV002_CHECK_NAMES: { name: string; category: "command" | "governance" | "filesystem" }[] = [
   { name: "task_id_alignment",                category: "filesystem" },  // 1

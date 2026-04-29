@@ -1150,3 +1150,405 @@ describe("Suite 7 (Phase 6): Task-flag structural parsing", () => {
     expect(userMsg.content).toContain("fr_ids_in_scope");
   });
 });
+
+// ─── Suite 8 (Phase 7): Output contract schema completeness ───────────────────
+
+const CANONICAL_BRIEF = path.join("project_work", "ai_project_tasks", "active", "AI_IMPLEMENTATION_BRIEF.md");
+
+describe("Suite 8 (Phase 7): Output contract schema \u2014 REV-003 completeness", () => {
+  const script = new VerifierScript();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setupCommonMocks();
+    setupAllInputsPresent();
+  });
+
+  it("8.1 \u2014 verification_result.json has all REV-003 required fields on PASS", async () => {
+    mockCommandsPass();
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
+
+    const ctx = makeContext();
+    await script.run({
+      previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
+      pipeline_id: PIPELINE_ID,
+    }, ctx);
+
+    const wroteJson = mocks.write.mock.calls.find(([, name]: string[]) => name === "verification_result.json");
+    const written = JSON.parse(wroteJson![2] as string) as VerificationResult;
+    // REV-003 mandatory fields
+    expect(written).toHaveProperty("task_id");
+    expect(written).toHaveProperty("result");
+    expect(written).toHaveProperty("summary");
+    expect(written).toHaveProperty("required_corrections");
+    expect(written).toHaveProperty("verified_at");
+    expect(written).toHaveProperty("checks");
+    // PASS: no handoff in JSON
+    expect(written.handoff).toBeUndefined();
+  });
+
+  it("8.2 \u2014 verification_result.json includes handoff on FAIL (Phase 7.1 REV-003 completeness)", async () => {
+    mockCommandFail();
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
+
+    const ctx = makeContext();
+    await script.run({
+      previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
+      pipeline_id: PIPELINE_ID,
+    }, ctx);
+
+    const wroteJson = mocks.write.mock.calls.find(([, name]: string[]) => name === "verification_result.json");
+    const written = JSON.parse(wroteJson![2] as string) as VerificationResult;
+    expect(written.result).toBe("FAIL");
+    // Phase 7.1: handoff must be embedded in JSON for machine-readable Fixer consumption
+    expect(written.handoff).toBeDefined();
+    expect(written.handoff!.verification_state).toBe("fail");
+  });
+
+  it("8.3 \u2014 JSON result and markdown status are consistent on PASS (Phase 7.3)", async () => {
+    mockCommandsPass();
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
+
+    const ctx = makeContext();
+    await script.run({
+      previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
+      pipeline_id: PIPELINE_ID,
+    }, ctx);
+
+    const wroteJson = mocks.write.mock.calls.find(([, name]: string[]) => name === "verification_result.json");
+    const wroteMd = mocks.write.mock.calls.find(([, name]: string[]) => name === "verification_result.md");
+    const written = JSON.parse(wroteJson![2] as string) as VerificationResult;
+    const markdown = wroteMd![2] as string;
+    // Both must agree on PASS
+    expect(written.result).toBe("PASS");
+    expect(markdown).toContain("## Status: PASS");
+  });
+
+  it("8.4 \u2014 JSON result and markdown status are consistent on FAIL (Phase 7.3)", async () => {
+    mockCommandFail();
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
+
+    const ctx = makeContext();
+    await script.run({
+      previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
+      pipeline_id: PIPELINE_ID,
+    }, ctx);
+
+    const wroteJson = mocks.write.mock.calls.find(([, name]: string[]) => name === "verification_result.json");
+    const wroteMd = mocks.write.mock.calls.find(([, name]: string[]) => name === "verification_result.md");
+    const written = JSON.parse(wroteJson![2] as string) as VerificationResult;
+    const markdown = wroteMd![2] as string;
+    // Both must agree on FAIL
+    expect(written.result).toBe("FAIL");
+    expect(markdown).toContain("## Status: FAIL");
+    // Markdown must include handoff section on FAIL
+    expect(markdown).toContain("## Handoff Contract");
+  });
+
+  it("8.5 \u2014 VerifierOutput.brief_path is set to canonical active brief path on PASS", async () => {
+    mockCommandsPass();
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
+
+    const ctx = makeContext();
+    const result = await script.run({
+      previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
+      pipeline_id: PIPELINE_ID,
+    }, ctx) as VerifierOutput;
+
+    expect(result.brief_path).toBeDefined();
+    expect(result.brief_path).toContain("AI_IMPLEMENTATION_BRIEF.md");
+    expect(result.brief_path).toContain("active");
+  });
+
+  it("8.6 \u2014 VerifierOutput.brief_path is set to canonical path on FAIL", async () => {
+    mockCommandFail();
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
+
+    const ctx = makeContext();
+    const result = await script.run({
+      previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
+      pipeline_id: PIPELINE_ID,
+    }, ctx) as VerifierOutput;
+
+    expect(result.passed).toBe(false);
+    expect(result.brief_path).toBeDefined();
+    expect(result.brief_path).toContain("AI_IMPLEMENTATION_BRIEF.md");
+  });
+
+  it("8.7 \u2014 REV-001 gate fail: brief_path absent in VerifierOutput (brief was not found)", async () => {
+    mocks.findFirst.mockResolvedValue(null);
+    mocks.access.mockRejectedValue(new Error("ENOENT"));
+
+    const ctx = makeContext();
+    const result = await script.run({ previous_artifacts: [], pipeline_id: PIPELINE_ID }, ctx) as VerifierOutput;
+
+    expect(result.passed).toBe(false);
+    // brief was not found — brief_path must not be set (no false confidence about brief location)
+    expect(result.brief_path).toBeUndefined();
+  });
+
+  it("8.8 \u2014 markdown includes brief_path on normal run (Phase 7.3 single-truth)", async () => {
+    mockCommandsPass();
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
+
+    const ctx = makeContext();
+    await script.run({
+      previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
+      pipeline_id: PIPELINE_ID,
+    }, ctx);
+
+    const wroteMd = mocks.write.mock.calls.find(([, name]: string[]) => name === "verification_result.md");
+    const markdown = wroteMd![2] as string;
+    expect(markdown).toContain("AI_IMPLEMENTATION_BRIEF.md");
+  });
+});
+
+// ─── Suite 9 (Phase 8): Active-slot and path invariant compliance ─────────────
+
+describe("Suite 9 (Phase 8): Active-slot and path invariant compliance \u2014 PTH-002/PTH-005", () => {
+  const script = new VerifierScript();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setupCommonMocks();
+    setupAllInputsPresent();
+  });
+
+  it("9.1 \u2014 FAIL handoff evidence_refs includes canonical active brief path (PTH-005) \u2014 command fail", async () => {
+    mockCommandFail();
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
+
+    const ctx = makeContext();
+    const result = await script.run({
+      previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
+      pipeline_id: PIPELINE_ID,
+    }, ctx) as VerifierOutput;
+
+    expect(result.passed).toBe(false);
+    expect(result.handoff!.evidence_refs).toContain(CANONICAL_BRIEF);
+  });
+
+  it("9.2 \u2014 FAIL handoff evidence_refs includes canonical active brief path (PTH-005) \u2014 governance fail", async () => {
+    mockCommandsPass();
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_FAIL_RESPONSE);
+
+    const ctx = makeContext();
+    const result = await script.run({
+      previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
+      pipeline_id: PIPELINE_ID,
+    }, ctx) as VerifierOutput;
+
+    expect(result.passed).toBe(false);
+    expect(result.handoff!.evidence_refs).toContain(CANONICAL_BRIEF);
+  });
+
+  it("9.3 \u2014 FAIL handoff evidence_refs includes canonical brief path (PTH-005) \u2014 UX gate fail", async () => {
+    const uiBrief = BRIEF_CONTENT.replace("**ui_evidence_required:** false", "**ui_evidence_required:** true");
+    mocks.findFirst.mockImplementation((paths: string[]) => {
+      if (paths.some((p: string) => p.includes("AI_IMPLEMENTATION_BRIEF")))
+        return Promise.resolve({ path: "/artifacts/AI_IMPLEMENTATION_BRIEF.md", content: uiBrief });
+      if (paths.some((p: string) => p.includes("current_task")))
+        return Promise.resolve({ path: "/artifacts/current_task.json", content: TASK_CONTENT });
+      if (paths.some((p: string) => p.includes("test_results")))
+        return Promise.resolve({ path: "/artifacts/test_results.json", content: TEST_RESULTS_CONTENT });
+      return Promise.resolve(null);
+    });
+    mockCommandsPass();
+    mocks.readFile.mockRejectedValue(new Error("ENOENT"));
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
+
+    const ctx = makeContext();
+    const result = await script.run({
+      previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
+      pipeline_id: PIPELINE_ID,
+    }, ctx) as VerifierOutput;
+
+    expect(result.passed).toBe(false);
+    expect(result.handoff!.evidence_refs).toContain(CANONICAL_BRIEF);
+  });
+
+  it("9.4 \u2014 canonical brief path is first entry in evidence_refs (PTH-005 precedence)", async () => {
+    mockCommandFail();
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
+
+    const ctx = makeContext();
+    const result = await script.run({
+      previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
+      pipeline_id: PIPELINE_ID,
+    }, ctx) as VerifierOutput;
+
+    expect(result.passed).toBe(false);
+    expect(result.handoff!.evidence_refs[0]).toBe(CANONICAL_BRIEF);
+  });
+
+  it("9.5 \u2014 REV-001 gate fail does NOT include canonical brief path in evidence_refs", async () => {
+    mocks.findFirst.mockResolvedValue(null);
+    mocks.access.mockRejectedValue(new Error("ENOENT"));
+
+    const ctx = makeContext();
+    const result = await script.run({ previous_artifacts: [], pipeline_id: PIPELINE_ID }, ctx) as VerifierOutput;
+
+    expect(result.passed).toBe(false);
+    // Brief was not found — evidence_refs should use required-input:* refs, not canonical path
+    expect(result.handoff!.evidence_refs).not.toContain(CANONICAL_BRIEF);
+  });
+
+  it("9.6 \u2014 verification_result.json is written to active-slot directory (PTH-002)", async () => {
+    mockCommandsPass();
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
+
+    const ctx = makeContext();
+    await script.run({
+      previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
+      pipeline_id: PIPELINE_ID,
+    }, ctx);
+
+    expect(mocks.writeFile).toHaveBeenCalledWith(
+      expect.stringContaining(path.join("project_work", "ai_project_tasks", "active", "verification_result.json")),
+      expect.any(String),
+      "utf-8"
+    );
+  });
+
+  it("9.7 \u2014 verification_result.json committed to repo active-slot also contains handoff on FAIL", async () => {
+    mockCommandFail();
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
+
+    const ctx = makeContext();
+    await script.run({
+      previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
+      pipeline_id: PIPELINE_ID,
+    }, ctx);
+
+    const writeFileCall = mocks.writeFile.mock.calls.find(([p]: string[]) =>
+      p.includes("verification_result.json")
+    );
+    expect(writeFileCall).toBeDefined();
+    const repoWritten = JSON.parse(writeFileCall![1] as string) as VerificationResult;
+    // Phase 7.1: handoff embedded in repo JSON too
+    expect(repoWritten.handoff).toBeDefined();
+    expect(repoWritten.handoff!.verification_state).toBe("fail");
+  });
+});
+
+// ─── Suite 10 (Phase 9.4): Orchestration compatibility ───────────────────────
+
+describe("Suite 10 (Phase 9.4): Orchestration compatibility \u2014 FSP-001, FIX-001, FLT-003", () => {
+  const script = new VerifierScript();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setupCommonMocks();
+    setupAllInputsPresent();
+  });
+
+  it("10.1 \u2014 PASS output includes verification_result_path consumable by sprint-controller (FSP-001)", async () => {
+    mockCommandsPass();
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
+
+    const ctx = makeContext();
+    const result = await script.run({
+      previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
+      pipeline_id: PIPELINE_ID,
+    }, ctx) as VerifierOutput;
+
+    expect(result.passed).toBe(true);
+    expect(typeof result.verification_result_path).toBe("string");
+    expect(result.verification_result_path).toContain("verification_result.json");
+    // Sprint controller must be able to gate on passed=true
+    expect(result.passed).toBe(true);
+  });
+
+  it("10.2 \u2014 FAIL output.handoff is machine-parseable for fixer consumption (FIX-001)", async () => {
+    mockCommandFail();
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
+
+    const ctx = makeContext();
+    const result = await script.run({
+      previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
+      pipeline_id: PIPELINE_ID,
+    }, ctx) as VerifierOutput;
+
+    expect(result.passed).toBe(false);
+    // Fixer reads handoff.verification_state and handoff.evidence_refs
+    expect(result.handoff!.verification_state).toBe("fail");
+    expect(Array.isArray(result.handoff!.evidence_refs)).toBe(true);
+    expect(Array.isArray(result.handoff!.required_corrections ?? result.handoff!.open_risks)).toBe(true);
+  });
+
+  it("10.3 \u2014 VerifierOutput.passed is a deterministic boolean on all paths", async () => {
+    // PASS
+    mockCommandsPass();
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
+    const passResult = await script.run({
+      previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
+      pipeline_id: PIPELINE_ID,
+    }, makeContext()) as VerifierOutput;
+    expect(typeof passResult.passed).toBe("boolean");
+    expect(passResult.passed).toBe(true);
+
+    vi.clearAllMocks();
+    setupCommonMocks();
+    setupAllInputsPresent();
+
+    // FAIL
+    mockCommandFail();
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
+    const failResult = await script.run({
+      previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
+      pipeline_id: PIPELINE_ID,
+    }, makeContext()) as VerifierOutput;
+    expect(typeof failResult.passed).toBe("boolean");
+    expect(failResult.passed).toBe(false);
+  });
+
+  it("10.4 \u2014 handoff.next_role_action is one of allowed values on FAIL (FLT-003 compatible)", async () => {
+    mockCommandFail();
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
+
+    const ctx = makeContext();
+    const result = await script.run({
+      previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
+      pipeline_id: PIPELINE_ID,
+    }, ctx) as VerifierOutput;
+
+    const ALLOWED_ACTIONS = ["implementer_retry", "none", "escalate"];
+    expect(ALLOWED_ACTIONS).toContain(result.handoff!.next_role_action);
+  });
+
+  it("10.5 \u2014 VerifierOutput schema is complete on FAIL: all required fields present", async () => {
+    mockCommandFail();
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
+
+    const ctx = makeContext();
+    const result = await script.run({
+      previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
+      pipeline_id: PIPELINE_ID,
+    }, ctx) as VerifierOutput;
+
+    // All VerifierOutput fields must be present
+    expect(result).toHaveProperty("task_id");
+    expect(result).toHaveProperty("passed");
+    expect(result).toHaveProperty("verification_result_path");
+    expect(result).toHaveProperty("artifact_path");
+    expect(result).toHaveProperty("handoff");
+    expect(result).toHaveProperty("brief_path");
+  });
+
+  it("10.6 \u2014 PASS does not emit handoff \u2014 sprint-controller does not mis-interpret as FAIL", async () => {
+    mockCommandsPass();
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
+
+    const ctx = makeContext();
+    const result = await script.run({
+      previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
+      pipeline_id: PIPELINE_ID,
+    }, ctx) as VerifierOutput;
+
+    // Sprint controller keys on passed=true AND absence of FAIL handoff
+    expect(result.passed).toBe(true);
+    expect(result.handoff).toBeUndefined();
+    // brief_path still present on PASS (Phase 8.2)
+    expect(result.brief_path).toBeDefined();
+  });
+});
