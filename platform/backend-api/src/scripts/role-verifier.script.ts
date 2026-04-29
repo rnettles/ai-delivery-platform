@@ -412,19 +412,33 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
   ): Promise<RequiredInputsResult> {
     const missing: string[] = [];
 
+    // When the verifier is the pipeline entry point, previousArtifacts is [] and the
+    // artifact store has nothing. Fall back to the canonical active-slot paths in the
+    // git clone (written there by the implementer on the sprint branch).
+    const ACTIVE_SLOT = path.join("project_work", "ai_project_tasks", "active");
+    const repoFallback = async (filename: string): Promise<{ path: string; content: string } | null> => {
+      const absPath = path.join(repoPath, ACTIVE_SLOT, filename);
+      try {
+        const content = await fs.readFile(absPath, "utf-8");
+        return { path: absPath, content };
+      } catch {
+        return null;
+      }
+    };
+
     const brief = await artifactService.findFirst(
       previousArtifacts.filter((p) => p.includes("AI_IMPLEMENTATION_BRIEF"))
-    );
+    ) ?? await repoFallback("AI_IMPLEMENTATION_BRIEF.md");
     if (!brief) missing.push("AI_IMPLEMENTATION_BRIEF.md");
 
     const task = await artifactService.findFirst(
       previousArtifacts.filter((p) => p.includes("current_task"))
-    );
+    ) ?? await repoFallback("current_task.json");
     if (!task) missing.push("current_task.json");
 
     const testResults = await artifactService.findFirst(
       previousArtifacts.filter((p) => p.includes("test_results"))
-    );
+    ) ?? await repoFallback("test_results.json");
     if (!testResults) missing.push("test_results.json");
 
     // AI_RULES.md must exist on the project repo filesystem

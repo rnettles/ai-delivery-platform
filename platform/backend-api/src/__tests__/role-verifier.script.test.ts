@@ -209,6 +209,9 @@ function setupCommonMocks() {
   mocks.commitAll.mockResolvedValue(undefined);
   mocks.checkoutBranch.mockResolvedValue(undefined);
   mocks.push.mockResolvedValue(undefined);
+  // By default readFile throws ENOENT so the active-slot fallback in enforceRequiredInputs
+  // does not accidentally succeed when a file is intentionally absent in a test.
+  mocks.readFile.mockRejectedValue(Object.assign(new Error("ENOENT"), { code: "ENOENT" }));
   // AI_RULES.md present by default
   mocks.access.mockResolvedValue(undefined);
 }
