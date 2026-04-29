@@ -409,18 +409,44 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       previousArtifacts.filter((p) => p.includes("current_task.json"))
     );
 
+    if (!currentTaskArtifact?.content) {
+      throw new HttpError(
+        409,
+        "MISSING_TASK_CONTEXT",
+        "Sprint Controller close-out requires current_task.json from the active task package.",
+      );
+    }
+
+    const implementationArtifact = await artifactService.findFirst(
+      previousArtifacts.filter((p) => p.includes("implementation_summary"))
+    );
+    if (!implementationArtifact?.path) {
+      throw new HttpError(
+        409,
+        "MISSING_IMPLEMENTATION_ARTIFACT",
+        "Sprint Controller close-out requires implementation_summary.md from Implementer before task closure.",
+      );
+    }
+
     const sprintPlanArtifact = await artifactService.findFirst(
       previousArtifacts.filter((p) => p.includes("sprint_plan_"))
     );
 
     let currentTaskId: string | undefined;
-    if (currentTaskArtifact?.content) {
-      try {
-        const parsed = JSON.parse(currentTaskArtifact.content) as { task_id?: string };
-        currentTaskId = parsed.task_id;
-      } catch {
-        // Non-fatal: keep fallback from verification task id.
-      }
+    try {
+      const parsed = JSON.parse(currentTaskArtifact.content) as { task_id?: string };
+      currentTaskId = parsed.task_id;
+    } catch {
+      throw new HttpError(409, "INVALID_TASK_CONTEXT", "current_task.json is not valid JSON.");
+    }
+
+    if (!currentTaskId || !verification.task_id || verification.task_id !== currentTaskId) {
+      throw new HttpError(
+        409,
+        "VERIFICATION_TASK_MISMATCH",
+        "Verifier PASS does not match the active task context; Sprint Controller will not close the task.",
+        { verification_task_id: verification.task_id, current_task_id: currentTaskId }
+      );
     }
 
     const sprintCompleteArtifacts = [

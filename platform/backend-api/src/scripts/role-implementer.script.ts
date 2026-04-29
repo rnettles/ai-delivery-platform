@@ -33,6 +33,8 @@ export interface ImplementerOutput {
   pr_number?: number;
   pr_url?: string;
   artifact_path: string;
+  current_task_path?: string;
+  artifact_paths?: string[];
 }
 
 interface ArtifactContextFile {
@@ -416,11 +418,19 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       artifactContent
     );
 
+    const updatedTask = this.buildUpdatedTaskArtifact(taskArtifact?.content, finishPayload, artifactPath);
+    const currentTaskPath = await artifactService.write(
+      pipelineId,
+      "current_task.json",
+      JSON.stringify(updatedTask, null, 2)
+    );
+
     context.log("Implementer complete", {
       task_id: finishPayload.task_id,
       files_changed: finishPayload.files_changed.length,
       commit_sha: commitSha,
       artifact_path: artifactPath,
+      current_task_path: currentTaskPath,
     });
 
     return {
@@ -429,7 +439,45 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       pr_number: prNumber,
       pr_url: prUrl,
       artifact_path: artifactPath,
+      current_task_path: currentTaskPath,
+      artifact_paths: [artifactPath, currentTaskPath],
     } satisfies ImplementerOutput;
+  }
+
+  private buildUpdatedTaskArtifact(
+    existingTaskJson: string | undefined,
+    finishPayload: { task_id: string; summary: string; files_changed: FileChange[] },
+    implementationSummaryPath: string
+  ): Record<string, unknown> {
+    let base: Record<string, unknown> = {
+      task_id: finishPayload.task_id,
+      title: finishPayload.summary.split(/\n/)[0].trim() || "Implementation complete",
+      description: finishPayload.summary,
+      assigned_to: "implementer",
+      status: "implemented",
+      artifacts: [],
+    };
+
+    if (existingTaskJson) {
+      try {
+        const parsed = JSON.parse(existingTaskJson) as Record<string, unknown>;
+        base = { ...parsed };
+      } catch {
+        // ignore malformed task context and use synthesized fallback
+      }
+    }
+
+    const existingArtifacts = Array.isArray(base.artifacts)
+      ? (base.artifacts as unknown[]).filter((x): x is string => typeof x === "string")
+      : [];
+    const nextArtifacts = Array.from(new Set([...existingArtifacts, implementationSummaryPath]));
+
+    return {
+      ...base,
+      task_id: finishPayload.task_id,
+      status: "implemented",
+      artifacts: nextArtifacts,
+    };
   }
 
   /**

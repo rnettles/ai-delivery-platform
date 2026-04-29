@@ -191,4 +191,97 @@ Implement brand tokens.
     expect((output as { sprint_id: string; first_task: { task_id: string } }).sprint_id).toBe("S01");
     expect((output as { first_task: { task_id: string } }).first_task.task_id).toBe("S01-001");
   });
+
+  it("rejects close-out when verifier PASS task_id does not match current task", async () => {
+    mocks.findFirst.mockImplementation(async (paths: string[]) => {
+      if (paths.some((p) => p.includes("verification_result.json"))) {
+        return {
+          path: "artifacts/verification_result.json",
+          content: JSON.stringify({ result: "PASS", task_id: "S01-999", summary: "ok" }),
+        };
+      }
+      if (paths.some((p) => p.includes("current_task.json"))) {
+        return {
+          path: "artifacts/current_task.json",
+          content: JSON.stringify({ task_id: "S01-001" }),
+        };
+      }
+      if (paths.some((p) => p.includes("implementation_summary"))) {
+        return {
+          path: "artifacts/implementation_summary.md",
+          content: "# Implementation Summary",
+        };
+      }
+      if (paths.some((p) => p.includes("sprint_plan_"))) {
+        return {
+          path: "artifacts/sprint_plan_s01.md",
+          content: "# Sprint Plan: S01",
+        };
+      }
+      return null;
+    });
+
+    const script = new SprintControllerScript();
+    await expect(
+      script.run(
+        {
+          pipeline_id: "pipe-1",
+          previous_artifacts: [
+            "artifacts/verification_result.json",
+            "artifacts/current_task.json",
+            "artifacts/implementation_summary.md",
+            "artifacts/sprint_plan_s01.md",
+          ],
+        },
+        makeContext()
+      )
+    ).rejects.toThrow("Verifier PASS does not match the active task context");
+  });
+
+  it("accepts close-out when verifier PASS matches current task", async () => {
+    mocks.findFirst.mockImplementation(async (paths: string[]) => {
+      if (paths.some((p) => p.includes("verification_result.json"))) {
+        return {
+          path: "artifacts/verification_result.json",
+          content: JSON.stringify({ result: "PASS", task_id: "S01-001", summary: "ok" }),
+        };
+      }
+      if (paths.some((p) => p.includes("current_task.json"))) {
+        return {
+          path: "artifacts/current_task.json",
+          content: JSON.stringify({ task_id: "S01-001" }),
+        };
+      }
+      if (paths.some((p) => p.includes("implementation_summary"))) {
+        return {
+          path: "artifacts/implementation_summary.md",
+          content: "# Implementation Summary",
+        };
+      }
+      if (paths.some((p) => p.includes("sprint_plan_"))) {
+        return {
+          path: "artifacts/sprint_plan_s01.md",
+          content: "# Sprint Plan: S01",
+        };
+      }
+      return null;
+    });
+    mocks.get.mockResolvedValue({ project_id: "proj-1", sprint_branch: "feature/S01-001" });
+
+    const script = new SprintControllerScript();
+    const output = await script.run(
+      {
+        pipeline_id: "pipe-1",
+        previous_artifacts: [
+          "artifacts/verification_result.json",
+          "artifacts/current_task.json",
+          "artifacts/implementation_summary.md",
+          "artifacts/sprint_plan_s01.md",
+        ],
+      },
+      makeContext()
+    );
+
+    expect((output as { first_task: { task_id: string } }).first_task.task_id).toBe("S01-001");
+  });
 });
