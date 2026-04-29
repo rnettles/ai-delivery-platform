@@ -114,7 +114,30 @@ class ProjectGitService {
   async commitAll(project: Project, branchName: string, message: string): Promise<string> {
     return this.withLock(project.project_id, () => {
       logger.info("git: committing", { project: project.name, branch: branchName });
-      this.git(project.clone_path, ["checkout", branchName]);
+      try {
+        this.git(project.clone_path, ["checkout", branchName]);
+      } catch (err) {
+        if (!this.isCheckoutOverwriteError(err)) {
+          throw err;
+        }
+
+        logger.warn("git: checkout blocked by local changes; stashing and retrying checkout", {
+          project: project.name,
+          branch: branchName,
+          clonePath: project.clone_path,
+        });
+
+        this.git(project.clone_path, ["stash", "push", "-u", "-m", `autostash-${branchName}`]);
+        this.git(project.clone_path, ["checkout", branchName]);
+
+        try {
+          this.git(project.clone_path, ["stash", "pop"]);
+        } catch (stashErr) {
+          throw new Error(
+            `git: checkout recovery failed while reapplying local changes on ${branchName}: ${String(stashErr)}`
+          );
+        }
+      }
       this.git(project.clone_path, ["add", "-A"]);
       // --allow-empty in case the LLM made no file changes (produces a recorded attempt)
       this.git(project.clone_path, ["commit", "--allow-empty", "-m", message]);
@@ -408,6 +431,11 @@ class ProjectGitService {
       GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME ?? "AI Delivery Agent",
       GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL ?? "ai-agent@ai-delivery-platform.com",
     };
+  }
+
+  private isCheckoutOverwriteError(err: unknown): boolean {
+    const text = String((err as any)?.stderr ?? err ?? "");
+    return /would be overwritten by checkout/i.test(text);
   }
 }
 

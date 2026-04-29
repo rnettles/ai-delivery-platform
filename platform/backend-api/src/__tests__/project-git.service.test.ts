@@ -137,3 +137,48 @@ describe("projectGitService.push recovery", () => {
     expect(pushAttempts).toBe(1);
   });
 });
+
+describe("projectGitService.commitAll checkout recovery", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("stashes and retries checkout when local changes would be overwritten", async () => {
+    let checkoutAttempts = 0;
+
+    mockExec.mockImplementation((_cmd, args) => {
+      const gitArgs = args as string[];
+      const joined = gitArgs.join(" ");
+
+      if (joined === "checkout feature/S01-001") {
+        checkoutAttempts += 1;
+        if (checkoutAttempts === 1) {
+          const err = new Error("checkout blocked") as Error & { stderr: string };
+          err.stderr = "error: Your local changes to the following files would be overwritten by checkout";
+          throw err;
+        }
+      }
+
+      if (joined === "rev-parse HEAD") {
+        return "abc123\n" as any;
+      }
+
+      return "" as any;
+    });
+
+    const sha = await projectGitService.commitAll(baseProject, "feature/S01-001", "feat: test");
+
+    expect(mockExec).toHaveBeenCalledWith(
+      "git",
+      ["stash", "push", "-u", "-m", "autostash-feature/S01-001"],
+      expect.objectContaining({ cwd: baseProject.clone_path })
+    );
+    expect(mockExec).toHaveBeenCalledWith(
+      "git",
+      ["stash", "pop"],
+      expect.objectContaining({ cwd: baseProject.clone_path })
+    );
+    expect(checkoutAttempts).toBe(2);
+    expect(sha).toBe("abc123");
+  });
+});
