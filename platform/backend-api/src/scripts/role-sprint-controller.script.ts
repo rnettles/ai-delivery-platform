@@ -76,6 +76,11 @@ interface LlmResponse {
   task_flags: TaskFlags;
 }
 
+interface CanonicalIds {
+  sprintId: string;
+  taskId: string;
+}
+
 function slug(value: string): string {
   return value
     .toLowerCase()
@@ -236,6 +241,16 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
     if (!llm.sprint_plan?.sprint_id || !llm.first_task?.task_id) {
       throw new Error("Sprint Controller LLM response missing required fields");
     }
+
+    const canonicalIds = await this.allocateCanonicalIds(designInputs.clone_path, nextSprintNum);
+    llm.sprint_plan.sprint_id = canonicalIds.sprintId;
+    llm.first_task.task_id = canonicalIds.taskId;
+    if (Array.isArray(llm.sprint_plan.tasks) && llm.sprint_plan.tasks.length > 0) {
+      llm.sprint_plan.tasks[0] = canonicalIds.taskId;
+    } else {
+      llm.sprint_plan.tasks = [canonicalIds.taskId];
+    }
+
     context.notify(`🎯 First task identified: *${llm.first_task.task_id}* — ${llm.first_task.title}\n> Effort: ${llm.first_task.estimated_effort} | ${llm.first_task.files_likely_affected.length} file(s) likely affected`);
 
     // UX gate: user_flow.md must be Approved before staging any user-facing sprint (AI_RULES.md UX Artifact Rules)
@@ -590,5 +605,44 @@ ${flagLines}
       }
     }
     return maxSprint + 1;
+  }
+
+  private async allocateCanonicalIds(clonePath: string, nextSprintNum: number): Promise<CanonicalIds> {
+    const sprintId = `S${String(nextSprintNum).padStart(2, "0")}`;
+    const nextTaskNum = await this.getNextTaskNumber(clonePath, sprintId);
+    const taskId = `${sprintId}-${String(nextTaskNum).padStart(3, "0")}`;
+    return { sprintId, taskId };
+  }
+
+  private async getNextTaskNumber(clonePath: string, sprintId: string): Promise<number> {
+    const dirsToScan = [
+      path.join(clonePath, "project_work", "ai_project_tasks", "active"),
+      path.join(clonePath, "project_work", "ai_project_tasks", "history"),
+    ];
+    const taskRegex = new RegExp(`\\b${sprintId}-(\\d{3})\\b`, "g");
+    let maxTaskNum = 0;
+
+    for (const dir of dirsToScan) {
+      try {
+        const entries = await fs.readdir(dir, { withFileTypes: true });
+        const files = entries.filter((e) => e.isFile()).map((e) => path.join(dir, e.name));
+        for (const filePath of files) {
+          let content = "";
+          try {
+            content = await fs.readFile(filePath, "utf-8");
+          } catch {
+            continue;
+          }
+          for (const match of content.matchAll(taskRegex)) {
+            const n = parseInt(match[1], 10);
+            if (n > maxTaskNum) maxTaskNum = n;
+          }
+        }
+      } catch {
+        // directory missing is non-fatal
+      }
+    }
+
+    return maxTaskNum + 1;
   }
 }
