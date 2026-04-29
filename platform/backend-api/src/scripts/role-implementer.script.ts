@@ -2,9 +2,7 @@ import { Script, ScriptExecutionContext } from "./script.interface";
 import { llmFactory } from "../services/llm/llm-factory.service";
 import { artifactService } from "../services/artifact.service";
 import { governanceService } from "../services/governance.service";
-import { githubApiService } from "../services/github-api.service";
 import { pipelineService } from "../services/pipeline.service";
-import { prRemediationService } from "../services/pr-remediation.service";
 import { projectService } from "../services/project.service";
 import type { Project } from "../services/project.service";
 import { projectGitService } from "../services/project-git.service";
@@ -606,10 +604,8 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       );
     }
 
-    // Commit + push are mandatory for durable implementer work.
+    // Commit + push to sprint branch. PR creation is owned by Sprint Controller at sprint close-out.
     let commitSha: string | undefined;
-    let prNumber: number | undefined;
-    let prUrl: string | undefined;
     try {
       const subjectLine = payload.summary.split(/\n/)[0].trim().slice(0, 60);
       const fileLines = payload.files_changed.map((f) => `- ${f.action}: ${f.path}`).join("\n");
@@ -619,43 +615,12 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       context.log("Implementer: committed", { commit_sha: commitSha, sprint_branch: sprintBranch });
       context.log("Implementer: pushed", { commit_sha: commitSha, sprint_branch: sprintBranch });
       context.notify(`💾 Committed ${payload.files_changed.length} file(s) to \`${sprintBranch}\` (${commitSha?.slice(0, 7)})`);
-
-      const prTitle = `[${payload.task_id}] ${payload.summary}`;
-      const prBody = [
-        "## Implementation Summary",
-        payload.summary,
-        "",
-        "## Task",
-        `- Task ID: ${payload.task_id}`,
-        `- Sprint ID: ${payload.sprint_id}`,
-        `- Commit: ${commitSha}`,
-        `- Branch: ${sprintBranch}`,
-      ].join("\n");
-
-      const existingPr = await githubApiService.findOpenPullRequestByHead({
-        repoUrl: project.repo_url,
-        head: sprintBranch,
-        base: project.default_branch,
-      });
-
-      const pr = existingPr ?? (await prRemediationService.createPullRequestWithRecovery(project, {
-        title: prTitle,
-        body: prBody,
-        head: sprintBranch,
-        base: project.default_branch,
-      })).pr;
-
-      prNumber = pr.number;
-      prUrl = pr.html_url;
-      await pipelineService.setPrDetails(pipelineId, pr.number, pr.html_url, sprintBranch);
-      context.notify(`🔗 Implementer opened PR #${pr.number}: <${pr.html_url}|View Pull Request>`);
-      context.notify("⏳ PR remains open for sprint-end merge gate.");
     } catch (err) {
       context.log("Implementer: git commit/push failed", {
         error: String(err),
         sprint_branch: sprintBranch,
       });
-      throw new Error(`Implementer failed to persist work and update PR state: ${String(err)}`);
+      throw new Error(`Implementer failed to commit and push: ${String(err)}`);
     }
 
     // Write evidence artifact
@@ -708,8 +673,6 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
     return {
       ...payload,
       commit_sha: commitSha,
-      pr_number: prNumber,
-      pr_url: prUrl,
       artifact_path: artifactPath,
       current_task_path: currentTaskPath,
       test_results_path: testResultsPath,

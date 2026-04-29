@@ -12,8 +12,10 @@ const mocks = vi.hoisted(() => {
   const getByName = vi.fn();
   const ensureReady = vi.fn();
   const createBranch = vi.fn();
+  const checkoutBranch = vi.fn();
   const setPrDetails = vi.fn();
   const createPullRequestWithRecovery = vi.fn();
+  const findOpenPullRequestByHead = vi.fn();
   const requireRelevantDesignInputs = vi.fn();
   const readdir = vi.fn();
   const readFile = vi.fn();
@@ -34,8 +36,10 @@ const mocks = vi.hoisted(() => {
     getByName,
     ensureReady,
     createBranch,
+    checkoutBranch,
     setPrDetails,
     createPullRequestWithRecovery,
+    findOpenPullRequestByHead,
     requireRelevantDesignInputs,
     readdir,
     readFile,
@@ -93,6 +97,7 @@ vi.mock("../services/project-git.service", () => ({
   projectGitService: {
     ensureReady: mocks.ensureReady,
     createBranch: mocks.createBranch,
+    checkoutBranch: mocks.checkoutBranch,
     commitAll: mocks.commitAll,
     push: mocks.pushBranch,
   },
@@ -101,6 +106,12 @@ vi.mock("../services/project-git.service", () => ({
 vi.mock("../services/pr-remediation.service", () => ({
   prRemediationService: {
     createPullRequestWithRecovery: mocks.createPullRequestWithRecovery,
+  },
+}));
+
+vi.mock("../services/github-api.service", () => ({
+  githubApiService: {
+    findOpenPullRequestByHead: mocks.findOpenPullRequestByHead,
   },
 }));
 
@@ -943,6 +954,8 @@ describe("Phase 7 — Orchestration and Instruction Gating", () => {
         return { path: "artifacts/sprint_closeout.json", content: PHASE1_CLOSEOUT_CONTENT };
       return null;
     });
+    // No project_id — git write-to-main block is skipped (project is null).
+    mocks.get.mockResolvedValue({ project_id: null });
 
     const script = new SprintControllerScript();
     const out = await script.run(

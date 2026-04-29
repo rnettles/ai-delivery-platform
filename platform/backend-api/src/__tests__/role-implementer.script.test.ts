@@ -222,11 +222,11 @@ describe("ImplementerScript post-commit PR flow", () => {
     );
   });
 
-  it("commits, pushes, and keeps the sprint PR open for sprint-end merge gate", async () => {
+  it("commits and pushes to sprint branch (PR creation is Sprint Controller's responsibility)", async () => {
     const script = new ImplementerScript();
     const context = makeContext();
 
-    const output = await script.run(
+    await script.run(
       {
         pipeline_id: "pipe-1",
         previous_artifacts: [
@@ -240,23 +240,11 @@ describe("ImplementerScript post-commit PR flow", () => {
 
     expect(mocks.commitAll).toHaveBeenCalledWith(expect.anything(), "feature/S01-001", expect.stringContaining("feat(S01-001): Implement feature"));
     expect(mocks.push).toHaveBeenCalledWith(expect.anything(), "feature/S01-001");
-    expect(mocks.createPullRequestWithRecovery).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ head: "feature/S01-001", base: "main" })
-    );
-    expect(mocks.setPrDetails).toHaveBeenCalledWith(
-      "pipe-1",
-      42,
-      "https://github.com/rnettles/Personal-Health-Knowledge-System/pull/42",
-      "feature/S01-001"
-    );
-    expect((output as { pr_number?: number; pr_url?: string }).pr_number).toBe(42);
-    expect((output as { pr_number?: number; pr_url?: string }).pr_url).toBe(
-      "https://github.com/rnettles/Personal-Health-Knowledge-System/pull/42"
-    );
+    expect(mocks.createPullRequestWithRecovery).not.toHaveBeenCalled();
+    expect(mocks.setPrDetails).not.toHaveBeenCalled();
   });
 
-  it("adopts active task branch when sprint_branch is missing and reuses existing PR", async () => {
+  it("adopts active task branch when sprint_branch is missing", async () => {
     const readFileMock = fs.readFile as unknown as ReturnType<typeof vi.fn>;
     readFileMock.mockImplementation(async (filePath: string) => {
       if (filePath.includes("project_work") && filePath.includes("current_task.json")) {
@@ -268,13 +256,6 @@ describe("ImplementerScript post-commit PR flow", () => {
     mocks.get.mockResolvedValue({
       project_id: "proj-1",
       sprint_branch: null,
-    });
-    mocks.findOpenPullRequestByHead.mockResolvedValue({
-      number: 4,
-      url: "https://api.github.com/repos/rnettles/Personal-Health-Knowledge-System/pulls/4",
-      html_url: "https://github.com/rnettles/Personal-Health-Knowledge-System/pull/4",
-      state: "open",
-      merged: false,
     });
 
     const script = new ImplementerScript();
@@ -292,13 +273,8 @@ describe("ImplementerScript post-commit PR flow", () => {
 
     expect(mocks.createBranch).toHaveBeenCalledWith(expect.anything(), "feature/S01-001");
     expect(mocks.setSprintBranch).toHaveBeenCalledWith("pipe-1", "feature/S01-001");
-    expect(mocks.setPrDetails).toHaveBeenCalledWith(
-      "pipe-1",
-      4,
-      "https://github.com/rnettles/Personal-Health-Knowledge-System/pull/4",
-      "feature/S01-001"
-    );
     expect(mocks.createPullRequestWithRecovery).not.toHaveBeenCalled();
+    expect(mocks.setPrDetails).not.toHaveBeenCalled();
   });
 
   it("loads active repo task artifacts when pipeline artifacts are missing", async () => {

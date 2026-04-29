@@ -8,6 +8,7 @@ import { pipelineService } from "../services/pipeline.service";
 import { projectService } from "../services/project.service";
 import { projectGitService } from "../services/project-git.service";
 import { prRemediationService } from "../services/pr-remediation.service";
+import { githubApiService } from "../services/github-api.service";
 import { designInputGateService } from "../services/design-input-gate.service";
 import { HttpError } from "../utils/http-error";
 
@@ -595,6 +596,45 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
     const sprintId = this.extractSprintId(sprintPlanArtifact?.path, pipelineId);
     const taskIdForCloseout = currentTaskId as string;
 
+    // Phase 1: Sprint Controller owns the PR. Create (or find existing) PR for operator to merge.
+    let prNumber: number | undefined;
+    let prUrl: string | undefined;
+    const project = run.project_id ? await projectService.getById(run.project_id) : null;
+    if (project && run.sprint_branch) {
+      try {
+        const existingPr = await githubApiService.findOpenPullRequestByHead({
+          repoUrl: project.repo_url,
+          head: run.sprint_branch,
+          base: project.default_branch,
+        });
+        const pr = existingPr ?? (await prRemediationService.createPullRequestWithRecovery(project, {
+          title: `[${sprintId}] ${taskIdForCloseout} implementation`,
+          body: [
+            "## Sprint Implementation",
+            `Sprint: ${sprintId}`,
+            `Task: ${taskIdForCloseout}`,
+            `Branch: \`${run.sprint_branch}\``,
+            "",
+            "Review and merge this PR to complete sprint close-out.",
+            "",
+            `**Verifier summary:** ${verification.summary ?? ""}`,
+          ].join("\n"),
+          head: run.sprint_branch,
+          base: project.default_branch,
+        })).pr;
+        prNumber = pr.number;
+        prUrl = pr.html_url;
+        await pipelineService.setPrDetails(pipelineId, pr.number, pr.html_url, run.sprint_branch);
+        context.notify(`🔗 PR #${pr.number} ready for review: <${pr.html_url}|View Pull Request>`);
+      } catch (err) {
+        context.log("Sprint Controller: PR create/find failed (non-fatal)", { error: String(err) });
+        context.notify(
+          `⚠️ Could not create PR automatically: ${String(err)}. ` +
+          `Please create a PR from \`${run.sprint_branch}\` → \`${project.default_branch}\` manually.`
+        );
+      }
+    }
+
     const closeOutPath = await artifactService.write(
       pipelineId,
       "sprint_closeout.json",
@@ -611,16 +651,18 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
           close_out_phase_completed: "task_close",
           verifier_summary: verification.summary ?? "",
           sprint_complete_artifacts: sprintCompleteArtifacts,
+          pr_number: prNumber,
+          pr_url: prUrl,
         },
         null,
         2
       )
     );
 
-    context.notify(
-      `🛑 Phase 1 complete. Task ${taskIdForCloseout} closed. ` +
-      "Open PR for feature/{task_id} → main, then re-invoke with close_out_phase: 'pr_confirmed'."
-    );
+    const prNotify = prUrl
+      ? `Merge PR <${prUrl}|#${prNumber}> then re-invoke with close_out_phase: 'pr_confirmed'.`
+      : `Merge the sprint PR from \`${run.sprint_branch ?? "sprint-branch"}\` → main, then re-invoke with close_out_phase: 'pr_confirmed'.`;
+    context.notify(`🛑 Phase 1 complete. Task ${taskIdForCloseout} closed. ` + prNotify);
     context.log("Sprint Controller close-out Phase 1 complete", {
       pipeline_id: pipelineId,
       sprint_branch: run.sprint_branch,
@@ -685,6 +727,39 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       "sprint_closeout.json",
       JSON.stringify(updated, null, 2)
     );
+
+    // Write sprint closeout to main branch (post-merge artifacts go directly to main).
+    const run = await pipelineService.get(pipelineId);
+    const project = run.project_id ? await projectService.getById(run.project_id) : null;
+    if (project) {
+      try {
+        await projectGitService.ensureReady(project);
+        await projectGitService.checkoutBranch(project, project.default_branch);
+        await projectGitService.ensureReady(project, { forcePull: true });
+        const historyDir = path.join(
+          project.clone_path,
+          "project_work",
+          "ai_project_tasks",
+          "history"
+        );
+        await fs.mkdir(historyDir, { recursive: true });
+        const sprintIdForFile = closeout.sprint_id ?? "unknown";
+        await fs.writeFile(
+          path.join(historyDir, `sprint_closeout_${sprintIdForFile}.json`),
+          JSON.stringify(updated, null, 2),
+          "utf-8"
+        );
+        await projectGitService.commitAll(
+          project,
+          project.default_branch,
+          `chore(${sprintIdForFile}): record sprint closeout`
+        );
+        await projectGitService.push(project, project.default_branch);
+        context.notify(`📝 Sprint closeout recorded on \`${project.default_branch}\``);
+      } catch (err) {
+        context.log("Sprint Controller: closeout repo write failed (non-fatal)", { error: String(err) });
+      }
+    }
 
     context.notify(
       `✅ Phase 2 complete. PR merge recorded for task ${closeout.last_completed_task_id ?? "n/a"}. ` +
