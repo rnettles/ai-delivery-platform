@@ -35,6 +35,11 @@ export interface ImplementerOutput {
   artifact_path: string;
 }
 
+interface ArtifactContextFile {
+  path: string;
+  content: string;
+}
+
 // ─── Filesystem tools exposed to the LLM ─────────────────────────────────────
 
 const FILESYSTEM_TOOLS: ToolDefinition[] = [
@@ -120,14 +125,14 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
 
     const previousArtifacts = typed.previous_artifacts ?? [];
 
-    // Load context artifacts
-    const briefArtifact = await artifactService.findFirst(
+    // Load context artifacts from the current pipeline first.
+    let briefArtifact = await artifactService.findFirst(
       previousArtifacts.filter((p) => p.includes("AI_IMPLEMENTATION_BRIEF"))
     );
-    const taskArtifact = await artifactService.findFirst(
+    let taskArtifact = await artifactService.findFirst(
       previousArtifacts.filter((p) => p.includes("current_task"))
     );
-    const sprintArtifact = await artifactService.findFirst(
+    let sprintArtifact = await artifactService.findFirst(
       previousArtifacts.filter((p) => p.includes("sprint_plan"))
     );
 
@@ -190,6 +195,23 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       `📚 Design inputs validated (${designInputs.sample_files.length} found). ` +
       `Using project: \`${designInputs.project_name}\``
     );
+
+    // Backstop the governance rules in script logic: if this pipeline invocation lacks
+    // staged task artifacts, reuse the canonical active task package from the repo.
+    if (!briefArtifact || !taskArtifact || !sprintArtifact) {
+      const activeArtifacts = await this.loadActiveTaskArtifacts(clonePath ?? project.clone_path);
+      briefArtifact = briefArtifact ?? activeArtifacts.briefArtifact;
+      taskArtifact = taskArtifact ?? activeArtifacts.taskArtifact;
+      sprintArtifact = sprintArtifact ?? activeArtifacts.sprintArtifact;
+    }
+
+    if (!briefArtifact || !taskArtifact || !sprintArtifact) {
+      throw new HttpError(
+        409,
+        "MISSING_ACTIVE_TASK_PACKAGE",
+        "Implementer requires an active task package (sprint_plan, AI_IMPLEMENTATION_BRIEF.md, current_task.json). Stage or reuse the open task package before running Implementer.",
+      );
+    }
 
     // Build the user prompt with all available context
     const contextParts: string[] = [];
@@ -442,6 +464,41 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
     } catch {
       return null;
     }
+  }
+
+  private async loadActiveTaskArtifacts(clonePath: string): Promise<{
+    briefArtifact: ArtifactContextFile | null;
+    taskArtifact: ArtifactContextFile | null;
+    sprintArtifact: ArtifactContextFile | null;
+  }> {
+    const activeDir = path.join(clonePath, "project_work", "ai_project_tasks", "active");
+    const readOptional = async (filePath: string): Promise<ArtifactContextFile | null> => {
+      try {
+        return {
+          path: filePath,
+          content: await fs.readFile(filePath, "utf-8"),
+        };
+      } catch {
+        return null;
+      }
+    };
+
+    let sprintArtifact: ArtifactContextFile | null = null;
+    try {
+      const entries = await fs.readdir(activeDir, { withFileTypes: true });
+      const sprintPlanEntry = entries.find((entry) => entry.isFile() && /^sprint_plan_.*\.md$/i.test(entry.name));
+      if (sprintPlanEntry) {
+        sprintArtifact = await readOptional(path.join(activeDir, sprintPlanEntry.name));
+      }
+    } catch {
+      // no active dir
+    }
+
+    return {
+      briefArtifact: await readOptional(path.join(activeDir, "AI_IMPLEMENTATION_BRIEF.md")),
+      taskArtifact: await readOptional(path.join(activeDir, "current_task.json")),
+      sprintArtifact,
+    };
   }
 
   private formatMarkdown(

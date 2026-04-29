@@ -72,6 +72,7 @@ vi.mock("../services/pipeline.service", () => ({
 vi.mock("fs/promises", () => ({
   default: {
     readFile: vi.fn(),
+    readdir: vi.fn(),
   },
 }));
 
@@ -130,6 +131,8 @@ describe("ImplementerScript post-commit PR flow", () => {
     vi.clearAllMocks();
     const readFileMock = fs.readFile as unknown as ReturnType<typeof vi.fn>;
     readFileMock.mockRejectedValue(new Error("not found"));
+    const readdirMock = fs.readdir as unknown as ReturnType<typeof vi.fn>;
+    readdirMock.mockRejectedValue(new Error("not found"));
 
     mocks.findFirst.mockImplementation(async (paths: string[]) => {
       if (paths.some((p) => p.includes("AI_IMPLEMENTATION_BRIEF"))) {
@@ -269,5 +272,35 @@ describe("ImplementerScript post-commit PR flow", () => {
       "feature/S01-001"
     );
     expect(mocks.createPullRequestWithRecovery).not.toHaveBeenCalled();
+  });
+
+  it("loads active repo task artifacts when pipeline artifacts are missing", async () => {
+    mocks.findFirst.mockResolvedValue(null);
+
+    const readdirMock = fs.readdir as unknown as ReturnType<typeof vi.fn>;
+    readdirMock.mockResolvedValue([{ isFile: () => true, name: "sprint_plan_s01.md" }]);
+
+    const readFileMock = fs.readFile as unknown as ReturnType<typeof vi.fn>;
+    readFileMock.mockImplementation(async (filePath: string) => {
+      if (filePath.endsWith("AI_IMPLEMENTATION_BRIEF.md")) return "# Brief from active";
+      if (filePath.endsWith("current_task.json")) return JSON.stringify({ task_id: "S01-001", sprint_id: "SPR-1" });
+      if (filePath.endsWith("sprint_plan_s01.md")) return "# Sprint from active";
+      throw new Error("not found");
+    });
+
+    const script = new ImplementerScript();
+    await script.run({ pipeline_id: "pipe-1", previous_artifacts: [] }, makeContext());
+
+    expect(mocks.forRole).toHaveBeenCalled();
+  });
+
+  it("fails fast when no governed task package exists", async () => {
+    mocks.findFirst.mockResolvedValue(null);
+
+    const script = new ImplementerScript();
+    await expect(script.run({ pipeline_id: "pipe-1", previous_artifacts: [] }, makeContext())).rejects.toThrow(
+      "Implementer requires an active task package"
+    );
+    expect(mocks.forRole).not.toHaveBeenCalled();
   });
 });
