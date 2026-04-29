@@ -177,13 +177,17 @@ Implement brand tokens.
 
   it("reuses the existing active task package without calling the LLM or creating a branch", async () => {
     const script = new SprintControllerScript();
-    const output = await script.run({ pipeline_id: "pipe-1", previous_artifacts: [] }, makeContext());
+    const context = makeContext();
+    const output = await script.run({ pipeline_id: "pipe-1", previous_artifacts: [] }, context);
 
     expect(mocks.forRole).not.toHaveBeenCalled();
     expect(mocks.createBranch).not.toHaveBeenCalled();
     expect(mocks.createPullRequestWithRecovery).not.toHaveBeenCalled();
     expect(mocks.setSprintBranch).toHaveBeenCalledWith("pipe-1", "feature/S01-001");
     expect(mocks.write).toHaveBeenCalledTimes(3);
+    expect(context.notify).toHaveBeenCalledWith(
+      "♻️ Task S01-001 in S01 is still open. Finish the pending task and pass its close-out gate before requesting another task package."
+    );
     expect((output as { sprint_id: string; first_task: { task_id: string } }).sprint_id).toBe("S01");
     expect((output as { first_task: { task_id: string } }).first_task.task_id).toBe("S01-001");
   });

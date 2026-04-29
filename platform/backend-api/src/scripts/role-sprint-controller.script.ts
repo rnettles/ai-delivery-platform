@@ -159,7 +159,8 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
     const activeTaskPackage = await this.loadOpenActiveTaskPackage(designInputs.clone_path);
     if (activeTaskPackage) {
       context.notify(
-        `♻️ Reusing open task package ${activeTaskPackage.firstTask.task_id} from ${activeTaskPackage.sprintPlan.sprint_id}.`
+        `♻️ Task ${activeTaskPackage.firstTask.task_id} in ${activeTaskPackage.sprintPlan.sprint_id} is still open. ` +
+        `Finish the pending task and pass its close-out gate before requesting another task package.`
       );
       return this.publishExistingTaskPackage(pipelineId, activeTaskPackage, context);
     }
