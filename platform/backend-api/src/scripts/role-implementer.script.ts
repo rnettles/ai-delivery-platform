@@ -12,6 +12,10 @@ import { ToolDefinition, ToolCall } from "../services/llm/llm-provider.interface
 import { HttpError } from "../utils/http-error";
 import fs from "fs/promises";
 import path from "path";
+import { exec } from "child_process";
+import { promisify } from "util";
+
+const execAsync = promisify(exec);
 
 export interface ImplementerInput {
   previous_artifacts?: string[];
@@ -34,6 +38,7 @@ export interface ImplementerOutput {
   pr_url?: string;
   artifact_path: string;
   current_task_path?: string;
+  test_results_path?: string;
   artifact_paths?: string[];
 }
 
@@ -41,6 +46,39 @@ interface ArtifactContextFile {
   path: string;
   content: string;
 }
+
+/** Parsed representation of the Task Flags block in AI_IMPLEMENTATION_BRIEF.md */
+interface TaskFlags {
+  fr_ids_in_scope: string[];
+  architecture_contract_change: boolean;
+  ui_evidence_required: boolean;
+  incident_tier: string | null;
+}
+
+/** Result of a single gate command run via the run_command tool */
+interface GateResult {
+  command: string;
+  exit_code: number;
+  stdout: string;
+  stderr: string;
+  timestamp: string;
+}
+
+/** Artifacts owned exclusively by verifier/fixer — Implementer must not write to these */
+const VERIFIER_OWNED_ARTIFACTS = ["verification_result.json", "fix_state.json"];
+
+const GATE_COMMAND_TIMEOUT_MS = 120_000;
+const GATE_OUTPUT_MAX_CHARS = 4_000;
+
+/**
+ * Canonical search paths for the UX gate artifact (user_flow.md).
+ * Checked relative to the repo root.
+ */
+const UX_ARTIFACT_REPO_PATHS = [
+  path.join("project_work", "ai_project_tasks", "active", "ux", "user_flow.md"),
+  path.join("docs", "design", "user_flow.md"),
+  path.join("docs", "user_flow.md"),
+];
 
 // ─── Filesystem tools exposed to the LLM ─────────────────────────────────────
 
@@ -77,6 +115,22 @@ const FILESYSTEM_TOOLS: ToolDefinition[] = [
         path: { type: "string", description: "Relative path from repo root. Use '.' for the root." },
       },
       required: ["path"],
+    },
+  },
+  {
+    name: "run_command",
+    description:
+      "Execute a shell command in the repository root for quality gates (lint, typecheck, tests). " +
+      "Returns the exit code and captured stdout/stderr. Use this for every mandatory gate before calling finish.",
+    parameters: {
+      type: "object",
+      properties: {
+        command: {
+          type: "string",
+          description: "Shell command to run in the repository root, e.g. npm run lint or npx tsc --noEmit",
+        },
+      },
+      required: ["command"],
     },
   },
   {
@@ -172,20 +226,22 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
           await projectGitService.createBranch(project, sprintBranch);
           await pipelineService.setSprintBranch(pipelineId, sprintBranch);
         } else {
-          // Last-resort fallback: create a pipeline-scoped branch.
-          const safePipelineId = String(pipelineId).replace(/[^a-zA-Z0-9._/-]/g, "-");
-          sprintBranch = `feature/${safePipelineId}`;
-          context.log("Implementer: no sprint branch on run, creating fallback branch", {
-            pipeline_id: pipelineId,
-            sprint_branch: sprintBranch,
-          });
-          await projectGitService.createBranch(project, sprintBranch);
-          await pipelineService.setSprintBranch(pipelineId, sprintBranch);
+          // IMP-003: branch must be feature/<task_id>. Pipeline-scoped fallback branches are
+          // a policy violation — fail closed and require the operator to stage the task.
+          throw new HttpError(
+            409,
+            "BRANCH_POLICY_VIOLATION",
+            "Cannot resolve feature/<task_id> branch: sprint_branch is absent on the pipeline run " +
+              "and current_task.json has no task_id. Stage the task via sprint-controller before running Implementer.",
+            { pipeline_id: pipelineId }
+          );
         }
       }
       context.log("Implementer: repo ready", { clone_path: clonePath, sprint_branch: sprintBranch });
       if (!sprintBranch) throw new Error("Implementer: sprint branch could not be resolved");
     } catch (err) {
+      // Re-throw governed HttpErrors (e.g. BRANCH_POLICY_VIOLATION) without wrapping.
+      if (err instanceof HttpError) throw err;
       context.log("Implementer: project/git resolution failed", {
         error: String(err),
       });
@@ -215,6 +271,39 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       );
     }
 
+    // ─── Phase 2: Task Flags enforcement ──────────────────────────────────────────
+    // Parse task flags from the brief at the script layer BEFORE the agent loop so that
+    // hard-stop guards are deterministic and not reliant on prompt-level behaviour.
+    const taskFlags = this.parseTaskFlags(briefArtifact.content);
+    context.log("Implementer: task flags parsed", { task_flags: taskFlags });
+
+    // IMP-002 / GTR-005: UX hard-stop — if ui_evidence_required=true, at least one UX
+    // artifact (user_flow.md) must be present in the repo before any code is written.
+    if (taskFlags.ui_evidence_required && clonePath) {
+      const uxFound = await UX_ARTIFACT_REPO_PATHS.reduce<Promise<boolean>>(
+        async (acc, relPath) => {
+          if (await acc) return true;
+          try {
+            await fs.access(path.join(clonePath, relPath));
+            return true;
+          } catch {
+            return false;
+          }
+        },
+        Promise.resolve(false)
+      );
+      if (!uxFound) {
+        throw new HttpError(
+          422,
+          "UX_HARD_STOP",
+          "Task flag ui_evidence_required=true but no approved UX artifact (user_flow.md) was found " +
+            "in the repository. Run the UX architect agent to produce the interaction contract before " +
+            "running Implementer.",
+          { searched_paths: UX_ARTIFACT_REPO_PATHS, task_flags: taskFlags }
+        );
+      }
+    }
+
     // Build the user prompt with all available context
     const contextParts: string[] = [];
     if (briefArtifact) contextParts.push(`# AI_IMPLEMENTATION_BRIEF.md\n\n${briefArtifact.content}`);
@@ -235,8 +324,8 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
 
     // ─── Tool execution state ────────────────────────────────────────────────
 
-    const writtenFiles: { path: string; action: "Create" | "Modify" }[] = [];
-    let finishPayload: {
+    const writtenFiles: { path: string; action: "Create" | "Modify" }[] = [];    /** Gate results captured from run_command tool calls during the agent loop */
+    const gateResults: GateResult[] = [];    let finishPayload: {
       task_id: string;
       sprint_id: string;
       summary: string;
@@ -263,6 +352,13 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
         const relPath = String(args["path"] ?? "");
         const content = String(args["content"] ?? "");
         if (!clonePath) return "Error: no repository available";
+        // POL-004 / IMP-001: guard against Implementer writing verifier-owned artifacts.
+        if (VERIFIER_OWNED_ARTIFACTS.some((f) => relPath.endsWith(f))) {
+          return (
+            `Error: '${relPath}' is a verifier-owned artifact. ` +
+            "Implementer must not write to verification_result.json or fix_state.json."
+          );
+        }
         const safeAbs = this.safeResolve(clonePath, relPath);
         if (!safeAbs) return `Error: path '${relPath}' is outside the repository root`;
         let exists = false;
@@ -289,6 +385,42 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
             .join("\n");
         } catch {
           return `Error: directory not found at ${relPath}`;
+        }
+      }
+
+      if (name === "run_command") {
+        const command = String(args["command"] ?? "").trim();
+        if (!command) return "Error: command is required";
+        if (!clonePath) return "Error: no repository available";
+        const timestamp = new Date().toISOString();
+        try {
+          const { stdout, stderr } = await execAsync(command, {
+            cwd: clonePath,
+            timeout: GATE_COMMAND_TIMEOUT_MS,
+            maxBuffer: 10 * 1024 * 1024,
+          });
+          const result: GateResult = {
+            command,
+            exit_code: 0,
+            stdout: stdout.slice(0, GATE_OUTPUT_MAX_CHARS),
+            stderr: stderr.slice(0, GATE_OUTPUT_MAX_CHARS),
+            timestamp,
+          };
+          gateResults.push(result);
+          context.notify(`✅ Gate passed: \`${command.slice(0, 60)}\``);
+          return `exit_code=0\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`;
+        } catch (err: unknown) {
+          const e = err as { stdout?: string; stderr?: string; code?: number };
+          const result: GateResult = {
+            command,
+            exit_code: typeof e.code === "number" ? e.code : 1,
+            stdout: (e.stdout ?? "").slice(0, GATE_OUTPUT_MAX_CHARS),
+            stderr: (e.stderr ?? "").slice(0, GATE_OUTPUT_MAX_CHARS),
+            timestamp,
+          };
+          gateResults.push(result);
+          context.notify(`❌ Gate failed: \`${command.slice(0, 60)}\` (exit ${result.exit_code})`);
+          return `exit_code=${result.exit_code}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`;
         }
       }
 
@@ -328,34 +460,79 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       { maxIterations: 30, max_tokens: 8192 }
     );
 
-    // If finish was not called, build a fallback from tracked writes
+    // Phase 5.3: Fail closed when finish tool was not called.
+    // A synthesised fallback payload is not an acceptable substitute for a governed terminal state.
     if (!finishPayload) {
-      const taskId = taskArtifact
-        ? (() => {
-            try { return (JSON.parse(taskArtifact.content) as { task_id?: string }).task_id ?? "unknown"; }
-            catch { return "unknown"; }
-          })()
-        : "unknown";
-
-      finishPayload = {
-        task_id: taskId,
-        sprint_id: "unknown",
-        summary: "Implementation completed (finish tool not called)",
-        files_changed: writtenFiles.map((f) => ({ ...f, description: `${f.action}d` })),
-      };
+      throw new HttpError(
+        422,
+        "FINISH_NOT_CALLED",
+        "Implementer agent loop terminated without calling the finish tool. " +
+          "Handoff is blocked — the agent must explicitly call finish before stopping. " +
+          "Inspect the agent trace, resolve any gate failures, and rerun.",
+        { gate_results: gateResults, written_files: writtenFiles }
+      );
     }
 
-    // Post-condition: implementation limit ≤5 files (process_invariants §Implementation Limits, ADR-031)
-    // Layer 3 tightens the Layer 1 standard of ≤7 to ≤5 for platform-driven execution.
-    if (finishPayload.files_changed.length > 5) {
+    // Capture in a const. TypeScript cannot narrow closure-captured let variables through
+    // async callback boundaries; the throw above guarantees non-null at runtime.
+    // The double-cast (unknown → FinishPayload) is the TypeScript-safe escape for this pattern.
+    const payload = finishPayload as unknown as {
+      task_id: string;
+      sprint_id: string;
+      summary: string;
+      files_changed: FileChange[];
+    };
+
+    // Post-condition: implementation limit ≤5 files (process_invariants §Implementation Limits, ADR-031).
+    // Platform override: tightens governance standard of ≤7 (RUL-007) to ≤5 for platform-driven execution.
+    // This is an intentional platform override documented in ADR-031; governance inventory reflects ≤7.
+    if (payload.files_changed.length > 5) {
       throw new HttpError(
         422,
         "INVARIANT_VIOLATION",
-        `Implementation limit exceeded: ${finishPayload.files_changed.length} file(s) changed ` +
-          "(platform limit: ≤5 files per task). Reduce scope and retry " +
-          "(process_invariants §Implementation Limits).",
-        { files_changed: finishPayload.files_changed.length, limit: 5 }
+        `Implementation limit exceeded: ${payload.files_changed.length} file(s) changed ` +
+          "(platform limit: \u22645 files per task; governance standard: \u22647). Reduce scope and retry " +
+          "(process_invariants \u00a7Implementation Limits, ADR-031).",
+        { files_changed: payload.files_changed.length, limit: 5 }
       );
+    }
+
+    // Phase 4.3: Fail handoff if any gate recorded a non-zero exit code.
+    const failedGates = gateResults.filter((r) => r.exit_code !== 0);
+    if (failedGates.length > 0) {
+      throw new HttpError(
+        422,
+        "GATE_FAILURE",
+        `${failedGates.length} gate(s) failed. Handoff blocked until all mandatory gates pass.`,
+        { failed_gates: failedGates.map((g) => ({ command: g.command, exit_code: g.exit_code })) }
+      );
+    }
+
+    // Phase 3.2 / Phase 4.2: Write test_results.json to the canonical repo path before committing
+    // so it is part of the committed changeset and available to verifier via the repo.
+    if (clonePath) {
+      const repoTestResultsPath = path.join(
+        clonePath,
+        "project_work",
+        "ai_project_tasks",
+        "active",
+        "test_results.json"
+      );
+      const testResultsPayload = {
+        task_id: payload.task_id,
+        sprint_id: payload.sprint_id,
+        executed_at: new Date().toISOString(),
+        gate_results: gateResults,
+        summary:
+          gateResults.length > 0
+            ? gateResults.every((r) => r.exit_code === 0)
+              ? "all_passed"
+              : "failed"
+            : "no_gates_recorded",
+      };
+      await fs.mkdir(path.dirname(repoTestResultsPath), { recursive: true });
+      await fs.writeFile(repoTestResultsPath, JSON.stringify(testResultsPayload, null, 2), "utf-8");
+      context.log("Implementer: test_results.json written to repo", { path: repoTestResultsPath });
     }
 
     // Commit + push are mandatory for durable implementer work.
@@ -363,23 +540,23 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
     let prNumber: number | undefined;
     let prUrl: string | undefined;
     try {
-      const subjectLine = finishPayload.summary.split(/\n/)[0].trim().slice(0, 60);
-      const fileLines = finishPayload.files_changed.map((f) => `- ${f.action}: ${f.path}`).join("\n");
-      const message = `feat(${finishPayload.task_id}): ${subjectLine}\n\n${fileLines}`;
+      const subjectLine = payload.summary.split(/\n/)[0].trim().slice(0, 60);
+      const fileLines = payload.files_changed.map((f) => `- ${f.action}: ${f.path}`).join("\n");
+      const message = `feat(${payload.task_id}): ${subjectLine}\n\n${fileLines}`;
       commitSha = await projectGitService.commitAll(project, sprintBranch, message);
       await projectGitService.push(project, sprintBranch);
       context.log("Implementer: committed", { commit_sha: commitSha, sprint_branch: sprintBranch });
       context.log("Implementer: pushed", { commit_sha: commitSha, sprint_branch: sprintBranch });
-      context.notify(`💾 Committed ${finishPayload!.files_changed.length} file(s) to \`${sprintBranch}\` (${commitSha?.slice(0, 7)})`);
+      context.notify(`💾 Committed ${payload.files_changed.length} file(s) to \`${sprintBranch}\` (${commitSha?.slice(0, 7)})`);
 
-      const prTitle = `[${finishPayload.task_id}] ${finishPayload.summary}`;
+      const prTitle = `[${payload.task_id}] ${payload.summary}`;
       const prBody = [
         "## Implementation Summary",
-        finishPayload.summary,
+        payload.summary,
         "",
         "## Task",
-        `- Task ID: ${finishPayload.task_id}`,
-        `- Sprint ID: ${finishPayload.sprint_id}`,
+        `- Task ID: ${payload.task_id}`,
+        `- Sprint ID: ${payload.sprint_id}`,
         `- Commit: ${commitSha}`,
         `- Branch: ${sprintBranch}`,
       ].join("\n");
@@ -411,36 +588,61 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
     }
 
     // Write evidence artifact
-    const artifactContent = this.formatMarkdown(finishPayload, commitSha);
+    const artifactContent = this.formatMarkdown(payload, commitSha);
     const artifactPath = await artifactService.write(
       pipelineId,
       "implementation_summary.md",
       artifactContent
     );
 
-    const updatedTask = this.buildUpdatedTaskArtifact(taskArtifact?.content, finishPayload, artifactPath);
+    const updatedTask = this.buildUpdatedTaskArtifact(taskArtifact?.content, payload, artifactPath);
     const currentTaskPath = await artifactService.write(
       pipelineId,
       "current_task.json",
       JSON.stringify(updatedTask, null, 2)
     );
 
+    // Write test_results.json to the artifact service for downstream pipeline consumption.
+    const testResultsArtifactContent = JSON.stringify(
+      {
+        task_id: payload.task_id,
+        sprint_id: payload.sprint_id,
+        executed_at: new Date().toISOString(),
+        gate_results: gateResults,
+        summary:
+          gateResults.length > 0
+            ? gateResults.every((r) => r.exit_code === 0)
+              ? "all_passed"
+              : "failed"
+            : "no_gates_recorded",
+      },
+      null,
+      2
+    );
+    const testResultsPath = await artifactService.write(
+      pipelineId,
+      "test_results.json",
+      testResultsArtifactContent
+    );
+
     context.log("Implementer complete", {
-      task_id: finishPayload.task_id,
-      files_changed: finishPayload.files_changed.length,
+      task_id: payload.task_id,
+      files_changed: payload.files_changed.length,
       commit_sha: commitSha,
       artifact_path: artifactPath,
       current_task_path: currentTaskPath,
+      test_results_path: testResultsPath,
     });
 
     return {
-      ...finishPayload,
+      ...payload,
       commit_sha: commitSha,
       pr_number: prNumber,
       pr_url: prUrl,
       artifact_path: artifactPath,
       current_task_path: currentTaskPath,
-      artifact_paths: [artifactPath, currentTaskPath],
+      test_results_path: testResultsPath,
+      artifact_paths: [artifactPath, currentTaskPath, testResultsPath],
     } satisfies ImplementerOutput;
   }
 
@@ -454,7 +656,7 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       title: finishPayload.summary.split(/\n/)[0].trim() || "Implementation complete",
       description: finishPayload.summary,
       assigned_to: "implementer",
-      status: "implemented",
+      status: "ready_for_verification",
       artifacts: [],
     };
 
@@ -475,9 +677,53 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
     return {
       ...base,
       task_id: finishPayload.task_id,
-      status: "implemented",
+      // IMP-001: terminal status is always ready_for_verification regardless of prior state.
+      status: "ready_for_verification",
       artifacts: nextArtifacts,
     };
+  }
+
+  /**
+   * Parse task flags from the Task Flags block in AI_IMPLEMENTATION_BRIEF.md.
+   * Returns safe defaults when a flag is absent or unreadable (TFC-001 compliance).
+   * Flag values may not be inferred or modified — only explicitly stated values are accepted.
+   */
+  private parseTaskFlags(briefContent: string): TaskFlags {
+    const defaults: TaskFlags = {
+      fr_ids_in_scope: [],
+      architecture_contract_change: false,
+      ui_evidence_required: false,
+      incident_tier: null,
+    };
+
+    // Locate the "## Task Flags" section (case-insensitive).
+    const sectionMatch = briefContent.match(/##\s*Task Flags\s*\n([\s\S]*?)(?=\n##|\n#|$)/i);
+    if (!sectionMatch) return defaults;
+    const section = sectionMatch[1];
+
+    // fr_ids_in_scope — expected forms: [], [FR-001], [FR-001, FR-002], none
+    const frMatch = section.match(/fr_ids_in_scope\s*[:\s]+\[([^\]]*)\]/i);
+    if (frMatch) {
+      const raw = frMatch[1].trim();
+      defaults.fr_ids_in_scope =
+        raw === "" ? [] : raw.split(",").map((s) => s.trim()).filter(Boolean);
+    }
+
+    // Boolean flags
+    const archMatch = section.match(/architecture_contract_change\s*[:\s]+(true|false)/i);
+    if (archMatch) defaults.architecture_contract_change = archMatch[1].toLowerCase() === "true";
+
+    const uiMatch = section.match(/ui_evidence_required\s*[:\s]+(true|false)/i);
+    if (uiMatch) defaults.ui_evidence_required = uiMatch[1].toLowerCase() === "true";
+
+    // incident_tier — only p0/p1/p2/p3 are active tiers; none/- resolves to null.
+    const tierMatch = section.match(/incident_tier\s*[:\s]+(p0|p1|p2|p3|none|-)/i);
+    if (tierMatch) {
+      const t = tierMatch[1].toLowerCase();
+      defaults.incident_tier = t === "none" || t === "-" ? null : t;
+    }
+
+    return defaults;
   }
 
   /**
