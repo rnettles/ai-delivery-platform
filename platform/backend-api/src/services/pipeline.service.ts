@@ -810,8 +810,10 @@ export class PipelineService {
 
     // ── Execution mode: "next" ────────────────────────────────────────────────
     // Stop immediately after the entry role completes — do not advance downstream.
+    // Exception: verifier always routes based on PASS/FAIL regardless of mode, so
+    // operator-triggered verifier pipelines still loop back to implementer or sprint-controller.
     const executionMode = run.metadata.execution_mode as string | undefined;
-    if (executionMode === "next" && role === run.entry_point) {
+    if (executionMode === "next" && role === run.entry_point && role !== "verifier") {
       logger.info("Pipeline stopping after entry role (mode=next); PR merge gate deferred until sprint close-out", {
         pipeline_id: run.pipeline_id,
         role,
@@ -824,21 +826,21 @@ export class PipelineService {
     if (role === "verifier" && verificationPassed === false) {
       const attempts = (run.implementer_attempts ?? 0) + 1;
       if (attempts >= MAX_IMPLEMENTER_ATTEMPTS) {
-        logger.info("Implementer retry limit reached — cancelling pipeline", {
+        logger.info("Implementer retry limit reached — pausing for operator takeover", {
           pipeline_id: run.pipeline_id,
           implementer_attempts: attempts,
         });
-        const cancelled = await this.save(run, { current_step: role, status: "cancelled", steps });
+        const paused = await this.save(run, { current_step: role, status: "paused_takeover", steps });
         pipelineNotifierService.notify({
-          pipeline_id: cancelled.pipeline_id,
-          step: cancelled.current_step,
-          status: cancelled.status,
-          gate_required: false,
+          pipeline_id: paused.pipeline_id,
+          step: paused.current_step,
+          status: paused.status,
+          gate_required: true,
           artifact_paths: [],
-          metadata: cancelled.metadata,
+          metadata: paused.metadata,
           agent_caller: "System",
-        }).catch((err) => logger.error("Failed to send cancel notification (fixer limit)", { error: String(err) }));
-        return cancelled;
+        }).catch((err) => logger.error("Failed to send takeover notification (fixer limit)", { error: String(err) }));
+        return paused;
       }
       steps.push(this.newRunningStep("implementer", now));
       return this.save(run, { current_step: "implementer", status: "running", steps, implementer_attempts: attempts });
