@@ -26,6 +26,17 @@ Applies to all automated pipeline roles (planner, sprint-controller, implementer
 - Modify no more than 5 files per task.
 - Keep changes under 200 lines of code per task.
 
+> **Policy Precedence — RUL-007 Platform Override (Phase 8, 2026-04-28):**
+> The governance baseline (ai-project_template) allows up to 7 files and ~400 LOC in standard mode
+> and 12–15 files / 1200–1500 LOC in fast-track mode. The platform tightens this unconditionally
+> to 5 files / 200 LOC. This is an intentional, operator-approved narrowing recorded here as the
+> authoritative precedence decision for this platform deployment. Rationale: simpler task
+> decomposition reduces merge-conflict surface and keeps verifier gate latency low. The platform
+> does not implement a fast-track file/LOC escalation path; any task legitimately exceeding these
+> limits must be decomposed into multiple tasks by the Sprint Controller. Any future relaxation
+> requires an ADR update to global_rules.md, not a prompt-only change.
+> **Override authority:** platform operator (ai-delivery-platform owner) — ADR-031 Layer 3.
+
 ## Code Quality
 
 - Follow existing project conventions.

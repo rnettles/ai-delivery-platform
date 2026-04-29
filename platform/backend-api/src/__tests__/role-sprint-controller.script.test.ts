@@ -1021,3 +1021,252 @@ describe("Phase 7 — Orchestration and Instruction Gating", () => {
     expect(mocks.forRole).toHaveBeenCalled(); // LLM was invoked for next task staging
   });
 });
+
+// ─── Phase 9: Verification and Regression Coverage ──────────────────────────
+describe("Phase 9 — Verification and Regression Coverage", () => {
+  function makeValidLlmResponse() {
+    return {
+      sprint_plan: { sprint_id: "S02", phase_id: "PH-002", name: "Sprint 2", goals: ["goal"], tasks: ["S02-001"], status: "staged", execution_mode: "normal" },
+      first_task: { task_id: "S02-001", title: "Next feature", description: "Build it.", acceptance_criteria: ["Done"], estimated_effort: "S", files_likely_affected: ["src/f.ts"], status: "pending" },
+      task_flags: { fr_ids_in_scope: ["FR-2"], architecture_contract_change: false, ui_evidence_required: false, incident_tier: "none" },
+    };
+  }
+
+  function wireFreshSetup() {
+    mocks.readdir.mockResolvedValue([]);
+    mocks.readFile.mockRejectedValue(new Error("ENOENT"));
+    mocks.findFirst.mockResolvedValue(null);
+    mocks.getComposedPrompt.mockResolvedValue("system prompt");
+    mocks.requireRelevantDesignInputs.mockResolvedValue({ sample_files: [], project_name: "demo", clone_path: "C:/repo" });
+    mocks.get.mockResolvedValue({ project_id: "proj-1" });
+    mocks.getById.mockResolvedValue({ project_id: "proj-1", clone_path: "C:/repo", default_branch: "main" });
+    mocks.createPullRequestWithRecovery.mockResolvedValue({
+      pr: { number: 3, html_url: "https://github.com/test/pr/3" },
+      remediation_performed: false,
+    });
+    mocks.chatJson.mockResolvedValue(makeValidLlmResponse());
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.write.mockImplementation(async (_pid: string, name: string) => `artifacts/${name}`);
+    mocks.writeFile.mockResolvedValue(undefined);
+    mocks.mkdir.mockResolvedValue(undefined);
+    mocks.commitAll.mockResolvedValue(undefined);
+    mocks.pushBranch.mockResolvedValue(undefined);
+  });
+
+  // ── 9.1 Pre-stage status gate (SCT-A) ────────────────────────────────────
+
+  it("9.1 ready_for_verification status is treated as open and blocks fresh staging (reuses package)", async () => {
+    // Arrange: active task has status=ready_for_verification (awaiting verifier) — must block
+    mocks.findFirst.mockResolvedValue(null); // no verification_result.json
+    mocks.requireRelevantDesignInputs.mockResolvedValue({ sample_files: [], project_name: "demo", clone_path: "C:/repo" });
+    mocks.readdir.mockResolvedValue([{ isFile: () => true, name: "sprint_plan_s01.md" }]);
+    mocks.readFile.mockImplementation(async (filePath: string) => {
+      if (String(filePath).endsWith("sprint_plan_s01.md")) return "# Sprint Plan: S01\n**Phase:** PH-001\n**Name:** In progress\n**Status:** staged\n## Goals\n- g\n## Tasks\n- S01-001";
+      if (String(filePath).endsWith("AI_IMPLEMENTATION_BRIEF.md")) return `# AI Implementation Brief\n**Task ID:** S01-001\n**Sprint:** S01\n**Phase:** PH-001\n## Task Description\nDo it.\n## Files Likely Affected\n- \`f.ts\`\n## Acceptance Criteria (Deliverables Checklist)\n- [ ] done\n## Task Flags\n- **fr_ids_in_scope:** []\n- **architecture_contract_change:** false\n- **ui_evidence_required:** false\n- **incident_tier:** "none"`;
+      if (String(filePath).endsWith("current_task.json")) return JSON.stringify({ task_id: "S01-001", status: "ready_for_verification" });
+      throw new Error("ENOENT");
+    });
+    mocks.get.mockResolvedValue({ project_id: "proj-1" });
+    mocks.getById.mockResolvedValue({ project_id: "proj-1", clone_path: "C:/repo" });
+
+    const script = new SprintControllerScript();
+    const context = makeContext();
+    const out = await script.run({ pipeline_id: "pipe-1", previous_artifacts: [] }, context) as Record<string, unknown>;
+
+    // Must reuse existing package (mode=setup due to active task) and NOT call LLM
+    expect(mocks.forRole).not.toHaveBeenCalled();
+    expect(context.notify).toHaveBeenCalledWith(expect.stringContaining("still open"));
+    expect((out as { mode: string }).mode).toBe("setup");
+    expect((out as { first_task: { task_id: string } }).first_task.task_id).toBe("S01-001");
+  });
+
+  // ── 9.1 Canonical brief_path invariant (PTH-001) ─────────────────────────
+
+  it("9.1 current_task.json contains brief_path referencing canonical active brief path", async () => {
+    wireFreshSetup();
+
+    const script = new SprintControllerScript();
+    await script.run({ pipeline_id: "pipe-1", previous_artifacts: [] }, makeContext());
+
+    const writeCall = mocks.write.mock.calls.find((c: unknown[]) => c[1] === "current_task.json");
+    expect(writeCall).toBeDefined();
+    const written = JSON.parse(writeCall![2] as string);
+    expect(written.brief_path).toBeDefined();
+    expect(written.brief_path).toContain("AI_IMPLEMENTATION_BRIEF.md");
+    expect(written.brief_path).toContain("active");
+    // Must NOT be task-suffixed
+    expect(written.brief_path).not.toMatch(/AI_IMPLEMENTATION_BRIEF_S\d/);
+  });
+
+  it("9.1 brief_path in current_task.json is also persisted to repo via writeFile", async () => {
+    wireFreshSetup();
+
+    const script = new SprintControllerScript();
+    await script.run({ pipeline_id: "pipe-1", previous_artifacts: [] }, makeContext());
+
+    const repoWriteCall = mocks.writeFile.mock.calls.find((c: unknown[]) =>
+      String(c[0]).endsWith("current_task.json")
+    );
+    expect(repoWriteCall).toBeDefined();
+    const repoWritten = JSON.parse(repoWriteCall![1] as string);
+    expect(repoWritten.brief_path).toBeDefined();
+    expect(repoWritten.brief_path).toContain("AI_IMPLEMENTATION_BRIEF.md");
+  });
+
+  // ── 9.2 Full 3-phase close-out integration (STOP boundaries) ─────────────
+
+  it("9.2 full 3-phase close-out: Phase 1 -> STOP -> Phase 2 -> STOP -> Phase 3 produces setup output", async () => {
+    // Phase 1: verifier PASS -> close task
+    const verContent = JSON.stringify({ result: "PASS", task_id: "S01-001", summary: "ok" });
+    const ctContent = JSON.stringify({ task_id: "S01-001" });
+
+    function phase1Mocks() {
+      mocks.findFirst.mockImplementation(async (paths: string[]) => {
+        if (paths.some((p) => p.includes("verification_result.json"))) return { path: "artifacts/verification_result.json", content: verContent };
+        if (paths.some((p) => p.includes("current_task.json"))) return { path: "artifacts/current_task.json", content: ctContent };
+        if (paths.some((p) => p.includes("implementation_summary"))) return { path: "artifacts/implementation_summary.md", content: "# Summary" };
+        if (paths.some((p) => p.includes("sprint_plan_"))) return { path: "artifacts/sprint_plan_s01.md", content: "# Sprint Plan: S01" };
+        return null;
+      });
+      mocks.get.mockResolvedValue({ sprint_branch: "feature/S01-001" });
+    }
+
+    const script = new SprintControllerScript();
+
+    // Phase 1
+    phase1Mocks();
+    const p1Out = await script.run({ pipeline_id: "pipe-1", previous_artifacts: ["artifacts/verification_result.json", "artifacts/current_task.json", "artifacts/implementation_summary.md", "artifacts/sprint_plan_s01.md"] }, makeContext()) as Record<string, unknown>;
+    expect(p1Out.mode).toBe("close_out");
+    expect(p1Out.close_out_phase_completed).toBe("task_close");
+    expect(p1Out.stop_required).toBe(true);
+
+    // Phase 2: operator confirms PR merged
+    vi.clearAllMocks();
+    mocks.write.mockImplementation(async (_pid: string, name: string) => `artifacts/${name}`);
+    const closeoutAfterP1 = JSON.stringify({ sprint_id: "S01", last_completed_task_id: "S01-001", sprint_branch: "feature/S01-001", sprint_complete_artifacts: [], close_out_phase_completed: "task_close" });
+    mocks.findFirst.mockImplementation(async (paths: string[]) => {
+      if (paths.some((p) => p.includes("sprint_closeout.json"))) return { path: "artifacts/sprint_closeout.json", content: closeoutAfterP1 };
+      return null;
+    });
+    const p2Out = await script.run({ pipeline_id: "pipe-1", previous_artifacts: ["artifacts/sprint_closeout.json"], close_out_phase: "pr_confirmed" }, makeContext()) as Record<string, unknown>;
+    expect(p2Out.mode).toBe("close_out");
+    expect(p2Out.close_out_phase_completed).toBe("pr_confirmed");
+    expect(p2Out.stop_required).toBe(true);
+
+    // Phase 3: operator stages next task
+    vi.clearAllMocks();
+    mocks.write.mockImplementation(async (_pid: string, name: string) => `artifacts/${name}`);
+    mocks.writeFile.mockResolvedValue(undefined);
+    mocks.mkdir.mockResolvedValue(undefined);
+    mocks.commitAll.mockResolvedValue(undefined);
+    mocks.pushBranch.mockResolvedValue(undefined);
+    const closeoutAfterP2 = JSON.stringify({ sprint_id: "S01", last_completed_task_id: "S01-001", sprint_branch: "feature/S01-001", sprint_complete_artifacts: [], close_out_phase_completed: "pr_confirmed" });
+    mocks.findFirst.mockImplementation(async (paths: string[]) => {
+      if (paths.some((p) => p.includes("sprint_closeout.json"))) return { path: "artifacts/sprint_closeout.json", content: closeoutAfterP2 };
+      return null;
+    });
+    mocks.readdir.mockResolvedValue([]);
+    mocks.readFile.mockRejectedValue(new Error("ENOENT"));
+    mocks.requireRelevantDesignInputs.mockResolvedValue({ sample_files: [], project_name: "demo", clone_path: "C:/repo" });
+    mocks.getComposedPrompt.mockResolvedValue("system prompt");
+    mocks.get.mockResolvedValue({ project_id: "proj-1" });
+    mocks.getById.mockResolvedValue({ project_id: "proj-1", clone_path: "C:/repo", default_branch: "main" });
+    mocks.chatJson.mockResolvedValue(makeValidLlmResponse());
+    mocks.createPullRequestWithRecovery.mockResolvedValue({ pr: { number: 4, html_url: "https://github.com/test/pr/4" }, remediation_performed: false });
+
+    const p3Out = await script.run({ pipeline_id: "pipe-1", previous_artifacts: ["artifacts/sprint_closeout.json"], close_out_phase: "stage_next" }, makeContext()) as Record<string, unknown>;
+    expect(p3Out.mode).toBe("setup");
+    expect(mocks.forRole).toHaveBeenCalled();
+  });
+
+  // ── 9.3 Negative paths ────────────────────────────────────────────────────
+
+  it("9.3 missing implementation_summary blocks Phase 1 close-out", async () => {
+    mocks.findFirst.mockImplementation(async (paths: string[]) => {
+      if (paths.some((p) => p.includes("verification_result.json"))) return { path: "artifacts/verification_result.json", content: JSON.stringify({ result: "PASS", task_id: "S01-001", summary: "ok" }) };
+      if (paths.some((p) => p.includes("current_task.json"))) return { path: "artifacts/current_task.json", content: JSON.stringify({ task_id: "S01-001" }) };
+      // implementation_summary intentionally absent
+      return null;
+    });
+    mocks.get.mockResolvedValue({ sprint_branch: "feature/S01-001" });
+
+    const script = new SprintControllerScript();
+    await expect(
+      script.run({ pipeline_id: "pipe-1", previous_artifacts: ["artifacts/verification_result.json", "artifacts/current_task.json"] }, makeContext())
+    ).rejects.toThrow("implementation_summary");
+  });
+
+  it("9.3 active-slot sprint_state.json is (re)initialized on every fresh staging run", async () => {
+    wireFreshSetup();
+
+    const script = new SprintControllerScript();
+    await script.run({ pipeline_id: "pipe-1", previous_artifacts: [] }, makeContext());
+
+    const stateWrites = mocks.writeFile.mock.calls.filter((c: unknown[]) => String(c[0]).endsWith("sprint_state.json"));
+    expect(stateWrites.length).toBeGreaterThanOrEqual(1);
+    const last = JSON.parse(stateWrites[stateWrites.length - 1][1] as string);
+    expect(last.active_task_id).toBeDefined();
+    expect(last.completed_tasks).toEqual([]);
+  });
+
+  it("9.3 Phase 3 gate rejects stage_next when Phase 2 has not been confirmed (task_close state)", async () => {
+    const closeoutAtTaskClose = JSON.stringify({ sprint_id: "S01", close_out_phase_completed: "task_close", last_completed_task_id: "S01-001", sprint_complete_artifacts: [] });
+    mocks.findFirst.mockImplementation(async (paths: string[]) => {
+      if (paths.some((p) => p.includes("sprint_closeout.json"))) return { path: "artifacts/sprint_closeout.json", content: closeoutAtTaskClose };
+      return null;
+    });
+
+    const script = new SprintControllerScript();
+    await expect(
+      script.run({ pipeline_id: "pipe-1", previous_artifacts: ["artifacts/sprint_closeout.json"], close_out_phase: "stage_next" }, makeContext())
+    ).rejects.toThrow("Phase 2 (pr_confirmed) must be completed first");
+  });
+
+  // ── 9.4 Schema completeness for both output variants ─────────────────────
+
+  it("9.4 setup output contains all required non-empty schema fields", async () => {
+    wireFreshSetup();
+
+    const script = new SprintControllerScript();
+    const out = await script.run({ pipeline_id: "pipe-1", previous_artifacts: [] }, makeContext()) as Record<string, unknown>;
+
+    expect(out.mode).toBe("setup");
+    expect(typeof out.sprint_id).toBe("string"); expect(out.sprint_id).not.toBe("");
+    expect(typeof out.sprint_plan_path).toBe("string"); expect(out.sprint_plan_path).not.toBe("");
+    expect(typeof out.brief_path).toBe("string"); expect(out.brief_path).not.toBe("");
+    expect(typeof out.current_task_path).toBe("string"); expect(out.current_task_path).not.toBe("");
+    expect(typeof out.sprint_state_path).toBe("string"); expect(out.sprint_state_path).not.toBe("");
+    expect(Array.isArray((out as { artifact_paths: string[] }).artifact_paths)).toBe(true);
+    expect((out as { artifact_paths: string[] }).artifact_paths.length).toBeGreaterThan(0);
+  });
+
+  it("9.4 close-out output contains all required non-empty schema fields", async () => {
+    mocks.findFirst.mockImplementation(async (paths: string[]) => {
+      if (paths.some((p) => p.includes("verification_result.json"))) return { path: "artifacts/verification_result.json", content: JSON.stringify({ result: "PASS", task_id: "S01-001", summary: "ok" }) };
+      if (paths.some((p) => p.includes("current_task.json"))) return { path: "artifacts/current_task.json", content: JSON.stringify({ task_id: "S01-001" }) };
+      if (paths.some((p) => p.includes("implementation_summary"))) return { path: "artifacts/implementation_summary.md", content: "# Summary" };
+      if (paths.some((p) => p.includes("sprint_plan_"))) return { path: "artifacts/sprint_plan_s01.md", content: "# Sprint Plan: S01" };
+      return null;
+    });
+    mocks.get.mockResolvedValue({ sprint_branch: "feature/S01-001" });
+
+    const script = new SprintControllerScript();
+    const out = await script.run(
+      { pipeline_id: "pipe-1", previous_artifacts: ["artifacts/verification_result.json", "artifacts/current_task.json", "artifacts/implementation_summary.md", "artifacts/sprint_plan_s01.md"] },
+      makeContext()
+    ) as Record<string, unknown>;
+
+    expect(out.mode).toBe("close_out");
+    expect(typeof out.sprint_id).toBe("string"); expect(out.sprint_id).not.toBe("");
+    expect(typeof out.last_completed_task_id).toBe("string"); expect(out.last_completed_task_id).not.toBe("");
+    expect(typeof out.closeout_path).toBe("string"); expect(out.closeout_path).not.toBe("");
+    expect(out.close_out_phase_completed).toBe("task_close");
+    expect(out.stop_required).toBe(true);
+    expect(Array.isArray((out as { sprint_complete_artifacts: string[] }).sprint_complete_artifacts)).toBe(true);
+    expect(Array.isArray((out as { artifact_paths: string[] }).artifact_paths)).toBe(true);
+    expect((out as { artifact_paths: string[] }).artifact_paths).toContain(out.closeout_path as string);
+  });
+});

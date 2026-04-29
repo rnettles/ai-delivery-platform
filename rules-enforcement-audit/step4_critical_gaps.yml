@@ -8,6 +8,13 @@ behavioral_conflicts:
       A hard ceiling of ≤ 5 files and ≤ 200 lines of code applies to every
       task in all modes, with no Fast Track escalation path.
     conflict_type: narrowing
+    resolution: platform_override_approved
+    resolution_date: "2026-04-28"
+    resolution_notes: >
+      Precedence decision codified in platform/governance/rules/global_rules.md
+      (Implementation Limits section, Phase 8 annotation). Platform deliberately
+      tightens governance baseline. Any task exceeding limits must be decomposed
+      by Sprint Controller. Future relaxation requires ADR update.
     risk: >
       Any task legitimately planned under reference Fast Track limits (e.g.,
       10 files, 800 LOC) will be structurally rejected by the target Verifier

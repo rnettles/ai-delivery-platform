@@ -106,7 +106,11 @@ export interface SprintControllerCloseOutOutput {
 export type SprintControllerOutput = SprintControllerSetupOutput | SprintControllerCloseOutOutput;
 
 const SPRINT_READY_PHASE_STATUSES = new Set(["Planning", "Approved"]);
-const OPEN_TASK_STATUSES = new Set(["pending", "in_progress", "active", "open"]);
+/**
+ * Phase 9.1 (SCT-A, PTH-001): Statuses that indicate a task is still in-flight.
+ * Includes ready_for_verification so a task awaiting verifier PASS also blocks staging.
+ */
+const OPEN_TASK_STATUSES = new Set(["pending", "in_progress", "active", "open", "ready_for_verification"]);
 
 /** Phase 5.1 (TFC-001): Valid incident_tier values. */
 const VALID_INCIDENT_TIERS = new Set<string>(["none", "p0", "p1", "p2", "p3"]);
@@ -391,12 +395,16 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
     );
 
     // Write current_task.json — required by Verifier and Fixer
+    // Phase 9.1 (PTH-001): brief_path must reference the canonical active brief path so Implementer
+    // and Verifier can resolve the brief without ambiguity.
+    const canonicalBriefPath = path.join("project_work", "ai_project_tasks", "active", "AI_IMPLEMENTATION_BRIEF.md");
     const currentTask = {
       task_id: llm.first_task.task_id,
       title: llm.first_task.title,
       description: llm.first_task.description,
       assigned_to: "implementer",
       status: "pending",
+      brief_path: canonicalBriefPath,
       artifacts: [],
     };
     const currentTaskPath = await artifactService.write(
