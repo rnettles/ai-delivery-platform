@@ -14,6 +14,13 @@ import { HttpError } from "../utils/http-error";
 export interface SprintControllerInput {
   previous_artifacts?: string[];
   pipeline_id?: string;
+  /**
+   * Phase 7 (SCT-006, ORCH-001): Operator-supplied close-out phase token. Absent or "task_close"
+   * triggers Phase 1 (task close on verifier PASS). "pr_confirmed" triggers Phase 2 (record PR
+   * merge). "stage_next" triggers Phase 3 (stage next task — requires Phases 1 and 2 complete).
+   * The system never auto-advances between phases; every phase transition requires an explicit token.
+   */
+  close_out_phase?: "task_close" | "pr_confirmed" | "stage_next";
 }
 
 /**
@@ -52,14 +59,24 @@ export interface SprintPlan {
   goals: string[];
   tasks: string[];
   status: "staged";
+  /** Phase 5.3 (SCT-005, GTR-003, RUL-008): execution lane; "fast-track" triggers prerequisite enforcement. */
+  execution_mode?: "normal" | "fast-track";
+  /** Required when execution_mode is fast-track. */
+  fast_track_lane?: string;
+  fast_track_rationale?: string;
+  fast_track_intake_id?: string;
 }
 
-export interface SprintControllerOutput {
+/** Setup-mode output: emitted when a new sprint task package is staged. */
+export interface SprintControllerSetupOutput {
+  mode: "setup";
   sprint_id: string;
   phase_id: string;
   sprint_plan_path: string;
   brief_path: string;
   current_task_path: string;
+  /** 6.1 (SCT sprint_state): artifact-service path for sprint_state.json written at staging. Empty when no project is configured. */
+  sprint_state_path: string;
   task_flags: TaskFlags;
   first_task: SprintTask;
   sprint_branch?: string;
@@ -68,8 +85,53 @@ export interface SprintControllerOutput {
   artifact_paths: string[];
 }
 
+/** Close-out-mode output: emitted after completing Phase 1 or Phase 2 of the close-out protocol. */
+export interface SprintControllerCloseOutOutput {
+  mode: "close_out";
+  sprint_id: string;
+  phase_id: "closeout";
+  last_completed_task_id: string;
+  /** 6.3 (SCT close-out): formal output path for sprint_closeout.json; always non-empty on success. */
+  closeout_path: string;
+  /** Phase 7 (SCT-006): the close-out protocol phase that was just completed. */
+  close_out_phase_completed: "task_close" | "pr_confirmed";
+  /** Phase 7 (SCT-006): always true — operator must supply a close_out_phase token to advance. */
+  stop_required: true;
+  sprint_branch?: string;
+  sprint_complete_artifacts: string[];
+  artifact_paths: string[];
+}
+
+/** Discriminated union covering both operating modes. Narrow on `mode` before reading mode-specific fields. */
+export type SprintControllerOutput = SprintControllerSetupOutput | SprintControllerCloseOutOutput;
+
 const SPRINT_READY_PHASE_STATUSES = new Set(["Planning", "Approved"]);
 const OPEN_TASK_STATUSES = new Set(["pending", "in_progress", "active", "open"]);
+
+/** Phase 5.1 (TFC-001): Valid incident_tier values. */
+const VALID_INCIDENT_TIERS = new Set<string>(["none", "p0", "p1", "p2", "p3"]);
+
+/**
+ * Phase 5.1 (TFC-001): Validates all four required task flags are present and non-null.
+ * Called before brief emission; throws MISSING_TASK_FLAGS on any violation.
+ * Sprint-controller is the sole authority for task flags (TFC-003).
+ */
+function validateRequiredTaskFlags(flags: TaskFlags): void {
+  const missing: string[] = [];
+  if (!Array.isArray(flags.fr_ids_in_scope)) missing.push("fr_ids_in_scope");
+  if (typeof flags.architecture_contract_change !== "boolean") missing.push("architecture_contract_change");
+  if (typeof flags.ui_evidence_required !== "boolean") missing.push("ui_evidence_required");
+  if (!flags.incident_tier || !VALID_INCIDENT_TIERS.has(flags.incident_tier)) missing.push("incident_tier");
+  if (missing.length > 0) {
+    throw new HttpError(
+      422,
+      "MISSING_TASK_FLAGS",
+      `Sprint staging is blocked: the following required task flags are missing or null: ${missing.join(", ")}. ` +
+        `All four required flags must be present in every implementation brief (AI_TASK_FLAGS_CONTRACT.md TFC-001).`,
+      { missing_flags: missing }
+    );
+  }
+}
 
 interface LlmResponse {
   sprint_plan: SprintPlan;
@@ -118,8 +180,20 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       additionalProperties: true,
     },
     output_schema: {
-      type: "object",
-      required: ["sprint_id", "phase_id", "sprint_plan_path", "brief_path", "current_task_path", "task_flags", "first_task"],
+      oneOf: [
+        {
+          title: "setup",
+          type: "object",
+          properties: { mode: { const: "setup" } },
+          required: ["mode", "sprint_id", "sprint_plan_path", "brief_path", "current_task_path", "sprint_state_path", "task_flags", "first_task", "artifact_paths"],
+        },
+        {
+          title: "close_out",
+          type: "object",
+          properties: { mode: { const: "close_out" } },
+          required: ["mode", "sprint_id", "last_completed_task_id", "closeout_path", "close_out_phase_completed", "stop_required", "sprint_complete_artifacts", "artifact_paths"],
+        },
+      ],
     },
     tags: ["role", "sprint-controller", "planning"],
   };
@@ -128,11 +202,21 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
     const typed = input as Partial<SprintControllerInput>;
     const pipelineId = typed.pipeline_id ?? context.correlation_id ?? context.execution_id;
 
-    context.log("Sprint Controller running", { pipeline_id: pipelineId });
-
     const previousArtifacts = typed.previous_artifacts ?? [];
+    const closeOutPhase = typed.close_out_phase;
 
-    // Close-out mode: verifier has produced verification_result.json (PASS/FAIL)
+    context.log("Sprint Controller running", { pipeline_id: pipelineId, close_out_phase: closeOutPhase ?? "none" });
+
+    // Phase 7.1/7.2: Explicit operator tokens are the only path to Phase 2 and Phase 3.
+    // No implicit transition from PASS detection to next-task staging is permitted.
+    if (closeOutPhase === "stage_next") {
+      return this.runCloseOutPhase3(pipelineId, previousArtifacts, context);
+    }
+    if (closeOutPhase === "pr_confirmed") {
+      return this.runCloseOutPhase2(pipelineId, previousArtifacts, context);
+    }
+
+    // Phase 1 close-out: triggered by verifier PASS (no explicit phase token needed).
     const verificationArtifact = await artifactService.findFirst(
       previousArtifacts.filter((p) => p.includes("verification_result.json"))
     );
@@ -147,7 +231,7 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
     pipelineId: string,
     previousArtifacts: string[],
     context: ScriptExecutionContext
-  ): Promise<SprintControllerOutput> {
+  ): Promise<SprintControllerSetupOutput> {
     context.notify("🗂️ Breaking phase plan into sprint tasks and drafting implementation brief...");
 
     const designInputs = await designInputGateService.requireRelevantDesignInputs(pipelineId, "sprint-controller");
@@ -253,6 +337,16 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
 
     context.notify(`🎯 First task identified: *${llm.first_task.task_id}* — ${llm.first_task.title}\n> Effort: ${llm.first_task.estimated_effort} | ${llm.first_task.files_likely_affected.length} file(s) likely affected`);
 
+    // Phase 5.1 (TFC-001): Validate all four required task flags before brief emission.
+    // Sprint-controller is the sole authority for task flags (TFC-003); flags come only from the LLM call above.
+    validateRequiredTaskFlags(llm.task_flags);
+
+    // Phase 5.3 (SCT-005, GTR-003, RUL-008): Parse execution mode and enforce fast-track prerequisites.
+    const isFastTrack = llm.sprint_plan.execution_mode === "fast-track";
+    if (isFastTrack) {
+      await this.enforceFastTrackPrerequisites(designInputs.clone_path, llm.sprint_plan);
+    }
+
     // UX gate: user_flow.md must be Approved before staging any user-facing sprint (AI_RULES.md UX Artifact Rules)
     if (llm.task_flags?.ui_evidence_required === true) {
       const uxFlowPath = path.join(
@@ -288,7 +382,8 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
     );
 
     // Write AI_IMPLEMENTATION_BRIEF.md — the Implementer's source of truth
-    const briefContent = this.formatBrief(llm.first_task, llm.task_flags, llm.sprint_plan);
+    // Phase 5.4 (SCT-005): isFastTrack controls Fast Track Controls block injection.
+    const briefContent = this.formatBrief(llm.first_task, llm.task_flags, llm.sprint_plan, isFastTrack);
     const briefPath = await artifactService.write(
       pipelineId,
       "AI_IMPLEMENTATION_BRIEF.md",
@@ -316,6 +411,9 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       : await projectService.getByName("default");
 
     let sprintBranch: string | undefined;
+    let prNumber: number | undefined;
+    let prUrl: string | undefined;
+    let sprintStatePath = "";
     if (project) {
       sprintBranch = buildTaskFeatureBranch(llm.first_task.task_id);
       await projectGitService.ensureReady(project);
@@ -340,6 +438,16 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
         JSON.stringify(currentTask, null, 2),
         "utf-8"
       );
+      // 6.1 (SCT sprint_state): Write sprint_state.json to repo — documents active_task_id for downstream consumers.
+      const sprintStateDir = path.join(repoBase, "project_work", "ai_state");
+      await fs.mkdir(sprintStateDir, { recursive: true });
+      const sprintStateContent = JSON.stringify(
+        { sprint_id: llm.sprint_plan.sprint_id, active_task_id: llm.first_task.task_id, completed_tasks: [] },
+        null,
+        2
+      );
+      await fs.writeFile(path.join(sprintStateDir, "sprint_state.json"), sprintStateContent, "utf-8");
+      sprintStatePath = await artifactService.write(pipelineId, "sprint_state.json", sprintStateContent);
       await projectGitService.commitAll(
         project,
         sprintBranch,
@@ -362,6 +470,8 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
         base: project.default_branch,
       });
       const pr = prResult.pr;
+      prNumber = pr.number;
+      prUrl = pr.html_url;
       await pipelineService.setPrDetails(pipelineId, pr.number, pr.html_url, sprintBranch);
       if (prResult.remediation_performed) {
         context.notify("🛠️ PR create was auto-remediated after a 404 and retried once.");
@@ -376,16 +486,20 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       sprint_branch: sprintBranch,
     });
 
-    const output: SprintControllerOutput = {
+    const output: SprintControllerSetupOutput = {
+      mode: "setup",
       sprint_id: llm.sprint_plan.sprint_id,
       phase_id: llm.sprint_plan.phase_id,
       sprint_plan_path: sprintPlanPath,
       brief_path: briefPath,
       current_task_path: currentTaskPath,
+      sprint_state_path: sprintStatePath,
       task_flags: llm.task_flags,
       first_task: llm.first_task,
       sprint_branch: sprintBranch,
-      artifact_paths: [sprintPlanPath, briefPath, currentTaskPath],
+      pr_number: prNumber,
+      pr_url: prUrl,
+      artifact_paths: [sprintPlanPath, briefPath, currentTaskPath, ...(sprintStatePath ? [sprintStatePath] : [])],
     };
 
     return output;
@@ -396,7 +510,7 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
     previousArtifacts: string[],
     verificationJson: string,
     context: ScriptExecutionContext
-  ): Promise<SprintControllerOutput> {
+  ): Promise<SprintControllerCloseOutOutput> {
     const verification = JSON.parse(verificationJson) as { result?: string; summary?: string; task_id?: string };
     if (verification.result !== "PASS") {
       throw new Error("Sprint Controller close-out called before verifier PASS");
@@ -469,17 +583,24 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       ),
     ].filter((p): p is string => Boolean(p));
 
+    // Phase 7 (SCT-006): resolve sprint_id once so it can be written to both the artifact and the return.
+    const sprintId = this.extractSprintId(sprintPlanArtifact?.path, pipelineId);
+    const taskIdForCloseout = currentTaskId as string;
+
     const closeOutPath = await artifactService.write(
       pipelineId,
       "sprint_closeout.json",
       JSON.stringify(
         {
           pipeline_id: pipelineId,
+          sprint_id: sprintId,
           sprint_branch: run.sprint_branch,
-          last_completed_task_id: currentTaskId ?? verification.task_id ?? "n/a",
+          last_completed_task_id: taskIdForCloseout,
           closeout_role: "sprint-controller",
           closeout_scope: "task",
           gate_result: "PASS",
+          // Phase 7 (SCT-006): tracks which close-out protocol phase was last completed.
+          close_out_phase_completed: "task_close",
           verifier_summary: verification.summary ?? "",
           sprint_complete_artifacts: sprintCompleteArtifacts,
         },
@@ -488,36 +609,135 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       )
     );
 
-    context.log("Sprint Controller close-out complete", {
+    context.notify(
+      `🛑 Phase 1 complete. Task ${taskIdForCloseout} closed. ` +
+      "Open PR for feature/{task_id} → main, then re-invoke with close_out_phase: 'pr_confirmed'."
+    );
+    context.log("Sprint Controller close-out Phase 1 complete", {
       pipeline_id: pipelineId,
       sprint_branch: run.sprint_branch,
-      last_completed_task_id: currentTaskId ?? verification.task_id ?? "n/a",
+      last_completed_task_id: taskIdForCloseout,
     });
 
     return {
-      sprint_id: this.extractSprintId(sprintPlanArtifact?.path, pipelineId),
+      mode: "close_out",
+      sprint_id: sprintId,
       phase_id: "closeout",
-      sprint_plan_path: sprintPlanArtifact?.path ?? "",
-      brief_path: "",
-      current_task_path: "",
-      task_flags: {
-        fr_ids_in_scope: [],
-        architecture_contract_change: false,
-        ui_evidence_required: false,
-        incident_tier: "none",
-      },
-      first_task: {
-        task_id: currentTaskId ?? verification.task_id ?? "n/a",
-        title: "Task close-out",
-        description: "Publish task closeout artifacts for planner sprint closure",
-        acceptance_criteria: ["sprint_closeout.json emitted"],
-        estimated_effort: "S",
-        files_likely_affected: [],
-        status: "pending",
-      },
+      last_completed_task_id: taskIdForCloseout,
+      close_out_phase_completed: "task_close",
+      stop_required: true,
+      closeout_path: closeOutPath,
       sprint_branch: run.sprint_branch,
+      sprint_complete_artifacts: sprintCompleteArtifacts,
       artifact_paths: [closeOutPath],
     };
+  }
+
+  /**
+   * Phase 7 (SCT-006, ORCH-001): Close-Out Protocol Phase 2 — PR Confirmation.
+   * Requires explicit operator token close_out_phase: "pr_confirmed". Validates that Phase 1
+   * (task_close) was completed via sprint_closeout.json before updating phase state. Returns
+   * a STOP output; does not advance to Phase 3 automatically.
+   */
+  private async runCloseOutPhase2(
+    pipelineId: string,
+    previousArtifacts: string[],
+    context: ScriptExecutionContext
+  ): Promise<SprintControllerCloseOutOutput> {
+    const closeoutArtifact = await artifactService.findFirst(
+      previousArtifacts.filter((p) => p.includes("sprint_closeout.json"))
+    );
+    if (!closeoutArtifact?.content) {
+      throw new HttpError(
+        409,
+        "CLOSE_OUT_PHASE_GATE",
+        "Close-out Phase 2 (pr_confirmed) requires sprint_closeout.json from Phase 1. Complete Phase 1 first."
+      );
+    }
+    const closeout = JSON.parse(closeoutArtifact.content) as {
+      close_out_phase_completed?: string;
+      sprint_id?: string;
+      last_completed_task_id?: string;
+      sprint_branch?: string;
+      sprint_complete_artifacts?: string[];
+    };
+    if (closeout.close_out_phase_completed !== "task_close") {
+      throw new HttpError(
+        409,
+        "CLOSE_OUT_PHASE_GATE",
+        `Close-out Phase 2 cannot proceed: Phase 1 (task_close) must be completed first. ` +
+          `Found close_out_phase_completed=${closeout.close_out_phase_completed ?? "absent"}.`,
+        { close_out_phase_completed: closeout.close_out_phase_completed }
+      );
+    }
+
+    const updated = { ...closeout, close_out_phase_completed: "pr_confirmed" };
+    const closeOutPath = await artifactService.write(
+      pipelineId,
+      "sprint_closeout.json",
+      JSON.stringify(updated, null, 2)
+    );
+
+    context.notify(
+      `✅ Phase 2 complete. PR merge recorded for task ${closeout.last_completed_task_id ?? "n/a"}. ` +
+        "To stage the next task, re-invoke with close_out_phase: 'stage_next'."
+    );
+    context.log("Sprint Controller close-out Phase 2 complete", {
+      pipeline_id: pipelineId,
+      last_completed_task_id: closeout.last_completed_task_id,
+    });
+
+    return {
+      mode: "close_out",
+      sprint_id: closeout.sprint_id ?? pipelineId,
+      phase_id: "closeout",
+      last_completed_task_id: closeout.last_completed_task_id ?? "n/a",
+      close_out_phase_completed: "pr_confirmed",
+      stop_required: true,
+      closeout_path: closeOutPath,
+      sprint_branch: closeout.sprint_branch,
+      sprint_complete_artifacts: closeout.sprint_complete_artifacts ?? [],
+      artifact_paths: [closeOutPath],
+    };
+  }
+
+  /**
+   * Phase 7 (SCT-006, ORCH-001): Close-Out Protocol Phase 3 — Stage Next Task.
+   * Requires explicit operator token close_out_phase: "stage_next". Validates that Phase 2
+   * (pr_confirmed) was completed before allowing setup to proceed. Phase-skip protection:
+   * if close_out_phase_completed is not "pr_confirmed" the gate throws CLOSE_OUT_PHASE_GATE.
+   * Delegates to runSetup after the guard passes (7.3: preserves flow-task compatibility).
+   */
+  private async runCloseOutPhase3(
+    pipelineId: string,
+    previousArtifacts: string[],
+    context: ScriptExecutionContext
+  ): Promise<SprintControllerSetupOutput> {
+    const closeoutArtifact = await artifactService.findFirst(
+      previousArtifacts.filter((p) => p.includes("sprint_closeout.json"))
+    );
+    if (!closeoutArtifact?.content) {
+      throw new HttpError(
+        409,
+        "CLOSE_OUT_PHASE_GATE",
+        "Close-out Phase 3 (stage_next) requires sprint_closeout.json from Phase 1 and Phase 2. Complete both phases first."
+      );
+    }
+    const closeout = JSON.parse(closeoutArtifact.content) as { close_out_phase_completed?: string };
+    if (closeout.close_out_phase_completed !== "pr_confirmed") {
+      throw new HttpError(
+        409,
+        "CLOSE_OUT_PHASE_GATE",
+        `Close-out Phase 3 cannot proceed: Phase 2 (pr_confirmed) must be completed first. ` +
+          `Found close_out_phase_completed=${closeout.close_out_phase_completed ?? "absent"}.`,
+        { close_out_phase_completed: closeout.close_out_phase_completed }
+      );
+    }
+
+    context.notify("🚀 Phase 3: operator-authorized next-task staging...");
+    context.log("Sprint Controller close-out Phase 3 (stage_next) triggered by operator", { pipeline_id: pipelineId });
+
+    return this.runSetup(pipelineId, previousArtifacts, context);
   }
 
   private extractSprintId(sprintPlanPath: string | undefined, fallback: string): string {
@@ -529,11 +749,17 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
   private formatSprintMarkdown(plan: SprintPlan, firstTask: SprintTask): string {
     const goals = plan.goals.map((g) => `- ${g}`).join("\n");
     const tasks = plan.tasks.map((t) => `- ${t}`).join("\n");
+    const executionMode = plan.execution_mode ?? "normal";
+    const fastTrackMeta =
+      plan.execution_mode === "fast-track"
+        ? `\n**Lane:** ${plan.fast_track_lane ?? ""}\n**Rationale:** ${plan.fast_track_rationale ?? ""}\n**Intake:** ${plan.fast_track_intake_id ?? ""}`
+        : "";
     return `# Sprint Plan: ${plan.sprint_id}
 
 **Phase:** ${plan.phase_id}
 **Name:** ${plan.name}
 **Status:** ${plan.status}
+**Execution mode:** ${executionMode}${fastTrackMeta}
 
 ## Goals
 ${goals}
@@ -557,10 +783,26 @@ ${firstTask.acceptance_criteria.map((c) => `- ${c}`).join("\n")}
 `;
   }
 
-  private formatBrief(task: SprintTask, flags: TaskFlags, sprint: SprintPlan): string {
+  private formatBrief(task: SprintTask, flags: TaskFlags, sprint: SprintPlan, isFastTrack: boolean): string {
     const flagLines = Object.entries(flags)
       .map(([k, v]) => `- **${k}:** ${JSON.stringify(v)}`)
       .join("\n");
+
+    // Phase 5.4 (SCT-005): Inject Fast Track Controls block when execution mode is fast-track.
+    const fastTrackSection = isFastTrack
+      ? [
+          "",
+          "## Fast Track Controls",
+          "- **Execution lane:** fast-track (operator-approved)",
+          `- **Lane:** ${sprint.fast_track_lane ?? ""}`,
+          `- **Intake:** ${sprint.fast_track_intake_id ?? ""}`,
+          "- **Checkpoint commits:** required every 300–400 changed lines or at each logical boundary (AI_RUNTIME_GATES.md GTR-004)",
+          "- **File ceiling:** 12 files / ~1 200 LOC per step; hard ceiling 15 files / ~1 500 LOC (AI_RULES.md RUL-007)",
+          "- **Gate compliance:** lint + typecheck + focused tests required at each checkpoint (AI_RUNTIME_GATES.md GTR-004)",
+          "- **See:** `ai_dev_stack/ai_guidance/AI_RUNTIME_GATES.md` for full fast-track gate protocol",
+          "",
+        ].join("\n")
+      : "";
 
     return `# AI Implementation Brief
 
@@ -579,7 +821,7 @@ ${task.acceptance_criteria.map((c) => `- [ ] ${c}`).join("\n")}
 
 ## Task Flags
 ${flagLines}
-
+${fastTrackSection}
 ## Implementation Constraints
 - Modify no more than 5 files
 - Keep changes under ~200 lines of code
@@ -592,6 +834,43 @@ ${flagLines}
 - \`ai_dev_stack/ai_guidance/AI_RUNTIME_POLICY.md\`
 - \`ai_dev_stack/ai_guidance/AI_RUNTIME_GATES.md\`
 `;
+  }
+
+  /**
+   * Phase 5.3 (SCT-005, GTR-003, RUL-008): Enforces fast-track staging prerequisites.
+   * Throws FAST_TRACK_PREREQUISITES_MISSING if lane, rationale, or intake are absent from
+   * the sprint plan, or if next_steps.md does not record fast-track designation.
+   */
+  private async enforceFastTrackPrerequisites(clonePath: string, plan: SprintPlan): Promise<void> {
+    const missing: string[] = [];
+    if (!plan.fast_track_lane?.trim()) missing.push("lane (in sprint plan)");
+    if (!plan.fast_track_rationale?.trim()) missing.push("rationale (in sprint plan)");
+    if (!plan.fast_track_intake_id?.trim()) missing.push("intake ID (in sprint plan)");
+
+    const nextStepsPath = path.join(clonePath, "project_work", "ai_project_tasks", "next_steps.md");
+    let nextStepsContent: string | null = null;
+    try {
+      nextStepsContent = await fs.readFile(nextStepsPath, "utf-8");
+    } catch {
+      // file not found — absence counts as missing fast-track designation
+    }
+
+    if (!nextStepsContent) {
+      missing.push("fast-track designation in next_steps.md (file not found)");
+    } else if (!/fast.?track/i.test(nextStepsContent)) {
+      missing.push("fast-track designation in next_steps.md (not mentioned)");
+    }
+
+    if (missing.length > 0) {
+      throw new HttpError(
+        422,
+        "FAST_TRACK_PREREQUISITES_MISSING",
+        `Sprint staging as fast-track is blocked: required prerequisites are missing: ${missing.join("; ")}. ` +
+          `Fast Track mode requires operator direction recorded in sprint plan and next_steps.md ` +
+          `(SCT-005, GTR-003, RUL-008).`,
+        { missing_prerequisites: missing }
+      );
+    }
   }
 
   /**
@@ -738,7 +1017,10 @@ ${flagLines}
     pipelineId: string,
     activeTaskPackage: ActiveTaskPackage,
     context: ScriptExecutionContext
-  ): Promise<SprintControllerOutput> {
+  ): Promise<SprintControllerSetupOutput> {
+    // Phase 5.1 (TFC-001): Re-validate required task flags even for existing briefs to catch tampered/malformed artifacts.
+    validateRequiredTaskFlags(activeTaskPackage.taskFlags);
+
     const sprintPlanPath = await artifactService.write(
       pipelineId,
       activeTaskPackage.sprintPlanName,
@@ -766,11 +1048,13 @@ ${flagLines}
     });
 
     return {
+      mode: "setup",
       sprint_id: activeTaskPackage.sprintPlan.sprint_id,
       phase_id: activeTaskPackage.sprintPlan.phase_id,
       sprint_plan_path: sprintPlanPath,
       brief_path: briefPath,
       current_task_path: currentTaskPath,
+      sprint_state_path: "",
       task_flags: activeTaskPackage.taskFlags,
       first_task: activeTaskPackage.firstTask,
       sprint_branch: sprintBranch,

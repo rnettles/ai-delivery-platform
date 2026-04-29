@@ -17,6 +17,10 @@ const mocks = vi.hoisted(() => {
   const requireRelevantDesignInputs = vi.fn();
   const readdir = vi.fn();
   const readFile = vi.fn();
+  const writeFile = vi.fn();
+  const mkdir = vi.fn();
+  const commitAll = vi.fn();
+  const pushBranch = vi.fn();
 
   return {
     findFirst,
@@ -35,13 +39,19 @@ const mocks = vi.hoisted(() => {
     requireRelevantDesignInputs,
     readdir,
     readFile,
+    writeFile,
+    mkdir,
+    commitAll,
+    pushBranch,
   };
-});
+})
 
 vi.mock("fs/promises", () => ({
   default: {
     readdir: mocks.readdir,
     readFile: mocks.readFile,
+    writeFile: mocks.writeFile,
+    mkdir: mocks.mkdir,
   },
 }));
 
@@ -83,6 +93,8 @@ vi.mock("../services/project-git.service", () => ({
   projectGitService: {
     ensureReady: mocks.ensureReady,
     createBranch: mocks.createBranch,
+    commitAll: mocks.commitAll,
+    push: mocks.pushBranch,
   },
 }));
 
@@ -173,6 +185,10 @@ Implement brand tokens.
     });
     mocks.get.mockResolvedValue({ project_id: "proj-1" });
     mocks.getById.mockResolvedValue({ project_id: "proj-1", clone_path: "C:/repo" });
+    mocks.writeFile.mockResolvedValue(undefined);
+    mocks.mkdir.mockResolvedValue(undefined);
+    mocks.commitAll.mockResolvedValue(undefined);
+    mocks.pushBranch.mockResolvedValue(undefined);
   });
 
   it("reuses the existing active task package without calling the LLM or creating a branch", async () => {
@@ -287,6 +303,721 @@ Implement brand tokens.
       makeContext()
     );
 
-    expect((output as { first_task: { task_id: string } }).first_task.task_id).toBe("S01-001");
+    const out = output as { mode: string; last_completed_task_id: string; close_out_phase_completed: string; stop_required: boolean };
+    expect(out.mode).toBe("close_out");
+    expect(out.last_completed_task_id).toBe("S01-001");
+    expect(out.close_out_phase_completed).toBe("task_close");
+    expect(out.stop_required).toBe(true);
+  });
+});
+
+// ─── Phase 5: Task Flags and Fast-Track Controls ────────────────────────────
+describe("Phase 5 — Task Flags and Fast-Track Controls", () => {
+  /** Minimal valid LLM response for fresh runSetup(). */
+  function makeLlmResponse(overrides: {
+    task_flags?: Record<string, unknown>;
+    sprint_plan?: Record<string, unknown>;
+  } = {}) {
+    return {
+      sprint_plan: {
+        sprint_id: "S01",
+        phase_id: "PH-001",
+        name: "Sprint 1",
+        goals: ["Deliver feature"],
+        tasks: ["S01-001"],
+        status: "staged",
+        execution_mode: "normal",
+        ...overrides.sprint_plan,
+      },
+      first_task: {
+        task_id: "S01-001",
+        title: "Implement feature",
+        description: "Do it.",
+        acceptance_criteria: ["Done"],
+        estimated_effort: "S",
+        files_likely_affected: ["src/file.ts"],
+        status: "pending",
+      },
+      task_flags: {
+        fr_ids_in_scope: ["FR-1"],
+        architecture_contract_change: false,
+        ui_evidence_required: false,
+        incident_tier: "none",
+        ...overrides.task_flags,
+      },
+    };
+  }
+
+  /** Wire common mocks for a fresh runSetup() path (no active task, no phase plan in pipeline). */
+  function setupFreshRun() {
+    mocks.readdir.mockResolvedValue([]);
+    mocks.readFile.mockRejectedValue(new Error("ENOENT"));
+    mocks.findFirst.mockResolvedValue(null);
+    mocks.getComposedPrompt.mockResolvedValue("system prompt");
+    mocks.requireRelevantDesignInputs.mockResolvedValue({
+      sample_files: [],
+      project_name: "demo",
+      clone_path: "C:/repo",
+    });
+    mocks.get.mockResolvedValue({ project_id: "proj-1" });
+    mocks.getById.mockResolvedValue({ project_id: "proj-1", clone_path: "C:/repo", default_branch: "main" });
+    mocks.createPullRequestWithRecovery.mockResolvedValue({
+      pr: { number: 1, html_url: "https://github.com/test/pr/1" },
+      remediation_performed: false,
+    });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.write.mockImplementation(async (_pipelineId: string, artifactName: string) => `artifacts/${artifactName}`);
+    mocks.writeFile.mockResolvedValue(undefined);
+    mocks.mkdir.mockResolvedValue(undefined);
+    mocks.commitAll.mockResolvedValue(undefined);
+    mocks.pushBranch.mockResolvedValue(undefined);
+  });
+
+  // ── 5.1 Required flag validation ──────────────────────────────────────────
+
+  it("5.1 throws MISSING_TASK_FLAGS when LLM omits incident_tier", async () => {
+    setupFreshRun();
+    mocks.chatJson.mockResolvedValue(
+      makeLlmResponse({ task_flags: { incident_tier: undefined } })
+    );
+
+    const script = new SprintControllerScript();
+    await expect(
+      script.run({ pipeline_id: "pipe-1", previous_artifacts: [] }, makeContext())
+    ).rejects.toThrow("required task flags are missing or null");
+  });
+
+  it("5.1 throws MISSING_TASK_FLAGS when architecture_contract_change is null", async () => {
+    setupFreshRun();
+    mocks.chatJson.mockResolvedValue(
+      makeLlmResponse({ task_flags: { architecture_contract_change: null } })
+    );
+
+    const script = new SprintControllerScript();
+    await expect(
+      script.run({ pipeline_id: "pipe-1", previous_artifacts: [] }, makeContext())
+    ).rejects.toThrow("required task flags are missing or null");
+  });
+
+  it("5.1 throws MISSING_TASK_FLAGS when fr_ids_in_scope is not an array", async () => {
+    setupFreshRun();
+    mocks.chatJson.mockResolvedValue(
+      makeLlmResponse({ task_flags: { fr_ids_in_scope: null } })
+    );
+
+    const script = new SprintControllerScript();
+    await expect(
+      script.run({ pipeline_id: "pipe-1", previous_artifacts: [] }, makeContext())
+    ).rejects.toThrow("required task flags are missing or null");
+  });
+
+  it("5.1 accepts an empty fr_ids_in_scope array as valid", async () => {
+    setupFreshRun();
+    mocks.chatJson.mockResolvedValue(
+      makeLlmResponse({ task_flags: { fr_ids_in_scope: [] } })
+    );
+
+    const script = new SprintControllerScript();
+    // Should not throw on empty array — empty is allowed; only null/undefined is a violation.
+    await expect(
+      script.run({ pipeline_id: "pipe-1", previous_artifacts: [] }, makeContext())
+    ).resolves.toBeDefined();
+  });
+
+  // ── 5.2 Sprint-controller as sole flag authority (TFC-003) ─────────────────
+
+  it("5.2 upstream task_flags in input are ignored; output uses LLM-generated flags (TFC-003)", async () => {
+    setupFreshRun();
+    const llmFlags = { fr_ids_in_scope: ["FR-99"], architecture_contract_change: true, ui_evidence_required: false, incident_tier: "p1" };
+    mocks.chatJson.mockResolvedValue(makeLlmResponse({ task_flags: llmFlags }));
+
+    const script = new SprintControllerScript();
+    // Pass task_flags in raw input — sprint-controller must ignore them.
+    const output = await script.run(
+      { pipeline_id: "pipe-1", previous_artifacts: [], task_flags: { fr_ids_in_scope: ["FR-UPSTREAM"], incident_tier: "p0" } } as Record<string, unknown>,
+      makeContext()
+    );
+
+    const out = output as { task_flags: { fr_ids_in_scope: string[]; incident_tier: string } };
+    expect(out.task_flags.fr_ids_in_scope).toEqual(["FR-99"]);
+    expect(out.task_flags.incident_tier).toBe("p1");
+  });
+
+  // ── 5.3 Fast-track prerequisite enforcement ───────────────────────────────
+
+  it("5.3 throws FAST_TRACK_PREREQUISITES_MISSING when fast-track sprint plan is missing lane", async () => {
+    setupFreshRun();
+    mocks.chatJson.mockResolvedValue(
+      makeLlmResponse({
+        sprint_plan: {
+          execution_mode: "fast-track",
+          // fast_track_lane intentionally absent
+          fast_track_rationale: "Deadline",
+          fast_track_intake_id: "RC-001",
+        },
+      })
+    );
+    // next_steps.md mentions fast-track so only the lane check fails
+    mocks.readFile.mockImplementation(async (filePath: string) => {
+      if (String(filePath).includes("next_steps.md")) return "This sprint runs in fast-track mode.";
+      throw new Error("ENOENT");
+    });
+
+    const script = new SprintControllerScript();
+    await expect(
+      script.run({ pipeline_id: "pipe-1", previous_artifacts: [] }, makeContext())
+    ).rejects.toThrow("fast-track is blocked");
+  });
+
+  it("5.3 throws FAST_TRACK_PREREQUISITES_MISSING when next_steps.md does not mention fast-track", async () => {
+    setupFreshRun();
+    mocks.chatJson.mockResolvedValue(
+      makeLlmResponse({
+        sprint_plan: {
+          execution_mode: "fast-track",
+          fast_track_lane: "ui-critical",
+          fast_track_rationale: "Deadline pressure",
+          fast_track_intake_id: "RC-042",
+        },
+      })
+    );
+    // next_steps.md exists but does NOT mention fast-track
+    mocks.readFile.mockImplementation(async (filePath: string) => {
+      if (String(filePath).includes("next_steps.md")) return "Next steps: implement the feature normally.";
+      throw new Error("ENOENT");
+    });
+
+    const script = new SprintControllerScript();
+    await expect(
+      script.run({ pipeline_id: "pipe-1", previous_artifacts: [] }, makeContext())
+    ).rejects.toThrow("fast-track is blocked");
+  });
+
+  it("5.3 throws FAST_TRACK_PREREQUISITES_MISSING when next_steps.md is absent", async () => {
+    setupFreshRun();
+    mocks.chatJson.mockResolvedValue(
+      makeLlmResponse({
+        sprint_plan: {
+          execution_mode: "fast-track",
+          fast_track_lane: "ui-critical",
+          fast_track_rationale: "Deadline pressure",
+          fast_track_intake_id: "RC-042",
+        },
+      })
+    );
+    // All readFile calls throw ENOENT (next_steps.md not found)
+    mocks.readFile.mockRejectedValue(new Error("ENOENT"));
+
+    const script = new SprintControllerScript();
+    await expect(
+      script.run({ pipeline_id: "pipe-1", previous_artifacts: [] }, makeContext())
+    ).rejects.toThrow("fast-track is blocked");
+  });
+
+  it("5.3 normal execution mode does not invoke fast-track prerequisite check", async () => {
+    setupFreshRun();
+    mocks.chatJson.mockResolvedValue(makeLlmResponse({ sprint_plan: { execution_mode: "normal" } }));
+    // next_steps.md read would throw if called — but it must NOT be called for normal mode
+    mocks.readFile.mockRejectedValue(new Error("ENOENT"));
+
+    const script = new SprintControllerScript();
+    await script.run({ pipeline_id: "pipe-1", previous_artifacts: [] }, makeContext());
+
+    const nextStepsCall = mocks.readFile.mock.calls.find((c: unknown[]) =>
+      String(c[0]).includes("next_steps.md")
+    );
+    expect(nextStepsCall).toBeUndefined();
+  });
+
+  // ── 5.4 Fast Track Controls block injection ───────────────────────────────
+
+  it("5.4 brief includes Fast Track Controls block for fast-track execution mode", async () => {
+    setupFreshRun();
+    mocks.chatJson.mockResolvedValue(
+      makeLlmResponse({
+        sprint_plan: {
+          execution_mode: "fast-track",
+          fast_track_lane: "ui-critical",
+          fast_track_rationale: "Deadline pressure",
+          fast_track_intake_id: "RC-042",
+        },
+      })
+    );
+    mocks.readFile.mockImplementation(async (filePath: string) => {
+      if (String(filePath).includes("next_steps.md")) return "Approved fast-track sprint for this cycle.";
+      throw new Error("ENOENT");
+    });
+
+    const script = new SprintControllerScript();
+    await script.run({ pipeline_id: "pipe-1", previous_artifacts: [] }, makeContext());
+
+    const writeCall = mocks.write.mock.calls.find((c: unknown[]) => c[1] === "AI_IMPLEMENTATION_BRIEF.md");
+    expect(writeCall).toBeDefined();
+    const briefContent = writeCall![2] as string;
+    expect(briefContent).toContain("## Fast Track Controls");
+    expect(briefContent).toContain("fast-track (operator-approved)");
+    expect(briefContent).toContain("RC-042");
+    expect(briefContent).toContain("GTR-004");
+    expect(briefContent).toContain("RUL-007");
+  });
+
+  it("5.4 brief does NOT include Fast Track Controls block for normal execution mode", async () => {
+    setupFreshRun();
+    mocks.chatJson.mockResolvedValue(makeLlmResponse({ sprint_plan: { execution_mode: "normal" } }));
+
+    const script = new SprintControllerScript();
+    await script.run({ pipeline_id: "pipe-1", previous_artifacts: [] }, makeContext());
+
+    const writeCall = mocks.write.mock.calls.find((c: unknown[]) => c[1] === "AI_IMPLEMENTATION_BRIEF.md");
+    expect(writeCall).toBeDefined();
+    expect(writeCall![2] as string).not.toContain("## Fast Track Controls");
+  });
+});
+
+// ─── Phase 6: Input/Output Contract Reconciliation ──────────────────────────
+describe("Phase 6 — Input/Output Contract Reconciliation", () => {
+  function makeValidLlmResponse() {
+    return {
+      sprint_plan: {
+        sprint_id: "S01",
+        phase_id: "PH-001",
+        name: "Sprint 1",
+        goals: ["Deliver feature"],
+        tasks: ["S01-001"],
+        status: "staged",
+        execution_mode: "normal",
+      },
+      first_task: {
+        task_id: "S01-001",
+        title: "Implement feature",
+        description: "Do it.",
+        acceptance_criteria: ["Done"],
+        estimated_effort: "S",
+        files_likely_affected: ["src/file.ts"],
+        status: "pending",
+      },
+      task_flags: {
+        fr_ids_in_scope: ["FR-1"],
+        architecture_contract_change: false,
+        ui_evidence_required: false,
+        incident_tier: "none",
+      },
+    };
+  }
+
+  function wireSetupRun() {
+    mocks.readdir.mockResolvedValue([]);
+    mocks.readFile.mockRejectedValue(new Error("ENOENT"));
+    mocks.findFirst.mockResolvedValue(null);
+    mocks.getComposedPrompt.mockResolvedValue("system prompt");
+    mocks.requireRelevantDesignInputs.mockResolvedValue({
+      sample_files: [],
+      project_name: "demo",
+      clone_path: "C:/repo",
+    });
+    mocks.get.mockResolvedValue({ project_id: "proj-1" });
+    mocks.getById.mockResolvedValue({ project_id: "proj-1", clone_path: "C:/repo", default_branch: "main" });
+    mocks.createPullRequestWithRecovery.mockResolvedValue({
+      pr: { number: 7, html_url: "https://github.com/test/pr/7" },
+      remediation_performed: false,
+    });
+  }
+
+  function wireCloseOutRun() {
+    mocks.findFirst.mockImplementation(async (paths: string[]) => {
+      if (paths.some((p) => p.includes("verification_result.json"))) {
+        return { path: "artifacts/verification_result.json", content: JSON.stringify({ result: "PASS", task_id: "S01-001", summary: "ok" }) };
+      }
+      if (paths.some((p) => p.includes("current_task.json"))) {
+        return { path: "artifacts/current_task.json", content: JSON.stringify({ task_id: "S01-001" }) };
+      }
+      if (paths.some((p) => p.includes("implementation_summary"))) {
+        return { path: "artifacts/implementation_summary.md", content: "# Implementation Summary" };
+      }
+      if (paths.some((p) => p.includes("sprint_plan_"))) {
+        return { path: "artifacts/sprint_plan_s01.md", content: "# Sprint Plan: S01" };
+      }
+      return null;
+    });
+    mocks.get.mockResolvedValue({ project_id: "proj-1", sprint_branch: "feature/S01-001" });
+  }
+
+  const CLOSE_OUT_ARTIFACTS = [
+    "artifacts/verification_result.json",
+    "artifacts/current_task.json",
+    "artifacts/implementation_summary.md",
+    "artifacts/sprint_plan_s01.md",
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.write.mockImplementation(async (_pipelineId: string, artifactName: string) => `artifacts/${artifactName}`);
+    mocks.writeFile.mockResolvedValue(undefined);
+    mocks.mkdir.mockResolvedValue(undefined);
+    mocks.commitAll.mockResolvedValue(undefined);
+    mocks.pushBranch.mockResolvedValue(undefined);
+  });
+
+  // ── 6.1 Setup-mode output alignment ──────────────────────────────────────
+
+  it("6.1 setup output carries mode='setup', non-empty sprint_state_path, pr_number, pr_url", async () => {
+    wireSetupRun();
+    mocks.chatJson.mockResolvedValue(makeValidLlmResponse());
+
+    const script = new SprintControllerScript();
+    const output = await script.run({ pipeline_id: "pipe-1", previous_artifacts: [] }, makeContext()) as Record<string, unknown>;
+
+    expect(output.mode).toBe("setup");
+    expect(typeof output.sprint_state_path).toBe("string");
+    expect(output.sprint_state_path).not.toBe("");
+    expect(output.pr_number).toBe(7);
+    expect(output.pr_url).toBe("https://github.com/test/pr/7");
+  });
+
+  it("6.1 sprint_state_path is included in artifact_paths", async () => {
+    wireSetupRun();
+    mocks.chatJson.mockResolvedValue(makeValidLlmResponse());
+
+    const script = new SprintControllerScript();
+    const output = await script.run({ pipeline_id: "pipe-1", previous_artifacts: [] }, makeContext()) as Record<string, unknown>;
+
+    const paths = output.artifact_paths as string[];
+    expect(paths).toContain(output.sprint_state_path as string);
+  });
+
+  it("6.1 sprint_state.json written to repo with sprint_id, active_task_id, and empty completed_tasks", async () => {
+    wireSetupRun();
+    mocks.chatJson.mockResolvedValue(makeValidLlmResponse());
+
+    const script = new SprintControllerScript();
+    await script.run({ pipeline_id: "pipe-1", previous_artifacts: [] }, makeContext());
+
+    const stateWriteCall = mocks.writeFile.mock.calls.find((c: unknown[]) =>
+      String(c[0]).includes("sprint_state.json")
+    );
+    expect(stateWriteCall).toBeDefined();
+    const written = JSON.parse(stateWriteCall![1] as string);
+    expect(written.sprint_id).toBe("S01");
+    expect(written.active_task_id).toBe("S01-001");
+    expect(Array.isArray(written.completed_tasks)).toBe(true);
+    expect(written.completed_tasks).toHaveLength(0);
+  });
+
+  // ── 6.2 Close-out output alignment ───────────────────────────────────────
+
+  it("6.2 close-out output carries mode='close_out', non-empty closeout_path, last_completed_task_id, sprint_complete_artifacts", async () => {
+    wireCloseOutRun();
+
+    const script = new SprintControllerScript();
+    const output = await script.run(
+      { pipeline_id: "pipe-1", previous_artifacts: CLOSE_OUT_ARTIFACTS },
+      makeContext()
+    ) as Record<string, unknown>;
+
+    expect(output.mode).toBe("close_out");
+    expect(typeof output.closeout_path).toBe("string");
+    expect(output.closeout_path).not.toBe("");
+    expect(output.last_completed_task_id).toBe("S01-001");
+    expect(Array.isArray(output.sprint_complete_artifacts)).toBe(true);
+    expect((output.sprint_complete_artifacts as string[]).length).toBeGreaterThan(0);
+  });
+
+  it("6.2 close-out output does not contain placeholder brief_path, task_flags, or first_task", async () => {
+    wireCloseOutRun();
+
+    const script = new SprintControllerScript();
+    const output = await script.run(
+      { pipeline_id: "pipe-1", previous_artifacts: CLOSE_OUT_ARTIFACTS },
+      makeContext()
+    );
+
+    expect(output).not.toHaveProperty("brief_path");
+    expect(output).not.toHaveProperty("task_flags");
+    expect(output).not.toHaveProperty("first_task");
+  });
+
+  // ── 6.3 closeout_path is a formal output field ────────────────────────────
+
+  it("6.3 closeout_path appears in artifact_paths when close-out succeeds", async () => {
+    wireCloseOutRun();
+
+    const script = new SprintControllerScript();
+    const output = await script.run(
+      { pipeline_id: "pipe-1", previous_artifacts: CLOSE_OUT_ARTIFACTS },
+      makeContext()
+    ) as Record<string, unknown>;
+
+    const paths = output.artifact_paths as string[];
+    expect(paths).toContain(output.closeout_path as string);
+  });
+
+  // ── 6.4 Mode discriminant distinguishes setup vs close-out ───────────────
+
+  it("6.4 mode discriminant is 'setup' for staging and 'close_out' for close-out; values are distinct", async () => {
+    wireSetupRun();
+    mocks.chatJson.mockResolvedValue(makeValidLlmResponse());
+    const script = new SprintControllerScript();
+
+    const setupOut = await script.run({ pipeline_id: "pipe-1", previous_artifacts: [] }, makeContext()) as Record<string, unknown>;
+    expect(setupOut.mode).toBe("setup");
+
+    vi.clearAllMocks();
+    mocks.write.mockImplementation(async (_pid: string, name: string) => `artifacts/${name}`);
+    wireCloseOutRun();
+    const closeOut = await script.run(
+      { pipeline_id: "pipe-1", previous_artifacts: CLOSE_OUT_ARTIFACTS },
+      makeContext()
+    ) as Record<string, unknown>;
+    expect(closeOut.mode).toBe("close_out");
+    expect(closeOut.mode).not.toBe(setupOut.mode);
+  });
+});
+
+// ─── Phase 7: Orchestration and Instruction Gating ──────────────────────────
+describe("Phase 7 — Orchestration and Instruction Gating", () => {
+  const PHASE1_CLOSEOUT_CONTENT = JSON.stringify({
+    pipeline_id: "pipe-1",
+    sprint_id: "S01",
+    sprint_branch: "feature/S01-001",
+    last_completed_task_id: "S01-001",
+    closeout_role: "sprint-controller",
+    closeout_scope: "task",
+    gate_result: "PASS",
+    close_out_phase_completed: "task_close",
+    verifier_summary: "ok",
+    sprint_complete_artifacts: ["artifacts/sprint_plan_s01.md"],
+  });
+
+  const PHASE2_CLOSEOUT_CONTENT = JSON.stringify({
+    pipeline_id: "pipe-1",
+    sprint_id: "S01",
+    sprint_branch: "feature/S01-001",
+    last_completed_task_id: "S01-001",
+    closeout_role: "sprint-controller",
+    closeout_scope: "task",
+    gate_result: "PASS",
+    close_out_phase_completed: "pr_confirmed",
+    verifier_summary: "ok",
+    sprint_complete_artifacts: ["artifacts/sprint_plan_s01.md"],
+  });
+
+  function makePhase1Artifacts() {
+    return [
+      "artifacts/verification_result.json",
+      "artifacts/current_task.json",
+      "artifacts/implementation_summary.md",
+      "artifacts/sprint_plan_s01.md",
+    ];
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.write.mockImplementation(async (_pid: string, name: string) => `artifacts/${name}`);
+    mocks.writeFile.mockResolvedValue(undefined);
+    mocks.mkdir.mockResolvedValue(undefined);
+    mocks.commitAll.mockResolvedValue(undefined);
+    mocks.pushBranch.mockResolvedValue(undefined);
+  });
+
+  // ── 7.1 Phase 1 output carries phase-tracking fields ─────────────────────
+
+  it("7.1 Phase 1 output sets close_out_phase_completed=task_close and stop_required=true", async () => {
+    mocks.findFirst.mockImplementation(async (paths: string[]) => {
+      if (paths.some((p) => p.includes("verification_result.json")))
+        return { path: "artifacts/verification_result.json", content: JSON.stringify({ result: "PASS", task_id: "S01-001", summary: "ok" }) };
+      if (paths.some((p) => p.includes("current_task.json")))
+        return { path: "artifacts/current_task.json", content: JSON.stringify({ task_id: "S01-001" }) };
+      if (paths.some((p) => p.includes("implementation_summary")))
+        return { path: "artifacts/implementation_summary.md", content: "# Summary" };
+      if (paths.some((p) => p.includes("sprint_plan_")))
+        return { path: "artifacts/sprint_plan_s01.md", content: "# Sprint Plan: S01" };
+      return null;
+    });
+    mocks.get.mockResolvedValue({ sprint_branch: "feature/S01-001" });
+
+    const script = new SprintControllerScript();
+    const out = await script.run(
+      { pipeline_id: "pipe-1", previous_artifacts: makePhase1Artifacts() },
+      makeContext()
+    ) as Record<string, unknown>;
+
+    expect(out.mode).toBe("close_out");
+    expect(out.close_out_phase_completed).toBe("task_close");
+    expect(out.stop_required).toBe(true);
+  });
+
+  it("7.1 sprint_closeout.json written in Phase 1 includes close_out_phase_completed=task_close and sprint_id", async () => {
+    mocks.findFirst.mockImplementation(async (paths: string[]) => {
+      if (paths.some((p) => p.includes("verification_result.json")))
+        return { path: "artifacts/verification_result.json", content: JSON.stringify({ result: "PASS", task_id: "S01-001", summary: "ok" }) };
+      if (paths.some((p) => p.includes("current_task.json")))
+        return { path: "artifacts/current_task.json", content: JSON.stringify({ task_id: "S01-001" }) };
+      if (paths.some((p) => p.includes("implementation_summary")))
+        return { path: "artifacts/implementation_summary.md", content: "# Summary" };
+      if (paths.some((p) => p.includes("sprint_plan_")))
+        return { path: "artifacts/sprint_plan_s01.md", content: "# Sprint Plan: S01" };
+      return null;
+    });
+    mocks.get.mockResolvedValue({ sprint_branch: "feature/S01-001" });
+
+    const script = new SprintControllerScript();
+    await script.run(
+      { pipeline_id: "pipe-1", previous_artifacts: makePhase1Artifacts() },
+      makeContext()
+    );
+
+    const writeCall = mocks.write.mock.calls.find((c: unknown[]) => c[1] === "sprint_closeout.json");
+    expect(writeCall).toBeDefined();
+    const written = JSON.parse(writeCall![2] as string);
+    expect(written.close_out_phase_completed).toBe("task_close");
+    expect(written.sprint_id).toBeDefined();
+  });
+
+  // ── 7.2 No implicit transition to Phase 2 or Phase 3 ─────────────────────
+
+  it("7.2 PASS in previous_artifacts without close_out_phase token does NOT advance to Phase 3 setup", async () => {
+    // Simulate a pipeline where Phase 1 already completed and sprint_closeout.json is present
+    // alongside a new verification_result.json — without close_out_phase token, only Phase 1 re-runs.
+    mocks.findFirst.mockImplementation(async (paths: string[]) => {
+      if (paths.some((p) => p.includes("verification_result.json")))
+        return { path: "artifacts/verification_result.json", content: JSON.stringify({ result: "PASS", task_id: "S01-001", summary: "ok" }) };
+      if (paths.some((p) => p.includes("current_task.json")))
+        return { path: "artifacts/current_task.json", content: JSON.stringify({ task_id: "S01-001" }) };
+      if (paths.some((p) => p.includes("implementation_summary")))
+        return { path: "artifacts/implementation_summary.md", content: "# Summary" };
+      if (paths.some((p) => p.includes("sprint_plan_")))
+        return { path: "artifacts/sprint_plan_s01.md", content: "# Sprint Plan: S01" };
+      return null;
+    });
+    mocks.get.mockResolvedValue({ sprint_branch: "feature/S01-001" });
+
+    const script = new SprintControllerScript();
+    const out = await script.run(
+      { pipeline_id: "pipe-1", previous_artifacts: makePhase1Artifacts() },
+      makeContext()
+    ) as Record<string, unknown>;
+
+    // Must be close_out (Phase 1), not setup (Phase 3 would be mode: "setup")
+    expect(out.mode).toBe("close_out");
+    expect(out.close_out_phase_completed).toBe("task_close");
+    expect(mocks.forRole).not.toHaveBeenCalled(); // LLM not called — setup not triggered
+  });
+
+  // ── 7.1 Phase 2 gate enforcement ─────────────────────────────────────────
+
+  it("7.1 Phase 2 throws CLOSE_OUT_PHASE_GATE when sprint_closeout.json is absent", async () => {
+    mocks.findFirst.mockResolvedValue(null);
+
+    const script = new SprintControllerScript();
+    await expect(
+      script.run(
+        { pipeline_id: "pipe-1", previous_artifacts: ["artifacts/sprint_closeout.json"], close_out_phase: "pr_confirmed" },
+        makeContext()
+      )
+    ).rejects.toThrow("requires sprint_closeout.json from Phase 1");
+  });
+
+  it("7.1 Phase 2 throws CLOSE_OUT_PHASE_GATE when close_out_phase_completed != task_close", async () => {
+    // Simulate Phase 2 being invoked again after it already ran (pr_confirmed state)
+    mocks.findFirst.mockImplementation(async (paths: string[]) => {
+      if (paths.some((p) => p.includes("sprint_closeout.json")))
+        return { path: "artifacts/sprint_closeout.json", content: PHASE2_CLOSEOUT_CONTENT };
+      return null;
+    });
+
+    const script = new SprintControllerScript();
+    await expect(
+      script.run(
+        { pipeline_id: "pipe-1", previous_artifacts: ["artifacts/sprint_closeout.json"], close_out_phase: "pr_confirmed" },
+        makeContext()
+      )
+    ).rejects.toThrow("Phase 1 (task_close) must be completed first");
+  });
+
+  it("7.1 Phase 2 succeeds when close_out_phase_completed=task_close and returns pr_confirmed stop output", async () => {
+    mocks.findFirst.mockImplementation(async (paths: string[]) => {
+      if (paths.some((p) => p.includes("sprint_closeout.json")))
+        return { path: "artifacts/sprint_closeout.json", content: PHASE1_CLOSEOUT_CONTENT };
+      return null;
+    });
+
+    const script = new SprintControllerScript();
+    const out = await script.run(
+      { pipeline_id: "pipe-1", previous_artifacts: ["artifacts/sprint_closeout.json"], close_out_phase: "pr_confirmed" },
+      makeContext()
+    ) as Record<string, unknown>;
+
+    expect(out.mode).toBe("close_out");
+    expect(out.close_out_phase_completed).toBe("pr_confirmed");
+    expect(out.stop_required).toBe(true);
+    expect(typeof out.closeout_path).toBe("string");
+    expect(out.closeout_path).not.toBe("");
+  });
+
+  // ── 7.1 Phase 3 gate enforcement ─────────────────────────────────────────
+
+  it("7.1 Phase 3 throws CLOSE_OUT_PHASE_GATE when sprint_closeout.json is absent", async () => {
+    mocks.findFirst.mockResolvedValue(null);
+
+    const script = new SprintControllerScript();
+    await expect(
+      script.run(
+        { pipeline_id: "pipe-1", previous_artifacts: ["artifacts/sprint_closeout.json"], close_out_phase: "stage_next" },
+        makeContext()
+      )
+    ).rejects.toThrow("requires sprint_closeout.json from Phase 1 and Phase 2");
+  });
+
+  it("7.1 Phase 3 throws CLOSE_OUT_PHASE_GATE when close_out_phase_completed=task_close (Phase 2 not done)", async () => {
+    mocks.findFirst.mockImplementation(async (paths: string[]) => {
+      if (paths.some((p) => p.includes("sprint_closeout.json")))
+        return { path: "artifacts/sprint_closeout.json", content: PHASE1_CLOSEOUT_CONTENT };
+      return null;
+    });
+
+    const script = new SprintControllerScript();
+    await expect(
+      script.run(
+        { pipeline_id: "pipe-1", previous_artifacts: ["artifacts/sprint_closeout.json"], close_out_phase: "stage_next" },
+        makeContext()
+      )
+    ).rejects.toThrow("Phase 2 (pr_confirmed) must be completed first");
+  });
+
+  it("7.1/7.3 Phase 3 proceeds to setup (mode=setup) when close_out_phase_completed=pr_confirmed", async () => {
+    // Phase 3 guard passes; runSetup runs through LLM and produces a setup output.
+    mocks.findFirst.mockImplementation(async (paths: string[]) => {
+      if (paths.some((p) => p.includes("sprint_closeout.json")))
+        return { path: "artifacts/sprint_closeout.json", content: PHASE2_CLOSEOUT_CONTENT };
+      // No verification_result.json, no phase plan — setup falls through to LLM
+      return null;
+    });
+    mocks.readdir.mockResolvedValue([]);
+    mocks.readFile.mockRejectedValue(new Error("ENOENT"));
+    mocks.requireRelevantDesignInputs.mockResolvedValue({ sample_files: [], project_name: "demo", clone_path: "C:/repo" });
+    mocks.getComposedPrompt.mockResolvedValue("system prompt");
+    mocks.get.mockResolvedValue({ project_id: "proj-1" });
+    mocks.getById.mockResolvedValue({ project_id: "proj-1", clone_path: "C:/repo", default_branch: "main" });
+    mocks.chatJson.mockResolvedValue({
+      sprint_plan: { sprint_id: "S01", phase_id: "PH-001", name: "Sprint 1", goals: ["goal"], tasks: ["S01-002"], status: "staged", execution_mode: "normal" },
+      first_task: { task_id: "S01-002", title: "Next task", description: "Do it.", acceptance_criteria: ["Done"], estimated_effort: "S", files_likely_affected: ["src/f.ts"], status: "pending" },
+      task_flags: { fr_ids_in_scope: ["FR-2"], architecture_contract_change: false, ui_evidence_required: false, incident_tier: "none" },
+    });
+    mocks.createPullRequestWithRecovery.mockResolvedValue({
+      pr: { number: 2, html_url: "https://github.com/test/pr/2" },
+      remediation_performed: false,
+    });
+
+    const script = new SprintControllerScript();
+    const out = await script.run(
+      { pipeline_id: "pipe-1", previous_artifacts: ["artifacts/sprint_closeout.json"], close_out_phase: "stage_next" },
+      makeContext()
+    ) as Record<string, unknown>;
+
+    expect(out.mode).toBe("setup");
+    expect(mocks.forRole).toHaveBeenCalled(); // LLM was invoked for next task staging
   });
 });
