@@ -154,14 +154,27 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
         // Sprint controller already created and staged this branch — just check it out.
         await projectGitService.checkoutBranch(project, run.sprint_branch);
       } else {
-        // Fallback: create a new branch (pipeline started without sprint-controller).
-        const safePipelineId = String(pipelineId).replace(/[^a-zA-Z0-9._/-]/g, "-");
-        sprintBranch = `feature/${safePipelineId}`;
-        context.log("Implementer: no sprint branch on run, creating fallback branch", {
-          pipeline_id: pipelineId,
-          sprint_branch: sprintBranch,
-        });
-        await projectGitService.createBranch(project, sprintBranch);
+        // Reuse the active sprint task branch when available to keep work on a single PR.
+        const activeTaskBranch = await this.resolveActiveTaskBranch(project.clone_path);
+        if (activeTaskBranch) {
+          sprintBranch = activeTaskBranch;
+          context.log("Implementer: no sprint branch on run, adopting active task branch", {
+            pipeline_id: pipelineId,
+            sprint_branch: sprintBranch,
+          });
+          await projectGitService.createBranch(project, sprintBranch);
+          await pipelineService.setSprintBranch(pipelineId, sprintBranch);
+        } else {
+          // Last-resort fallback: create a pipeline-scoped branch.
+          const safePipelineId = String(pipelineId).replace(/[^a-zA-Z0-9._/-]/g, "-");
+          sprintBranch = `feature/${safePipelineId}`;
+          context.log("Implementer: no sprint branch on run, creating fallback branch", {
+            pipeline_id: pipelineId,
+            sprint_branch: sprintBranch,
+          });
+          await projectGitService.createBranch(project, sprintBranch);
+          await pipelineService.setSprintBranch(pipelineId, sprintBranch);
+        }
       }
       context.log("Implementer: repo ready", { clone_path: clonePath, sprint_branch: sprintBranch });
       if (!sprintBranch) throw new Error("Implementer: sprint branch could not be resolved");
@@ -410,6 +423,25 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
     const relative = path.relative(clonePath, abs);
     if (relative.startsWith("..")) return null;
     return abs;
+  }
+
+  private async resolveActiveTaskBranch(clonePath: string): Promise<string | null> {
+    const activeTaskPath = path.join(
+      clonePath,
+      "project_work",
+      "ai_project_tasks",
+      "active",
+      "current_task.json"
+    );
+    try {
+      const raw = await fs.readFile(activeTaskPath, "utf-8");
+      const parsed = JSON.parse(raw) as { task_id?: string };
+      const taskId = parsed.task_id?.trim();
+      if (!taskId) return null;
+      return `feature/${taskId}`;
+    } catch {
+      return null;
+    }
   }
 
   private formatMarkdown(

@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => {
   const chatWithTools = vi.fn();
   const forRole = vi.fn(async () => ({ chatWithTools }));
   const get = vi.fn();
+  const setSprintBranch = vi.fn();
   const setPrDetails = vi.fn();
   const getById = vi.fn();
   const getByName = vi.fn();
@@ -26,6 +27,7 @@ const mocks = vi.hoisted(() => {
     chatWithTools,
     forRole,
     get,
+    setSprintBranch,
     setPrDetails,
     getById,
     getByName,
@@ -62,9 +64,18 @@ vi.mock("../services/llm/llm-factory.service", () => ({
 vi.mock("../services/pipeline.service", () => ({
   pipelineService: {
     get: mocks.get,
+    setSprintBranch: mocks.setSprintBranch,
     setPrDetails: mocks.setPrDetails,
   },
 }));
+
+vi.mock("fs/promises", () => ({
+  default: {
+    readFile: vi.fn(),
+  },
+}));
+
+import fs from "fs/promises";
 
 vi.mock("../services/project.service", () => ({
   projectService: {
@@ -117,6 +128,8 @@ function makeContext(): ScriptExecutionContext {
 describe("ImplementerScript post-commit PR flow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    const readFileMock = fs.readFile as unknown as ReturnType<typeof vi.fn>;
+    readFileMock.mockRejectedValue(new Error("not found"));
 
     mocks.findFirst.mockImplementation(async (paths: string[]) => {
       if (paths.some((p) => p.includes("AI_IMPLEMENTATION_BRIEF"))) {
@@ -211,5 +224,50 @@ describe("ImplementerScript post-commit PR flow", () => {
     expect((output as { pr_number?: number; pr_url?: string }).pr_url).toBe(
       "https://github.com/rnettles/Personal-Health-Knowledge-System/pull/42"
     );
+  });
+
+  it("adopts active task branch when sprint_branch is missing and reuses existing PR", async () => {
+    const readFileMock = fs.readFile as unknown as ReturnType<typeof vi.fn>;
+    readFileMock.mockImplementation(async (filePath: string) => {
+      if (filePath.includes("project_work") && filePath.includes("current_task.json")) {
+        return JSON.stringify({ task_id: "S01-001" });
+      }
+      throw new Error("not found");
+    });
+
+    mocks.get.mockResolvedValue({
+      project_id: "proj-1",
+      sprint_branch: null,
+    });
+    mocks.findOpenPullRequestByHead.mockResolvedValue({
+      number: 4,
+      url: "https://api.github.com/repos/rnettles/Personal-Health-Knowledge-System/pulls/4",
+      html_url: "https://github.com/rnettles/Personal-Health-Knowledge-System/pull/4",
+      state: "open",
+      merged: false,
+    });
+
+    const script = new ImplementerScript();
+    await script.run(
+      {
+        pipeline_id: "pipe-1",
+        previous_artifacts: [
+          "artifacts/AI_IMPLEMENTATION_BRIEF.md",
+          "artifacts/current_task.json",
+          "artifacts/sprint_plan_spr_1.md",
+        ],
+      },
+      makeContext()
+    );
+
+    expect(mocks.createBranch).toHaveBeenCalledWith(expect.anything(), "feature/S01-001");
+    expect(mocks.setSprintBranch).toHaveBeenCalledWith("pipe-1", "feature/S01-001");
+    expect(mocks.setPrDetails).toHaveBeenCalledWith(
+      "pipe-1",
+      4,
+      "https://github.com/rnettles/Personal-Health-Knowledge-System/pull/4",
+      "feature/S01-001"
+    );
+    expect(mocks.createPullRequestWithRecovery).not.toHaveBeenCalled();
   });
 });
