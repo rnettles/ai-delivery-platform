@@ -58,6 +58,7 @@ describe("prMergePollerService merge gate", () => {
         pipeline_id: "pipe-1",
         project_id: "proj-1",
         pr_number: 4,
+        sprint_branch: "feature/S01-001",
       },
     ]);
 
@@ -80,8 +81,8 @@ describe("prMergePollerService merge gate", () => {
 
     expect(mocks.markPrMerged).not.toHaveBeenCalled();
     expect(mocks.info).toHaveBeenCalledWith(
-      "PR merge gate waiting for explicit merge",
-      expect.objectContaining({ pipeline_id: "pipe-1", pr_number: 4 })
+      "PR merge gate waiting: merge the open sprint PR to advance the pipeline",
+      expect.objectContaining({ pipeline_id: "pipe-1", pr_number: 4, sprint_branch: "feature/S01-001" })
     );
   });
 

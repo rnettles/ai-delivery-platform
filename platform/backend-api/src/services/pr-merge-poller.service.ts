@@ -75,11 +75,13 @@ class PrMergePollerService {
         }
 
         // Gate mode: sprint closes only after an explicit merge is observed.
-        logger.info("PR merge gate waiting for explicit merge", {
+        logger.info("PR merge gate waiting: merge the open sprint PR to advance the pipeline", {
           pipeline_id: run.pipeline_id,
           pr_number: run.pr_number,
           pr_url: pr.html_url,
           pr_state: pr.state,
+          sprint_branch: run.sprint_branch,
+          next_action: "Merge the PR after review/approval to allow sprint close-out.",
         });
       }
     } finally {

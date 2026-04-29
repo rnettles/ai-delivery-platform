@@ -87,6 +87,7 @@ export interface AwaitingPrReviewRun {
   pipeline_id: string;
   project_id?: string;
   pr_number?: number;
+  sprint_branch?: string;
 }
 
 export interface PipelineOperationLink {
@@ -1059,6 +1060,7 @@ export class PipelineService {
         pipeline_id: pipelineRuns.pipeline_id,
         project_id: pipelineRuns.project_id,
         pr_number: pipelineRuns.pr_number,
+        sprint_branch: pipelineRuns.sprint_branch,
       })
       .from(pipelineRuns)
       .where(eq(pipelineRuns.status, "awaiting_pr_review"));
@@ -1067,6 +1069,7 @@ export class PipelineService {
       pipeline_id: row.pipeline_id,
       project_id: row.project_id ?? undefined,
       pr_number: row.pr_number ?? undefined,
+      sprint_branch: row.sprint_branch ?? undefined,
     }));
   }
 
