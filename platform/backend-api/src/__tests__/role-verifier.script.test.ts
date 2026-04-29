@@ -739,3 +739,414 @@ describe("Suite 4 (Integration): Full verification path scenarios", () => {
     expect(failResult.handoff).toBeDefined();
   });
 });
+
+// ─── Suite 5 (Phase 4): Complete FAIL handoff contract ───────────────────────
+
+describe("Suite 5 (Phase 4): Complete FAIL handoff — all HND fields populated", () => {
+  const script = new VerifierScript();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setupCommonMocks();
+    setupAllInputsPresent();
+  });
+
+  const HND_FIELDS = ["changed_scope", "verification_state", "open_risks", "next_role_action", "evidence_refs"] as const;
+
+  it("5.1 — command-fail handoff has all 5 HND fields and verification_state=fail", async () => {
+    mockCommandFail();
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
+
+    const ctx = makeContext();
+    const result = await script.run({ previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"], pipeline_id: PIPELINE_ID }, ctx) as VerifierOutput;
+
+    expect(result.passed).toBe(false);
+    for (const field of HND_FIELDS) {
+      expect(result.handoff).toHaveProperty(field);
+    }
+    expect(result.handoff!.verification_state).toBe("fail");
+    expect(result.handoff!.open_risks.length).toBeGreaterThan(0);
+  });
+
+  it("5.2 — governance-fail handoff has all 5 HND fields and open_risks non-empty", async () => {
+    mockCommandsPass();
+    // LLM returns empty open_risks — Phase 4 must synthesize them from failed checks
+    mocks.chatJson.mockResolvedValue({
+      ...GOVERNANCE_FAIL_RESPONSE,
+      handoff: { ...GOVERNANCE_FAIL_RESPONSE.handoff, open_risks: [] },
+    });
+
+    const ctx = makeContext();
+    const result = await script.run({ previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"], pipeline_id: PIPELINE_ID }, ctx) as VerifierOutput;
+
+    expect(result.passed).toBe(false);
+    for (const field of HND_FIELDS) {
+      expect(result.handoff).toHaveProperty(field);
+    }
+    // Phase 4: open_risks synthesized from failed check evidence when LLM returns empty
+    expect(result.handoff!.open_risks.length).toBeGreaterThan(0);
+  });
+
+  it("5.3 — UX-gate-fail handoff has all 5 HND fields", async () => {
+    const uiBrief = BRIEF_CONTENT.replace("**ui_evidence_required:** false", "**ui_evidence_required:** true");
+    mocks.findFirst.mockImplementation((paths: string[]) => {
+      if (paths.some((p: string) => p.includes("AI_IMPLEMENTATION_BRIEF")))
+        return Promise.resolve({ path: "/artifacts/AI_IMPLEMENTATION_BRIEF.md", content: uiBrief });
+      if (paths.some((p: string) => p.includes("current_task")))
+        return Promise.resolve({ path: "/artifacts/current_task.json", content: TASK_CONTENT });
+      if (paths.some((p: string) => p.includes("test_results")))
+        return Promise.resolve({ path: "/artifacts/test_results.json", content: TEST_RESULTS_CONTENT });
+      return Promise.resolve(null);
+    });
+    mockCommandsPass();
+    mocks.readFile.mockRejectedValue(new Error("ENOENT")); // user_flow.md missing
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
+
+    const ctx = makeContext();
+    const result = await script.run({ previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"], pipeline_id: PIPELINE_ID }, ctx) as VerifierOutput;
+
+    expect(result.passed).toBe(false);
+    for (const field of HND_FIELDS) {
+      expect(result.handoff).toHaveProperty(field);
+    }
+    expect(result.handoff!.open_risks.length).toBeGreaterThan(0);
+    expect(result.handoff!.evidence_refs.length).toBeGreaterThan(0);
+  });
+
+  it("5.4 — handoff task_id matches verified task (Phase 4 tracing field)", async () => {
+    mockCommandFail();
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
+
+    const ctx = makeContext();
+    const result = await script.run({ previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"], pipeline_id: PIPELINE_ID }, ctx) as VerifierOutput;
+
+    expect(result.handoff!.task_id).toBe(TASK_ID);
+  });
+
+  it("5.5 — REV-001 gate-fail handoff has all 5 HND fields and open_risks non-empty", async () => {
+    mocks.findFirst.mockResolvedValue(null);
+    mocks.access.mockRejectedValue(new Error("ENOENT"));
+
+    const ctx = makeContext();
+    const result = await script.run({ previous_artifacts: [], pipeline_id: PIPELINE_ID }, ctx) as VerifierOutput;
+
+    expect(result.passed).toBe(false);
+    for (const field of HND_FIELDS) {
+      expect(result.handoff).toHaveProperty(field);
+    }
+    expect(result.handoff!.verification_state).toBe("fail");
+    expect(result.handoff!.open_risks.length).toBeGreaterThan(0);
+  });
+});
+
+// ─── Suite 6 (Phase 5): Gate command and override control ────────────────────
+
+describe("Suite 6 (Phase 5): Gate command and override control", () => {
+  const script = new VerifierScript();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setupCommonMocks();
+    setupAllInputsPresent();
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
+    delete process.env.VERIFIER_COMMANDS;
+  });
+
+  it("6.1 — baseline commands always run; override cannot replace them", async () => {
+    mockCommandsPass();
+    const ctx = makeContext();
+    // Passing a single override that is NOT in the baseline — should run 4 commands total
+    await script.run({
+      previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
+      pipeline_id: PIPELINE_ID,
+      verification_commands: ["npm run custom-check"],
+    }, ctx);
+
+    // 3 baseline + 1 override = 4 exec calls
+    expect(mocks.execMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("6.2 — passing only baseline commands via verification_commands does not duplicate them", async () => {
+    mockCommandsPass();
+    const ctx = makeContext();
+    // Passing a command already in baseline — should not run it twice
+    await script.run({
+      previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
+      pipeline_id: PIPELINE_ID,
+      verification_commands: ["npm test"],
+    }, ctx);
+
+    // Still only 3 exec calls (deduped)
+    expect(mocks.execMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("6.3 — VERIFIER_COMMANDS env adds to baseline, not replaces it", async () => {
+    mockCommandsPass();
+    process.env.VERIFIER_COMMANDS = "npm run extra-check";
+    const ctx = makeContext();
+    await script.run({
+      previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
+      pipeline_id: PIPELINE_ID,
+    }, ctx);
+
+    // 3 baseline + 1 from env = 4 exec calls
+    expect(mocks.execMock).toHaveBeenCalledTimes(4);
+    delete process.env.VERIFIER_COMMANDS;
+  });
+
+  it("6.4 — command_source is 'baseline' for default commands", async () => {
+    mockCommandsPass();
+    const ctx = makeContext();
+    await script.run({
+      previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
+      pipeline_id: PIPELINE_ID,
+    }, ctx);
+
+    const wroteJson = mocks.write.mock.calls.find(([, name]: string[]) => name === "verification_result.json");
+    const written = JSON.parse(wroteJson![2] as string) as VerificationResult;
+    expect(written.command_results.every((r) => r.command_source === "baseline")).toBe(true);
+  });
+
+  it("6.5 — command_source is 'override' for caller-added commands", async () => {
+    mockCommandsPass();
+    const ctx = makeContext();
+    await script.run({
+      previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
+      pipeline_id: PIPELINE_ID,
+      verification_commands: ["npm run custom-check"],
+    }, ctx);
+
+    const wroteJson = mocks.write.mock.calls.find(([, name]: string[]) => name === "verification_result.json");
+    const written = JSON.parse(wroteJson![2] as string) as VerificationResult;
+    const overrideResult = written.command_results.find((r) => r.command === "npm run custom-check");
+    expect(overrideResult).toBeDefined();
+    expect(overrideResult!.command_source).toBe("override");
+    // Baseline commands retain "baseline" source
+    const baselineResult = written.command_results.find((r) => r.command === "npm test");
+    expect(baselineResult!.command_source).toBe("baseline");
+  });
+
+  it("6.6 — test_results.json with valid content produces PASS evidence in check 7", async () => {
+    mockCommandsPass();
+    const ctx = makeContext();
+    await script.run({
+      previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
+      pipeline_id: PIPELINE_ID,
+    }, ctx);
+
+    const wroteJson = mocks.write.mock.calls.find(([, name]: string[]) => name === "verification_result.json");
+    const written = JSON.parse(wroteJson![2] as string) as VerificationResult;
+    const check7 = written.checks.find((c: VerificationCheck) => c.check_number === 7)!;
+    expect(check7.result).toBe("PASS");
+    // evidence should mention test_results pass/fail counts
+    expect(check7.evidence).toContain("test_results:");
+  });
+
+  it("6.7 — test_results.json with missing count fields is noted in check 7 evidence", async () => {
+    // Override the test_results fixture to have no pass/fail fields
+    mocks.findFirst.mockImplementation((paths: string[]) => {
+      if (paths.some((p: string) => p.includes("AI_IMPLEMENTATION_BRIEF")))
+        return Promise.resolve({ path: "/artifacts/AI_IMPLEMENTATION_BRIEF.md", content: BRIEF_CONTENT });
+      if (paths.some((p: string) => p.includes("current_task")))
+        return Promise.resolve({ path: "/artifacts/current_task.json", content: TASK_CONTENT });
+      if (paths.some((p: string) => p.includes("test_results")))
+        return Promise.resolve({ path: "/artifacts/test_results.json", content: JSON.stringify({ suites: [] }) });
+      return Promise.resolve(null);
+    });
+    mockCommandsPass();
+    const ctx = makeContext();
+    await script.run({
+      previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
+      pipeline_id: PIPELINE_ID,
+    }, ctx);
+
+    const wroteJson = mocks.write.mock.calls.find(([, name]: string[]) => name === "verification_result.json");
+    const written = JSON.parse(wroteJson![2] as string) as VerificationResult;
+    const check7 = written.checks.find((c: VerificationCheck) => c.check_number === 7)!;
+    // Evidence includes test_results quality note even when content is sparse
+    expect(check7.evidence).toContain("test_results:");
+  });
+});
+
+// ─── Suite 7 (Phase 6): Task-flag structural parsing ─────────────────────────
+
+const BRIEF_WITH_FLAGS_JSON = `# Task TST-001 Implementation Brief
+
+{
+  "task_id": "TST-001",
+  "ui_evidence_required": false,
+  "architecture_contract_change": true,
+  "fr_ids_in_scope": ["FR-010", "FR-011"],
+  "incident_tier": "tier-2"
+}
+
+## Acceptance Criteria
+- Feature X implemented
+- Tests written
+
+## Files Created
+- src/feature-x.ts (Create)
+`;
+
+const BRIEF_WITH_FLAGS_MD = `# Task TST-001 Implementation Brief
+
+**task_id:** TST-001
+**ui_evidence_required:** false
+**architecture_contract_change:** true
+**fr_ids_in_scope:** FR-010, FR-011
+**incident_tier:** tier-2
+
+## Acceptance Criteria
+- Feature X implemented
+`;
+
+describe("Suite 7 (Phase 6): Task-flag structural parsing", () => {
+  const script = new VerifierScript();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setupCommonMocks();
+    mockCommandsPass();
+  });
+
+  function setupBriefContent(briefContent: string) {
+    mocks.findFirst.mockImplementation((paths: string[]) => {
+      if (paths.some((p: string) => p.includes("AI_IMPLEMENTATION_BRIEF")))
+        return Promise.resolve({ path: "/artifacts/AI_IMPLEMENTATION_BRIEF.md", content: briefContent });
+      if (paths.some((p: string) => p.includes("current_task")))
+        return Promise.resolve({ path: "/artifacts/current_task.json", content: TASK_CONTENT });
+      if (paths.some((p: string) => p.includes("test_results")))
+        return Promise.resolve({ path: "/artifacts/test_results.json", content: TEST_RESULTS_CONTENT });
+      return Promise.resolve(null);
+    });
+  }
+
+  it("7.1 — fr_ids_in_scope included in LLM governance prompt (JSON format)", async () => {
+    setupBriefContent(BRIEF_WITH_FLAGS_JSON);
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
+
+    const ctx = makeContext();
+    await script.run({
+      previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
+      pipeline_id: PIPELINE_ID,
+    }, ctx);
+
+    const chatCall = mocks.chatJson.mock.calls[0];
+    const userMessage = (chatCall[0] as Array<{ role: string; content: string }>)
+      .find((m) => m.role === "user");
+    expect(userMessage!.content).toContain("fr_ids_in_scope");
+    expect(userMessage!.content).toContain("FR-010");
+    expect(userMessage!.content).toContain("FR-011");
+  });
+
+  it("7.2 — architecture_contract_change=true included in governance prompt (JSON format)", async () => {
+    setupBriefContent(BRIEF_WITH_FLAGS_JSON);
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
+
+    const ctx = makeContext();
+    await script.run({
+      previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
+      pipeline_id: PIPELINE_ID,
+    }, ctx);
+
+    const chatCall = mocks.chatJson.mock.calls[0];
+    const userMessage = (chatCall[0] as Array<{ role: string; content: string }>)
+      .find((m) => m.role === "user");
+    expect(userMessage!.content).toContain("architecture_contract_change");
+    expect(userMessage!.content).toContain("true");
+  });
+
+  it("7.3 — fr_ids_in_scope parsed from JSON array in brief", async () => {
+    setupBriefContent(BRIEF_WITH_FLAGS_JSON);
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
+
+    const ctx = makeContext();
+    await script.run({
+      previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
+      pipeline_id: PIPELINE_ID,
+    }, ctx);
+
+    // Task flags are in the chatJson call's user message as task_flags.json section
+    const chatCall = mocks.chatJson.mock.calls[0];
+    const userMsg = (chatCall[0] as Array<{ role: string; content: string }>).find((m) => m.role === "user")!;
+    const taskFlagsSection = userMsg.content.split("# task_flags.json")[1] ?? "";
+    const parsed = JSON.parse(taskFlagsSection.split("\n\n")[1] ?? "{}") as { fr_ids_in_scope?: string[] };
+    expect(parsed.fr_ids_in_scope).toEqual(["FR-010", "FR-011"]);
+  });
+
+  it("7.4 — fr_ids_in_scope parsed from markdown format in brief", async () => {
+    setupBriefContent(BRIEF_WITH_FLAGS_MD);
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
+
+    const ctx = makeContext();
+    await script.run({
+      previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
+      pipeline_id: PIPELINE_ID,
+    }, ctx);
+
+    const chatCall = mocks.chatJson.mock.calls[0];
+    const userMsg = (chatCall[0] as Array<{ role: string; content: string }>).find((m) => m.role === "user")!;
+    const taskFlagsSection = userMsg.content.split("# task_flags.json")[1] ?? "";
+    const parsed = JSON.parse(taskFlagsSection.split("\n\n")[1] ?? "{}") as { fr_ids_in_scope?: string[] };
+    expect(parsed.fr_ids_in_scope).toEqual(expect.arrayContaining(["FR-010", "FR-011"]));
+  });
+
+  it("7.5 — ui_evidence_required parsed from JSON task flags block (canonical flag parser)", async () => {
+    // JSON block with ui_evidence_required=true triggers check 8
+    const uiBriefJson = BRIEF_WITH_FLAGS_JSON.replace('"ui_evidence_required": false', '"ui_evidence_required": true');
+    setupBriefContent(uiBriefJson);
+    mocks.readFile.mockResolvedValue("# User Flow\n\nStatus: Approved\n\nFlow description.");
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
+
+    const ctx = makeContext();
+    await script.run({
+      previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
+      pipeline_id: PIPELINE_ID,
+    }, ctx);
+
+    const wroteJson = mocks.write.mock.calls.find(([, name]: string[]) => name === "verification_result.json");
+    const written = JSON.parse(wroteJson![2] as string) as VerificationResult;
+    const check8 = written.checks.find((c: VerificationCheck) => c.check_number === 8)!;
+    // Flag parsed correctly from JSON block, triggering UX check (not SKIP)
+    expect(check8.result).not.toBe("SKIP");
+  });
+
+  it("7.6 — ui_evidence_required parsed from markdown task flags block (canonical flag parser)", async () => {
+    // Markdown block with ui_evidence_required=true triggers check 8
+    const uiBriefMd = BRIEF_WITH_FLAGS_MD.replace("**ui_evidence_required:** false", "**ui_evidence_required:** true");
+    setupBriefContent(uiBriefMd);
+    mocks.readFile.mockRejectedValue(new Error("ENOENT")); // user_flow.md missing → FAIL
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
+
+    const ctx = makeContext();
+    const result = await script.run({
+      previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
+      pipeline_id: PIPELINE_ID,
+    }, ctx) as VerifierOutput;
+
+    expect(result.passed).toBe(false);
+    const wroteJson = mocks.write.mock.calls.find(([, name]: string[]) => name === "verification_result.json");
+    const written = JSON.parse(wroteJson![2] as string) as VerificationResult;
+    const check8 = written.checks.find((c: VerificationCheck) => c.check_number === 8)!;
+    // Flag parsed from markdown, check 8 runs and fails (not SKIP)
+    expect(check8.result).toBe("FAIL");
+  });
+
+  it("7.7 — multiple task flags parsed together and all included in governance prompt", async () => {
+    setupBriefContent(BRIEF_WITH_FLAGS_JSON);
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
+
+    const ctx = makeContext();
+    await script.run({
+      previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
+      pipeline_id: PIPELINE_ID,
+    }, ctx);
+
+    const chatCall = mocks.chatJson.mock.calls[0];
+    const userMsg = (chatCall[0] as Array<{ role: string; content: string }>).find((m) => m.role === "user")!;
+    expect(userMsg.content).toContain("incident_tier");
+    expect(userMsg.content).toContain("tier-2");
+    expect(userMsg.content).toContain("architecture_contract_change");
+    expect(userMsg.content).toContain("fr_ids_in_scope");
+  });
+});

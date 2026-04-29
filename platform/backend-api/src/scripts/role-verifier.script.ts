@@ -32,6 +32,24 @@ const execAsync = promisify(exec);
 // Ordered checks (REV-002): 10 checks, numbered 1-10. Categories: command, governance,
 //   filesystem. All 10 checks are evaluated on every run; fail-fast on commands but
 //   skipped commands are marked NOT_RUN with explicit evidence markers.
+//
+// Phase 4 – FAIL handoff contract hardening (HND-001/002/003, REV-003)
+//   Every FAIL path emits a complete handoff with all 5 HND fields.
+//   HandoffContract.task_id added for downstream tracing.
+//   open_risks guaranteed non-empty: synthesized from failed check evidence when LLM omits.
+//   evidence_refs guaranteed non-empty: deterministic check refs merged with LLM refs.
+//
+// Phase 5 – Gate command and evidence alignment (GTR-001/002, POL-004)
+//   resolveCommands returns ResolvedCommand[] — baseline is mandatory and additive;
+//   verification_commands/VERIFIER_COMMANDS env can only extend, not replace, baseline.
+//   command_source field tracks "baseline" | "override" provenance in command_results.
+//   test_results.json content quality validated as part of check 7 CI evidence.
+//
+// Phase 6 – Task-flag context determinism (TFC-002, PSR-004)
+//   parseTaskFlags() replaces regex-only parseUiEvidenceRequired().
+//   All known Task Flags (ui_evidence_required, architecture_contract_change,
+//   fr_ids_in_scope, incident_tier) parsed structurally from both JSON and markdown.
+//   TaskFlags passed to LLM governance prompt so checks 2-6/10 use canonical context.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface VerifierInput {
@@ -75,14 +93,37 @@ interface CommandResult {
   exit_code: number;
   stdout: string;
   stderr: string;
+  /** Phase 5: provenance — "baseline" = mandatory default gate, "override" = caller-added. */
+  command_source?: "baseline" | "override";
+}
+
+/** Phase 5: resolved command with provenance before execution. */
+interface ResolvedCommand {
+  cmd: string;
+  source: "baseline" | "override";
+}
+
+/**
+ * Phase 6: All known Task Flags parsed structurally from the brief (TFC-002).
+ * Safe defaults provided for all absent flags — no inference permitted.
+ */
+export interface TaskFlags {
+  task_id?: string;
+  ui_evidence_required: boolean;
+  architecture_contract_change: boolean;
+  fr_ids_in_scope: string[];
+  incident_tier?: string;
 }
 
 /**
  * Handoff contract — matches AI_HANDOFF_CONTRACT.md.
  * Emitted on every FAIL per REV-003 + HND-001/002/003.
  * evidence_refs must be non-empty on FAIL (HND-003).
+ * Phase 4: task_id added for downstream tracing; open_risks guaranteed non-empty.
  */
 export interface HandoffContract {
+  /** Phase 4: optional task identifier for downstream role tracing. */
+  task_id?: string;
   changed_scope: string[];
   verification_state: "pass" | "fail" | "not_run";
   open_risks: string[];
@@ -112,7 +153,7 @@ type RequiredInputsResult =
 interface LlmGovernanceCheck {
   check_number: number;
   check_name: string;
-  result: "PASS" | "FAIL";
+  result: "PASS" | "FAIL" | "NOT_RUN";
   evidence: string;
   failure_detail?: string;
 }
@@ -205,10 +246,12 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
       );
     }
 
-    // ── Phase 3: CI gate commands (feeds check 7) ─────────────────────────────
-    const commands = this.resolveCommands(input);
-    context.notify(`🧪 Running CI gates: ${commands.map((c) => `\`${c}\``).join(", ")}`);
-    const commandResults = await this.runCommands(commands, repoPath, context);
+    // ── Phases 3/5: CI gate commands (feeds check 7) ──────────────────────────
+    // Phase 5.2: resolveCommands returns ResolvedCommand[]; baseline is mandatory and
+    // cannot be bypassed by verification_commands input or VERIFIER_COMMANDS env.
+    const resolvedCmds = this.resolveCommands(input);
+    context.notify(`🧪 Running CI gates: ${resolvedCmds.map(({ cmd, source }) => `\`${cmd}\`${source === "override" ? " (override)" : ""}`).join(", ")}`);
+    const commandResults = await this.runCommands(resolvedCmds, repoPath, context);
     const allCommandsPassed = commandResults.every((r) => r.ok);
     context.notify(
       allCommandsPassed
@@ -216,7 +259,9 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
         : `❌ ${commandResults.filter((r) => !r.ok).length} CI gate command(s) failed — running governance checks...`
     );
 
-    // ── Phase 3: Governance checks via LLM (checks 2, 3, 4, 5, 6, 10) ────────
+    // ── Phases 3/6: Governance checks via LLM (checks 2, 3, 4, 5, 6, 10) ─────
+    // Phase 6.1: parse task flags structurally for deterministic governance context (TFC-002)
+    const taskFlags = this.parseTaskFlags(brief.content);
     const systemPrompt = await governanceService.getComposedPrompt("verifier");
     const provider = await llmFactory.forRole("verifier");
     const governanceResult = await this.evaluateGovernanceChecks({
@@ -227,9 +272,10 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
       taskContent: task.content,
       testResultsContent: testResults.content,
       commandResults,
+      taskFlags,
     });
 
-    // ── Phase 3: Build all 10 ordered checks ──────────────────────────────────
+    // ── Phases 3/5: Build all 10 ordered checks ───────────────────────────────
     const checks = this.buildOrderedChecks({
       taskId,
       briefContent: brief.content,
@@ -237,6 +283,7 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
       commandResults,
       governanceChecks: governanceResult.checks,
       repoPath,
+      testResultsContent: testResults.content,
     });
 
     // Check 8 (UI evidence) — replace placeholder with concrete result
@@ -466,12 +513,15 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
     taskContent: string;
     testResultsContent: string;
     commandResults: CommandResult[];
+    /** Phase 6: deterministic task flag context passed to LLM (TFC-002). */
+    taskFlags: TaskFlags;
   }): Promise<LlmGovernanceResponse> {
     const sections = [
       `# AI_IMPLEMENTATION_BRIEF.md\n\n${opts.briefContent}`,
       `# current_task.json\n\n${opts.taskContent}`,
       `# test_results.json\n\n${opts.testResultsContent}`,
       `# command_results.json\n\n${JSON.stringify(opts.commandResults, null, 2)}`,
+      `# task_flags.json\n\n${JSON.stringify(opts.taskFlags, null, 2)}`,
     ];
 
     const userContent = `${sections.join("\n\n---\n\n")}
@@ -509,6 +559,11 @@ Checks to evaluate:
 6. test_existence — Tests exist for all acceptance criteria that require them.
 10. scope_expansion_guard — No changes were made outside the task scope defined in current_task.json.
 
+Use task_flags.json to inform scope validation:
+- fr_ids_in_scope lists the in-scope functional requirements; validate that changes stay within them.
+- architecture_contract_change=true requires evidence of architecture document updates in the scope expansion check.
+- incident_tier (if present) may indicate stricter evidence requirements for the relevant checks.
+
 Be precise and evidence-based. Reference specific artifact content in evidence fields.`;
 
     const fallback = this.governanceFallback(opts.taskId, opts.commandResults);
@@ -545,6 +600,8 @@ Be precise and evidence-based. Reference specific artifact content in evidence f
     commandResults: CommandResult[];
     governanceChecks: LlmGovernanceCheck[];
     repoPath: string;
+    /** Phase 5: test_results.json content for CI evidence quality validation (GTR-002). */
+    testResultsContent?: string;
   }): VerificationCheck[] {
     const govByNumber = new Map(opts.governanceChecks.map((c) => [c.check_number, c]));
 
@@ -564,8 +621,8 @@ Be precise and evidence-based. Reference specific artifact content in evidence f
       );
     }
 
-    // Check 7: CI evidence quality (from command results)
-    checks.push(this.buildCiEvidenceCheck(opts.commandResults));
+    // Check 7: CI evidence quality (from command results + test_results.json validation)
+    checks.push(this.buildCiEvidenceCheck(opts.commandResults, opts.testResultsContent));
 
     // Check 8: UI evidence placeholder (replaced after)
     checks.push({
@@ -627,8 +684,8 @@ Be precise and evidence-based. Reference specific artifact content in evidence f
     return undefined;
   }
 
-  /** Check 7: CI evidence is real (non-placeholder) and all commands passed. */
-  private buildCiEvidenceCheck(commandResults: CommandResult[]): VerificationCheck {
+  /** Check 7: CI evidence is real (non-placeholder), all commands passed, and test_results.json is valid. */
+  private buildCiEvidenceCheck(commandResults: CommandResult[], testResultsContent?: string): VerificationCheck {
     if (commandResults.length === 0) {
       return {
         check_number: 7,
@@ -654,12 +711,17 @@ Be precise and evidence-based. Reference specific artifact content in evidence f
         failure_detail: `CI gate failure — fix failing commands: ${names}`,
       };
     }
+    // Phase 5.3: Include test_results.json content quality in CI evidence (GTR-002)
+    const testQuality = testResultsContent ? this.validateTestResultsContent(testResultsContent) : null;
+    const evidenceParts: string[] = [`${commandResults.length} command(s) passed`];
+    if (skipped.length > 0) evidenceParts.push(`${skipped.length} produced empty output`);
+    if (testQuality) evidenceParts.push(`test_results: ${testQuality.summary}`);
     return {
       check_number: 7,
       check_name: REV002_CHECK_NAMES[6].name,
       category: "command",
       result: "PASS",
-      evidence: `${commandResults.length} command(s) passed${skipped.length > 0 ? `; ${skipped.length} produced empty output` : ""}`,
+      evidence: evidenceParts.join("; "),
     };
   }
 
@@ -683,11 +745,11 @@ Be precise and evidence-based. Reference specific artifact content in evidence f
 
   /**
    * Check 8: UI/Playwright evidence check.
-   * Parses ui_evidence_required deterministically from task flags in brief (TFC-002/PSR-004).
+   * Phase 6: Uses parseTaskFlags() for deterministic flag parsing (TFC-002/PSR-004).
    * Returns SKIP when ui_evidence_required is false/absent.
    */
   private async runUxEvidenceCheck(briefContent: string, repoPath: string): Promise<VerificationCheck> {
-    const required = this.parseUiEvidenceRequired(briefContent);
+    const required = this.parseTaskFlags(briefContent).ui_evidence_required;
     if (!required) {
       return {
         check_number: 8,
@@ -728,18 +790,92 @@ Be precise and evidence-based. Reference specific artifact content in evidence f
   }
 
   /**
-   * Parses ui_evidence_required from task flags block in the brief.
-   * Handles both JSON (`"ui_evidence_required": true`) and markdown (`**ui_evidence_required:** true`) formats.
-   * Returns true only when the flag is explicitly set to true (TFC-002: deterministic, no inference).
+   * Phase 6: Parses all known Task Flags from brief content (TFC-002 deterministic flag parsing).
+   * Handles both JSON (`"key": value`) and markdown (`**key:** value`) formats.
+   * Returns canonical TaskFlags with safe defaults for all absent flags — no inference permitted.
+   * Replaces the former parseUiEvidenceRequired() helper.
    */
-  private parseUiEvidenceRequired(briefContent: string): boolean {
-    // JSON task flags block
-    const jsonMatch = /"ui_evidence_required"\s*:\s*(true|false)/.exec(briefContent);
-    if (jsonMatch) return jsonMatch[1] === "true";
-    // Markdown task flags block
-    const mdMatch = /\*\*ui_evidence_required:\*\*\s*(true|false)/i.exec(briefContent);
-    if (mdMatch) return mdMatch[1].toLowerCase() === "true";
-    return false;
+  parseTaskFlags(briefContent: string): TaskFlags {
+    const flags: TaskFlags = {
+      ui_evidence_required: false,
+      architecture_contract_change: false,
+      fr_ids_in_scope: [],
+    };
+
+    // task_id
+    const taskIdJson = /"task_id"\s*:\s*"([^"]+)"/.exec(briefContent);
+    if (taskIdJson) flags.task_id = taskIdJson[1];
+    else {
+      const taskIdMd = /\*\*task_id:\*\*\s*(\S+)/.exec(briefContent);
+      if (taskIdMd) flags.task_id = taskIdMd[1].trim();
+    }
+
+    // ui_evidence_required
+    const uiJson = /"ui_evidence_required"\s*:\s*(true|false)/.exec(briefContent);
+    if (uiJson) flags.ui_evidence_required = uiJson[1] === "true";
+    else {
+      const uiMd = /\*\*ui_evidence_required:\*\*\s*(true|false)/i.exec(briefContent);
+      if (uiMd) flags.ui_evidence_required = uiMd[1].toLowerCase() === "true";
+    }
+
+    // architecture_contract_change
+    const archJson = /"architecture_contract_change"\s*:\s*(true|false)/.exec(briefContent);
+    if (archJson) flags.architecture_contract_change = archJson[1] === "true";
+    else {
+      const archMd = /\*\*architecture_contract_change:\*\*\s*(true|false)/i.exec(briefContent);
+      if (archMd) flags.architecture_contract_change = archMd[1].toLowerCase() === "true";
+    }
+
+    // fr_ids_in_scope — JSON array: ["FR-001", "FR-002"]
+    const frJson = /"fr_ids_in_scope"\s*:\s*\[([^\]]*)\]/.exec(briefContent);
+    if (frJson) {
+      flags.fr_ids_in_scope = frJson[1]
+        .split(",")
+        .map((s) => s.trim().replace(/^"|"$/g, ""))
+        .filter(Boolean);
+    } else {
+      const frMd = /\*\*fr_ids_in_scope:\*\*\s*([^\n]+)/.exec(briefContent);
+      if (frMd) {
+        flags.fr_ids_in_scope = frMd[1]
+          .split(/[,\s]+/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+      }
+    }
+
+    // incident_tier
+    const tierJson = /"incident_tier"\s*:\s*"([^"]+)"/.exec(briefContent);
+    if (tierJson) flags.incident_tier = tierJson[1];
+    else {
+      const tierMd = /\*\*incident_tier:\*\*\s*(\S+)/.exec(briefContent);
+      if (tierMd) flags.incident_tier = tierMd[1].trim();
+    }
+
+    return flags;
+  }
+
+  /**
+   * Phase 5: Validates test_results.json content quality (GTR-002 evidence quality).
+   * Returns a summary string for check 7 CI evidence.
+   * Presence of pass/fail count fields is the minimal signal of real test execution.
+   */
+  private validateTestResultsContent(content: string): { valid: boolean; summary: string } {
+    try {
+      const parsed = JSON.parse(content) as Record<string, unknown>;
+      const hasPassCount = "passed" in parsed || "numPassedTests" in parsed;
+      const hasFailCount = "failed" in parsed || "numFailedTests" in parsed;
+      if (!hasPassCount && !hasFailCount) {
+        return { valid: false, summary: "test_results.json lacks pass/fail count fields (possible placeholder)" };
+      }
+      const passVal = (parsed.passed ?? parsed.numPassedTests) as number | undefined;
+      const failVal = (parsed.failed ?? parsed.numFailedTests) as number | undefined;
+      return {
+        valid: true,
+        summary: `passed=${passVal ?? "unknown"}, failed=${failVal ?? "unknown"}`,
+      };
+    } catch {
+      return { valid: false, summary: "test_results.json is not valid JSON" };
+    }
   }
 
   /**
@@ -764,14 +900,21 @@ Be precise and evidence-based. Reference specific artifact content in evidence f
       evidence_refs: [],
     };
 
+    // Phase 4.1: Ensure open_risks is non-empty — synthesize from failed checks when LLM omits
+    const mergedRisks =
+      (baseHandoff.open_risks?.length ?? 0) > 0
+        ? baseHandoff.open_risks
+        : failedChecks.map((c) => c.failure_detail ?? c.evidence);
+
     // Merge deterministic refs with LLM refs; ensure non-empty (HND-003)
     const mergedRefs = dedup([...(baseHandoff.evidence_refs ?? []), ...deterministicRefs]);
     return {
       ...baseHandoff,
       task_id: taskId,
       verification_state: "fail",
+      open_risks: mergedRisks.length > 0 ? mergedRisks : [`verification failed for task ${taskId}`],
       evidence_refs: mergedRefs.length > 0 ? mergedRefs : [`task:${taskId}:verification-failed`],
-    } as HandoffContract;
+    };
   }
 
   /**
@@ -809,55 +952,73 @@ Be precise and evidence-based. Reference specific artifact content in evidence f
   // Shared helpers
   // ───────────────────────────────────────────────────────────────────────────
 
-  private resolveCommands(input: Record<string, unknown>): string[] {
+  /**
+   * Phase 5.2: Resolves CI gate commands, enforcing mandatory baseline coverage (POL-004).
+   * Baseline commands (npm test, lint, tsc) always run; verification_commands/VERIFIER_COMMANDS
+   * env adds to the baseline but cannot replace it.
+   */
+  private resolveCommands(input: Record<string, unknown>): ResolvedCommand[] {
+    const baseline: ResolvedCommand[] = DEFAULT_VERIFY_COMMANDS.map((c) => ({ cmd: c, source: "baseline" as const }));
+
     const requested = input.verification_commands;
+    let overrideRaw: string[] = [];
+
     if (Array.isArray(requested)) {
-      const normalized = requested
+      overrideRaw = requested
         .filter((c): c is string => typeof c === "string")
         .map((c) => c.trim())
         .filter(Boolean);
-      if (normalized.length > 0) return normalized;
+    } else {
+      const envRaw = process.env.VERIFIER_COMMANDS ?? "";
+      if (envRaw.trim()) {
+        overrideRaw = envRaw.split(",").map((c) => c.trim()).filter(Boolean);
+      }
     }
 
-    const envRaw = process.env.VERIFIER_COMMANDS ?? "";
-    if (envRaw.trim()) {
-      return envRaw.split(",").map((c) => c.trim()).filter(Boolean);
-    }
+    if (overrideRaw.length === 0) return baseline;
 
-    return DEFAULT_VERIFY_COMMANDS;
+    // Baseline is always included; overrides are additive, deduplicating commands in the baseline
+    const baselineSet = new Set(DEFAULT_VERIFY_COMMANDS);
+    const addlOverrides = overrideRaw
+      .filter((c) => !baselineSet.has(c))
+      .map((c) => ({ cmd: c, source: "override" as const }));
+
+    return [...baseline, ...addlOverrides];
   }
 
   private async runCommands(
-    commands: string[],
+    commands: ResolvedCommand[],
     cwd: string,
     context: ScriptExecutionContext
   ): Promise<CommandResult[]> {
     const results: CommandResult[] = [];
 
-    for (const command of commands) {
-      context.log("Verifier executing command", { command, cwd });
+    for (const { cmd, source } of commands) {
+      context.log("Verifier executing command", { command: cmd, cwd });
       try {
-        const { stdout, stderr } = await execAsync(command, {
+        const { stdout, stderr } = await execAsync(cmd, {
           cwd,
           timeout: 600000,
           maxBuffer: 4 * 1024 * 1024,
           env: process.env,
         });
         results.push({
-          command,
+          command: cmd,
           ok: true,
           exit_code: 0,
           stdout: (stdout ?? "").slice(0, 12000),
           stderr: (stderr ?? "").slice(0, 12000),
+          command_source: source,
         });
       } catch (error) {
         const err = error as { code?: number | string; stdout?: string; stderr?: string; message?: string };
         results.push({
-          command,
+          command: cmd,
           ok: false,
           exit_code: typeof err.code === "number" ? err.code : 1,
           stdout: (err.stdout ?? "").slice(0, 12000),
           stderr: `${err.stderr ?? ""}${err.message ? `\n${err.message}` : ""}`.slice(0, 12000),
+          command_source: source,
         });
         // Fail-fast: first failing command stops command execution.
         // Remaining commands are marked NOT_RUN in check 7 evidence via commandResults length gap.
