@@ -3,7 +3,7 @@
   "llm_roles": {
     "planner":           { "provider": "openai-compat", "model": "gpt-4o",         "temperature": 0.3 },
     "sprint-controller": { "provider": "openai-compat", "model": "gpt-4o",         "temperature": 0.1 },
-    "implementer":       { "provider": "claude-code",   "model": "claude-opus-4-5", "temperature": 0.2 },
+    "implementer":       { "provider": "github-models",  "model": "claude-sonnet-4-5", "temperature": 0.2 },
     "verifier":          { "provider": "openai-compat", "model": "gpt-4o",         "temperature": 0.0 }
   },
   "roles": {
