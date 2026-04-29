@@ -544,13 +544,19 @@ describe("ImplementerScript gate execution and role boundaries", () => {
     mocks.execMock.mockImplementation((_: string, __: unknown, cb: (...a: unknown[]) => void) => cb(null, { stdout: "ok", stderr: "" }));
   });
 
-  it("finish not called → throws FINISH_NOT_CALLED (Phase 5.3)", async () => {
+  it("finish not called → checkpoint commit pushed then throws FINISH_NOT_CALLED (Phase 5.3)", async () => {
     mocks.chatWithTools.mockImplementation(async () => { /* finish never called */ });
     const script = new ImplementerScript();
     await expect(
       script.run({ pipeline_id: "pipe-4", previous_artifacts: ["artifacts/AI_IMPLEMENTATION_BRIEF.md", "artifacts/current_task.json", "artifacts/sprint_plan_spr_4.md"] }, makeContext())
     ).rejects.toMatchObject({ code: "FINISH_NOT_CALLED" });
-    expect(mocks.commitAll).not.toHaveBeenCalled();
+    // Checkpoint commit is now pushed so operator can review failure state locally.
+    expect(mocks.commitAll).toHaveBeenCalledWith(
+      expect.anything(),
+      "feature/S04-001",
+      expect.stringContaining("[FINISH_NOT_CALLED]")
+    );
+    expect(mocks.push).toHaveBeenCalled();
   });
 
   it("write_file to verification_result.json returns forbidden error (POL-004)", async () => {
@@ -581,22 +587,77 @@ describe("ImplementerScript gate execution and role boundaries", () => {
     expect(forbiddenResult).toMatch(/verifier-owned artifact/);
   });
 
-  it("gate failure via run_command blocks handoff with GATE_FAILURE (Phase 4.3)", async () => {
+  it("gate failure: in-loop finish guard blocks handoff; script checkpoints and throws FINISH_NOT_CALLED (Phase 4.3)", async () => {
     // Make execMock simulate a failing gate command
     mocks.execMock.mockImplementation(
       (_cmd: string, _opts: unknown, callback: (err: { stdout: string; stderr: string; code: number } | null, result?: unknown) => void) => {
         callback({ stdout: "", stderr: "lint error: semicolon missing", code: 1 });
       }
     );
+    let finishToolResult: string | undefined;
     mocks.chatWithTools.mockImplementation(async (_m: unknown, _t: unknown, exec: (call: { name: string; arguments: Record<string, unknown> }) => Promise<string>) => {
       await exec({ name: "run_command", arguments: { command: "npm run lint" } });
-      await exec({ name: "finish", arguments: { task_id: "S04-001", sprint_id: "SPR-4", summary: "Done", files_changed: "[]" } });
+      // finish is blocked in-loop because gate is still failing
+      finishToolResult = await exec({ name: "finish", arguments: { task_id: "S04-001", sprint_id: "SPR-4", summary: "Done", files_changed: "[]" } });
     });
     const script = new ImplementerScript();
     await expect(
       script.run({ pipeline_id: "pipe-4", previous_artifacts: ["artifacts/AI_IMPLEMENTATION_BRIEF.md", "artifacts/current_task.json", "artifacts/sprint_plan_spr_4.md"] }, makeContext())
-    ).rejects.toMatchObject({ code: "GATE_FAILURE" });
-    expect(mocks.commitAll).not.toHaveBeenCalled();
+    ).rejects.toMatchObject({ code: "FINISH_NOT_CALLED" });
+    // In-loop guard returned an error — finish payload was never recorded
+    expect(finishToolResult).toMatch(/gate\(s\) still failing/);
+    // Checkpoint commit pushed so operator can review failure state locally
+    expect(mocks.commitAll).toHaveBeenCalledWith(
+      expect.anything(),
+      "feature/S04-001",
+      expect.stringContaining("[FINISH_NOT_CALLED]")
+    );
+  });
+
+  it("gate retry: retried gate (exit 0) supersedes prior failure; finish succeeds (Phase 4.3 dedup)", async () => {
+    let lintCallCount = 0;
+    mocks.execMock.mockImplementation(
+      (_cmd: string, _opts: unknown, callback: (err: { stdout: string; stderr: string; code: number } | null, result?: { stdout: string; stderr: string }) => void) => {
+        lintCallCount++;
+        if (lintCallCount === 1) {
+          callback({ stdout: "", stderr: "lint error", code: 1 });
+        } else {
+          callback(null, { stdout: "ok", stderr: "" });
+        }
+      }
+    );
+    mocks.chatWithTools.mockImplementation(async (_m: unknown, _t: unknown, exec: (call: { name: string; arguments: Record<string, unknown> }) => Promise<string>) => {
+      await exec({ name: "run_command", arguments: { command: "npm run lint" } }); // exit 1
+      await exec({ name: "run_command", arguments: { command: "npm run lint" } }); // exit 0 (retry after fix)
+      await exec({ name: "finish", arguments: { task_id: "S04-001", sprint_id: "SPR-4", summary: "Done", files_changed: "[]" } });
+    });
+    const script = new ImplementerScript();
+    // Latest gate for 'npm run lint' is exit 0 — finish should be allowed
+    await expect(
+      script.run({ pipeline_id: "pipe-4", previous_artifacts: ["artifacts/AI_IMPLEMENTATION_BRIEF.md", "artifacts/current_task.json", "artifacts/sprint_plan_spr_4.md"] }, makeContext())
+    ).resolves.toBeDefined();
+    // Normal success commit (not a checkpoint commit)
+    expect(mocks.commitAll).toHaveBeenCalledWith(
+      expect.anything(),
+      "feature/S04-001",
+      expect.stringContaining("feat(S04-001)")
+    );
+  });
+
+  it("max iterations: checkpoint commit pushed then throws MAX_ITERATIONS", async () => {
+    mocks.chatWithTools.mockImplementation(async () => {
+      throw new Error("LLM tool-call loop exceeded max iterations (30)");
+    });
+    const script = new ImplementerScript();
+    await expect(
+      script.run({ pipeline_id: "pipe-4", previous_artifacts: ["artifacts/AI_IMPLEMENTATION_BRIEF.md", "artifacts/current_task.json", "artifacts/sprint_plan_spr_4.md"] }, makeContext())
+    ).rejects.toMatchObject({ code: "MAX_ITERATIONS" });
+    expect(mocks.commitAll).toHaveBeenCalledWith(
+      expect.anything(),
+      "feature/S04-001",
+      expect.stringContaining("[MAX_ITERATIONS]")
+    );
+    expect(mocks.push).toHaveBeenCalled();
   });
 
   it("gate success via run_command records results in test_results.json (Phase 4.2)", async () => {

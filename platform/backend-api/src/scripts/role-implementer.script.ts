@@ -6,6 +6,7 @@ import { githubApiService } from "../services/github-api.service";
 import { pipelineService } from "../services/pipeline.service";
 import { prRemediationService } from "../services/pr-remediation.service";
 import { projectService } from "../services/project.service";
+import type { Project } from "../services/project.service";
 import { projectGitService } from "../services/project-git.service";
 import { designInputGateService } from "../services/design-input-gate.service";
 import { ToolDefinition, ToolCall } from "../services/llm/llm-provider.interface";
@@ -79,6 +80,19 @@ const UX_ARTIFACT_REPO_PATHS = [
   path.join("docs", "design", "user_flow.md"),
   path.join("docs", "user_flow.md"),
 ];
+
+/**
+ * Returns the latest GateResult per unique command.
+ * When an agent retries a failing gate (fixes and re-runs), only the most recent
+ * result for each command counts — prior failures are superseded by the latest outcome.
+ */
+function latestResultPerCommand(results: GateResult[]): GateResult[] {
+  const map = new Map<string, GateResult>();
+  for (const r of results) {
+    map.set(r.command, r);
+  }
+  return Array.from(map.values());
+}
 
 // ─── Filesystem tools exposed to the LLM ─────────────────────────────────────
 
@@ -304,11 +318,30 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       }
     }
 
+    // Pre-extract task_id and sprint_id from task artifact for use in failure-path test_results.json
+    // (finishPayload is not available when the agent fails to call finish).
+    let resolvedTaskId = "unknown";
+    let resolvedSprintId = "unknown";
+    if (taskArtifact?.content) {
+      try {
+        const parsedTask = JSON.parse(taskArtifact.content) as { task_id?: string; sprint_id?: string };
+        if (parsedTask.task_id) resolvedTaskId = parsedTask.task_id;
+        if (parsedTask.sprint_id) resolvedSprintId = parsedTask.sprint_id;
+      } catch { /* keep defaults */ }
+    }
+
     // Build the user prompt with all available context
     const contextParts: string[] = [];
     if (briefArtifact) contextParts.push(`# AI_IMPLEMENTATION_BRIEF.md\n\n${briefArtifact.content}`);
     if (taskArtifact) contextParts.push(`# current_task.json\n\n${taskArtifact.content}`);
     if (sprintArtifact) contextParts.push(`# Sprint Plan (context)\n\n${sprintArtifact.content}`);
+
+    // Inject prior-run state so subsequent runs skip already-passing gates and continue from where
+    // the prior run stopped rather than re-reading the brief and starting from scratch.
+    if (clonePath) {
+      const priorCtx = await this.loadPriorRunContext(clonePath);
+      if (priorCtx) contextParts.push(`# Prior Run Context\n\n${priorCtx}`);
+    }
 
     const repoNote = clonePath
       ? `\n\nThe repository is available for you to read and write. Use the provided tools to explore the codebase and implement the task. When you are done, call the \`finish\` tool.`
@@ -437,6 +470,18 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
           parsedFiles = writtenFiles.map((f) => ({ ...f, description: `${f.action}d by implementer` }));
         }
 
+        // Block finish while any gate is still failing (using latest result per command so retried
+        // gates that now pass do not count as failures). Returning an error string keeps the agent
+        // in the loop to fix remaining failures rather than handing off broken work.
+        const openFailures = latestResultPerCommand(gateResults).filter((r) => r.exit_code !== 0);
+        if (openFailures.length > 0) {
+          return (
+            `Error: ${openFailures.length} gate(s) still failing. Fix all gate failures before calling finish.\n` +
+            openFailures.map((g) => `  - \`${g.command}\` (exit ${g.exit_code})`).join("\n") +
+            "\nFix the failing gates, then call finish."
+          );
+        }
+
         finishPayload = {
           task_id: String(args["task_id"] ?? "unknown"),
           sprint_id: String(args["sprint_id"] ?? "unknown"),
@@ -450,24 +495,69 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
     };
 
     // Run the agentic loop (max 30 iterations for a real implementation)
-    await provider.chatWithTools(
-      [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userContent },
-      ],
-      FILESYSTEM_TOOLS,
-      toolExecutor,
-      { maxIterations: 30, max_tokens: 8192 }
-    );
+    let maxIterationsExceeded = false;
+    try {
+      await provider.chatWithTools(
+        [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userContent },
+        ],
+        FILESYSTEM_TOOLS,
+        toolExecutor,
+        { maxIterations: 30, max_tokens: 8192 }
+      );
+    } catch (err) {
+      if (String(err).includes("max iterations")) {
+        maxIterationsExceeded = true;
+        context.log("Implementer: max iterations reached; checkpointing work in progress", {
+          written_files: writtenFiles.length,
+          gate_results: gateResults.length,
+        });
+        context.notify("⚠️ Max iterations reached — checkpointing work-in-progress to branch");
+      } else {
+        throw err;
+      }
+    }
 
-    // Phase 5.3: Fail closed when finish tool was not called.
-    // A synthesised fallback payload is not an acceptable substitute for a governed terminal state.
-    if (!finishPayload) {
+    // Always write test_results.json to repo before any throw so the next run loads prior context
+    // and the operator can review gate state locally by checking out the branch.
+    const stopReason = maxIterationsExceeded
+      ? "MAX_ITERATIONS"
+      : !finishPayload
+        ? "FINISH_NOT_CALLED"
+        : "completed";
+    if (clonePath) {
+      await this.writeTestResultsToRepo(
+        clonePath,
+        finishPayload?.task_id ?? resolvedTaskId,
+        finishPayload?.sprint_id ?? resolvedSprintId,
+        gateResults,
+        stopReason
+      );
+      context.log("Implementer: test_results.json written to repo", { stop_reason: stopReason });
+    }
+
+    // Phase 5.3 / MAX_ITERATIONS: fail closed — checkpoint commit first so operator can review
+    // failure state locally and subsequent runs continue from where this run stopped.
+    if (maxIterationsExceeded || !finishPayload) {
+      const failureReason = maxIterationsExceeded ? "MAX_ITERATIONS" : "FINISH_NOT_CALLED";
+      if (project && sprintBranch) {
+        await this.checkpointCommitOnFailure(project, sprintBranch, gateResults, writtenFiles, failureReason, context);
+      }
+      if (maxIterationsExceeded) {
+        throw new HttpError(
+          422,
+          "MAX_ITERATIONS",
+          "Implementer agent loop exceeded maximum iterations (30). Work has been checkpointed to the branch. " +
+            "Rerun Implementer — the next run will load prior gate results and continue from where it left off.",
+          { gate_results: gateResults, written_files: writtenFiles }
+        );
+      }
       throw new HttpError(
         422,
         "FINISH_NOT_CALLED",
         "Implementer agent loop terminated without calling the finish tool. " +
-          "Handoff is blocked — the agent must explicitly call finish before stopping. " +
+          "Work has been checkpointed to the branch. " +
           "Inspect the agent trace, resolve any gate failures, and rerun.",
         { gate_results: gateResults, written_files: writtenFiles }
       );
@@ -487,6 +577,9 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
     // Platform override: tightens governance standard of ≤7 (RUL-007) to ≤5 for platform-driven execution.
     // This is an intentional platform override documented in ADR-031; governance inventory reflects ≤7.
     if (payload.files_changed.length > 5) {
+      if (project && sprintBranch) {
+        await this.checkpointCommitOnFailure(project, sprintBranch, gateResults, writtenFiles, "INVARIANT_VIOLATION", context);
+      }
       throw new HttpError(
         422,
         "INVARIANT_VIOLATION",
@@ -497,42 +590,19 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       );
     }
 
-    // Phase 4.3: Fail handoff if any gate recorded a non-zero exit code.
-    const failedGates = gateResults.filter((r) => r.exit_code !== 0);
+    // Phase 4.3: Safety-net gate check (defense-in-depth; the in-loop finish guard is the primary
+    // enforcement). Uses latest result per command so retried gates that now pass do not block handoff.
+    const failedGates = latestResultPerCommand(gateResults).filter((r) => r.exit_code !== 0);
     if (failedGates.length > 0) {
+      if (project && sprintBranch) {
+        await this.checkpointCommitOnFailure(project, sprintBranch, gateResults, writtenFiles, "GATE_FAILURE", context);
+      }
       throw new HttpError(
         422,
         "GATE_FAILURE",
         `${failedGates.length} gate(s) failed. Handoff blocked until all mandatory gates pass.`,
         { failed_gates: failedGates.map((g) => ({ command: g.command, exit_code: g.exit_code })) }
       );
-    }
-
-    // Phase 3.2 / Phase 4.2: Write test_results.json to the canonical repo path before committing
-    // so it is part of the committed changeset and available to verifier via the repo.
-    if (clonePath) {
-      const repoTestResultsPath = path.join(
-        clonePath,
-        "project_work",
-        "ai_project_tasks",
-        "active",
-        "test_results.json"
-      );
-      const testResultsPayload = {
-        task_id: payload.task_id,
-        sprint_id: payload.sprint_id,
-        executed_at: new Date().toISOString(),
-        gate_results: gateResults,
-        summary:
-          gateResults.length > 0
-            ? gateResults.every((r) => r.exit_code === 0)
-              ? "all_passed"
-              : "failed"
-            : "no_gates_recorded",
-      };
-      await fs.mkdir(path.dirname(repoTestResultsPath), { recursive: true });
-      await fs.writeFile(repoTestResultsPath, JSON.stringify(testResultsPayload, null, 2), "utf-8");
-      context.log("Implementer: test_results.json written to repo", { path: repoTestResultsPath });
     }
 
     // Commit + push are mandatory for durable implementer work.
@@ -793,6 +863,157 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       taskArtifact: await readOptional(path.join(activeDir, "current_task.json")),
       sprintArtifact,
     };
+  }
+
+  /**
+   * Load prior-run context from test_results.json committed to the repo by a previous run.
+   * Injects a "Prior Run Context" section into the user prompt so subsequent runs skip
+   * already-passing gates and continue from where the prior run left off rather than
+   * re-reading the brief and starting from scratch.
+   */
+  private async loadPriorRunContext(clonePath: string): Promise<string | null> {
+    const testResultsPath = path.join(
+      clonePath,
+      "project_work",
+      "ai_project_tasks",
+      "active",
+      "test_results.json"
+    );
+    try {
+      const raw = await fs.readFile(testResultsPath, "utf-8");
+      const parsed = JSON.parse(raw) as {
+        gate_results?: GateResult[];
+        summary?: string;
+        executed_at?: string;
+        stop_reason?: string;
+      };
+      const priorGates = parsed.gate_results ?? [];
+      if (!parsed.executed_at && priorGates.length === 0) return null;
+
+      const lines: string[] = [
+        `> **Prior run** — stopped at ${parsed.executed_at ?? "unknown"} | reason: \`${parsed.stop_reason ?? "unknown"}\` | gate summary: ${parsed.summary ?? "unknown"}`,
+        `> Do NOT re-implement work already completed. Continue from where the prior run left off.`,
+        "",
+      ];
+
+      if (priorGates.length > 0) {
+        lines.push("**Gate results from prior run (latest per command):**");
+        for (const g of latestResultPerCommand(priorGates)) {
+          const icon = g.exit_code === 0 ? "✅" : "❌";
+          lines.push(`- ${icon} \`${g.command}\` (exit ${g.exit_code})`);
+          if (g.exit_code !== 0) {
+            const detail = (g.stderr || g.stdout).slice(0, 600).trim();
+            if (detail) lines.push(`  \`\`\`\n  ${detail}\n  \`\`\``);
+          }
+        }
+      }
+
+      const failedCount = latestResultPerCommand(priorGates).filter((r) => r.exit_code !== 0).length;
+      if (failedCount > 0) {
+        lines.push("", `**${failedCount} gate(s) still need fixing before you can call finish.**`);
+      }
+
+      return lines.join("\n");
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Write test_results.json to the canonical repo path unconditionally — before any throw — so:
+   * 1. The next run can inject prior gate context into its prompt via loadPriorRunContext.
+   * 2. The operator can check out the branch and inspect gate state locally.
+   */
+  private async writeTestResultsToRepo(
+    clonePath: string,
+    taskId: string,
+    sprintId: string,
+    gateResults: GateResult[],
+    stopReason: string
+  ): Promise<void> {
+    const repoTestResultsPath = path.join(
+      clonePath,
+      "project_work",
+      "ai_project_tasks",
+      "active",
+      "test_results.json"
+    );
+    const latest = latestResultPerCommand(gateResults);
+    const summary =
+      latest.length > 0
+        ? latest.every((r) => r.exit_code === 0)
+          ? "all_passed"
+          : "failed"
+        : "no_gates_recorded";
+    const payload = {
+      task_id: taskId,
+      sprint_id: sprintId,
+      executed_at: new Date().toISOString(),
+      stop_reason: stopReason,
+      gate_results: gateResults,
+      summary,
+    };
+    await fs.mkdir(path.dirname(repoTestResultsPath), { recursive: true });
+    await fs.writeFile(repoTestResultsPath, JSON.stringify(payload, null, 2), "utf-8");
+  }
+
+  /**
+   * Best-effort commit and push of all current working-tree changes on a failure path.
+   * Allows the operator to review failure state locally (git checkout branch) and gives
+   * the next run a clean starting point via the committed test_results.json.
+   * Never throws — checkpoint failure must not mask the original error.
+   */
+  private async checkpointCommitOnFailure(
+    project: Project,
+    sprintBranch: string,
+    gateResults: GateResult[],
+    writtenFiles: { path: string; action: string }[],
+    stopReason: string,
+    context: ScriptExecutionContext
+  ): Promise<void> {
+    try {
+      const latest = latestResultPerCommand(gateResults);
+      const passedCount = latest.filter((r) => r.exit_code === 0).length;
+      const failedCount = latest.filter((r) => r.exit_code !== 0).length;
+      const fileList =
+        writtenFiles.length > 0
+          ? writtenFiles.map((f) => `- ${f.action}: ${f.path}`).join("\n")
+          : "none";
+      const gateList =
+        failedCount > 0
+          ? latest
+              .filter((r) => r.exit_code !== 0)
+              .map((g) => `- ${g.command} (exit ${g.exit_code})`)
+              .join("\n")
+          : "none";
+
+      const message = [
+        `chore(implementer): checkpoint [${stopReason}]`,
+        "",
+        `Stop reason: ${stopReason}`,
+        `Gates: ${passedCount} passed, ${failedCount} failed`,
+        "",
+        `Files written:\n${fileList}`,
+        "",
+        `Failed gates:\n${gateList}`,
+      ].join("\n");
+
+      await projectGitService.commitAll(project, sprintBranch, message);
+      await projectGitService.push(project, sprintBranch);
+      context.log("Implementer: checkpoint commit pushed", {
+        stop_reason: stopReason,
+        sprint_branch: sprintBranch,
+      });
+      context.notify(
+        `💾 Checkpoint commit pushed to \`${sprintBranch}\` [${stopReason}]. ` +
+          "Review locally before retrying."
+      );
+    } catch (err) {
+      // Best-effort: do not let checkpoint failure mask the original error.
+      context.log("Implementer: checkpoint commit failed (best-effort, ignoring)", {
+        error: String(err),
+      });
+    }
   }
 
   private formatMarkdown(
