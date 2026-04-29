@@ -226,6 +226,19 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
       ? project.clone_path
       : path.join(process.cwd(), project.clone_path);
 
+    // ── Repo prep: sync clone and check out sprint branch ─────────────────────
+    // The implementer writes all active-slot artifacts (test_results.json, current_task.json,
+    // AI_IMPLEMENTATION_BRIEF.md) to the sprint branch. Without this step the clone may be on
+    // main (e.g. after a PR merge) and the REV-001 gate will always fail even when the files
+    // exist on the sprint branch.
+    await projectGitService.ensureReady(project);
+    if (run.sprint_branch) {
+      await projectGitService.checkoutBranch(project, run.sprint_branch);
+      context.log("Verifier: repo ready", { clone_path: project.clone_path, sprint_branch: run.sprint_branch });
+    } else {
+      context.log("Verifier: no sprint_branch on run — reading from current clone HEAD", { clone_path: project.clone_path });
+    }
+
     // ── Phase 2: REV-001 hard gate ────────────────────────────────────────────
     // All 4 required inputs must be present before verification proceeds.
     // Fail closed with structured FAIL result + handoff listing missing inputs.

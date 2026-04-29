@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => {
   const get = vi.fn();
   const getById = vi.fn();
   const ensureReady = vi.fn();
+  const checkoutBranch = vi.fn();
   const commitAll = vi.fn();
   const push = vi.fn();
   const requireRelevantDesignInputs = vi.fn();
@@ -40,6 +41,7 @@ const mocks = vi.hoisted(() => {
     get,
     getById,
     ensureReady,
+    checkoutBranch,
     commitAll,
     push,
     requireRelevantDesignInputs,
@@ -74,7 +76,7 @@ vi.mock("../services/project.service", () => ({
 }));
 
 vi.mock("../services/project-git.service", () => ({
-  projectGitService: { ensureReady: mocks.ensureReady, commitAll: mocks.commitAll, push: mocks.push },
+  projectGitService: { ensureReady: mocks.ensureReady, checkoutBranch: mocks.checkoutBranch, commitAll: mocks.commitAll, push: mocks.push },
 }));
 
 vi.mock("../services/design-input-gate.service", () => ({
@@ -205,6 +207,7 @@ function setupCommonMocks() {
   mocks.writeFile.mockResolvedValue(undefined);
   mocks.mkdir.mockResolvedValue(undefined);
   mocks.commitAll.mockResolvedValue(undefined);
+  mocks.checkoutBranch.mockResolvedValue(undefined);
   mocks.push.mockResolvedValue(undefined);
   // AI_RULES.md present by default
   mocks.access.mockResolvedValue(undefined);
