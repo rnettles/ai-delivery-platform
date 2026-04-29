@@ -185,9 +185,10 @@ export function registerPipelineCommands(program: Command): void {
   // ── pipeline-list ──────────────────────────────────────────────────────────
   program
     .command("pipeline-list")
-    .description("List pipelines for a channel")
+    .description("List pipelines for a channel (defaults to active pipelines only)")
     .option("--channel-id <id>", "Channel ID (falls back to active)")
     .option("--limit <n>", "Max results", "20")
+    .option("--status <statuses>", "Comma-separated statuses to include (default: running,awaiting_approval,paused_takeover; use 'all' for all statuses)")
     .option("--json", "Output raw JSON")
     .action(async (opts) => {
       const channelId = resolveChannelId(opts.channelId);
@@ -196,9 +197,16 @@ export function registerPipelineCommands(program: Command): void {
         process.exit(1);
       }
 
+      const query: Record<string, string> = { channel_id: channelId, limit: opts.limit };
+      if (opts.status) {
+        query.status = opts.status === "all"
+          ? "running,awaiting_approval,paused_takeover,failed,complete,cancelled,awaiting_pr_review"
+          : opts.status;
+      }
+
       const res = await request<ChannelPipelineStatusListResult>({
         path: "/pipeline/status-summary/by-channel",
-        query: { channel_id: channelId, limit: opts.limit },
+        query,
       });
 
       if (opts.json) {

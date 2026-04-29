@@ -42,6 +42,7 @@ param(
   [string]$CorrelationId = "",
   [string]$TargetName = "",
   [string]$ExecutionStatus = "",
+  [string]$Status = "",
   [int]$Limit = 20,
   [switch]$IncludeChannels,
   [switch]$ExcludeChannels,
@@ -1304,6 +1305,11 @@ switch ($commandName) {
     }
 
     $query = @{ channel_id = $effectiveChannelId; limit = $Limit }
+    if (-not [string]::IsNullOrWhiteSpace($Status)) {
+      $query.status = if ($Status -eq "all") {
+        "running,awaiting_approval,paused_takeover,failed,complete,cancelled,awaiting_pr_review"
+      } else { $Status }
+    }
     Invoke-Adp -HttpMethod "GET" -RelativePath "/pipeline/status-summary/by-channel" -Query $query
     break
   }

@@ -178,7 +178,11 @@ export async function getChannelPipelineStatusList(req: Request, res: Response, 
     }
 
     const limit = typeof req.query.limit === "string" ? Number(req.query.limit) : undefined;
-    const result = await pipelineService.listStatusByChannel(channelId, limit);
+    const statusParam = typeof req.query.status === "string" ? req.query.status : undefined;
+    const statuses = statusParam
+      ? (statusParam.split(",").map((s) => s.trim()).filter(Boolean) as import("../domain/pipeline.types").PipelineStatus[])
+      : undefined;
+    const result = await pipelineService.listStatusByChannel(channelId, limit, statuses);
     res.status(200).json(result);
   } catch (error) {
     next(error);

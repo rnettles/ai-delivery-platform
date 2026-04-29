@@ -551,6 +551,22 @@ export class PipelineService {
         return { project: null };
       }
 
+      // Skip git pull for terminal pipelines — artifacts are frozen and a pull adds
+      // significant latency when listing many pipelines (one pull per row).
+      // "failed" is included: retries create a new pipeline row, so the old failed run is frozen.
+      const terminalStatuses: PipelineStatus[] = ["complete", "cancelled", "awaiting_pr_review", "failed"];
+      if (terminalStatuses.includes(run.status)) {
+        const cachedHead = typeof run.metadata?.last_status_git_head === "string"
+          ? run.metadata.last_status_git_head
+          : undefined;
+        logger.info("Status git refresh skipped (terminal)", {
+          pipeline_id: run.pipeline_id,
+          status: run.status,
+          cached_head: cachedHead,
+        });
+        return { project, headCommit: cachedHead };
+      }
+
       const git = await projectGitService.ensureReady(project, { forcePull: true });
       return { project, headCommit: git.head_commit };
     } catch (err) {
@@ -1396,13 +1412,23 @@ export class PipelineService {
     return { kind: "multiple", runs };
   }
 
-  async listStatusByChannel(channelId: string, limit = 20): Promise<ChannelPipelineStatusListResult> {
+  async listStatusByChannel(
+    channelId: string,
+    limit = 20,
+    statuses: PipelineStatus[] = ["running", "awaiting_approval", "paused_takeover"]
+  ): Promise<ChannelPipelineStatusListResult> {
     const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), 100) : 20;
+    const safeStatuses = statuses.length > 0 ? statuses : ["running", "awaiting_approval", "paused_takeover"];
 
     const rows = await db
       .select()
       .from(pipelineRuns)
-      .where(sql`${pipelineRuns.metadata} ->> 'slack_channel' = ${channelId}`)
+      .where(
+        and(
+          sql`${pipelineRuns.metadata} ->> 'slack_channel' = ${channelId}`,
+          inArray(pipelineRuns.status, safeStatuses)
+        )
+      )
       .orderBy(desc(pipelineRuns.updated_at))
       .limit(safeLimit);
 
