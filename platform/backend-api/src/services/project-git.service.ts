@@ -65,7 +65,7 @@ class ProjectGitService {
   async createBranch(project: Project, branchName: string): Promise<void> {
     return this.withLock(project.project_id, () => {
       logger.info("git: creating branch", { project: project.name, branch: branchName });
-      this.git(project.clone_path, ["checkout", project.default_branch]);
+      this.checkoutWithIndexRecovery(project.clone_path, project.default_branch, project.name);
       this.git(project.clone_path, ["pull", "--ff-only"]);
       this.git(project.clone_path, ["fetch", "origin"]);
 
@@ -197,7 +197,7 @@ class ProjectGitService {
       });
 
       this.git(project.clone_path, ["fetch", "origin", "--prune"]);
-      this.git(project.clone_path, ["checkout", project.default_branch]);
+      this.checkoutWithIndexRecovery(project.clone_path, project.default_branch, project.name);
       this.git(project.clone_path, ["pull", "--ff-only", "origin", project.default_branch]);
 
       if (this.branchExistsRemote(project.clone_path, branchName)) {
@@ -255,7 +255,7 @@ class ProjectGitService {
             // Checkout the default branch before reset so an in-progress feature branch
             // left checked out by a prior sprint-controller run is never clobbered.
             // reset --hard only moves the currently checked-out branch's ref.
-            this.git(clonePath, ["checkout", project.default_branch]);
+            this.checkoutWithIndexRecovery(clonePath, project.default_branch, project.name);
             this.git(clonePath, ["reset", "--hard", `origin/${project.default_branch}`]);
           } else {
             // Reattach a detached HEAD before pulling — detached state causes pull to fail.
@@ -436,6 +436,37 @@ class ProjectGitService {
   private isCheckoutOverwriteError(err: unknown): boolean {
     const text = String((err as any)?.stderr ?? err ?? "");
     return /would be overwritten by checkout/i.test(text);
+  }
+
+  private isUnresolvedIndexError(err: unknown): boolean {
+    const text = String((err as any)?.stderr ?? (err as any)?.stdout ?? err ?? "");
+    return /you need to resolve your current index first/i.test(text);
+  }
+
+  /**
+   * Checkout a branch with automatic recovery from an unresolved-index state.
+   *
+   * Git leaves the index in an unresolved state when a merge, rebase, or stash-pop
+   * is interrupted by a conflict.  Subsequent checkouts fail with
+   * "you need to resolve your current index first".
+   *
+   * Recovery: `git reset --hard HEAD` discards all staged/unstaged conflict markers
+   * and aborts any in-progress merge operation, returning the working tree to a clean
+   * state so the checkout can be retried.
+   */
+  private checkoutWithIndexRecovery(clonePath: string, branchName: string, projectName: string): void {
+    try {
+      this.git(clonePath, ["checkout", branchName]);
+    } catch (err) {
+      if (!this.isUnresolvedIndexError(err)) throw err;
+
+      logger.warn(
+        "git: checkout blocked by unresolved index (interrupted merge/rebase); resetting index and retrying",
+        { project: projectName, branch: branchName, clonePath }
+      );
+      this.git(clonePath, ["reset", "--hard", "HEAD"]);
+      this.git(clonePath, ["checkout", branchName]);
+    }
   }
 }
 

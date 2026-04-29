@@ -138,6 +138,80 @@ describe("projectGitService.push recovery", () => {
   });
 });
 
+describe("projectGitService unresolved-index recovery", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function unresolvedIndexError(): Error & { stderr: string } {
+    const err = new Error("checkout blocked") as Error & { stderr: string };
+    err.stderr = "error: you need to resolve your current index first";
+    return err;
+  }
+
+  it("resets index and retries checkout when createBranch hits unresolved-index error", async () => {
+    let checkoutMainAttempts = 0;
+
+    mockExec.mockImplementation((_cmd, args) => {
+      const joined = (args as string[]).join(" ");
+
+      if (joined === `checkout ${baseProject.default_branch}`) {
+        checkoutMainAttempts += 1;
+        if (checkoutMainAttempts === 1) throw unresolvedIndexError();
+      }
+
+      if (joined === "show-ref --verify refs/remotes/origin/feature/S01-001") {
+        throw new Error("no remote branch");
+      }
+      if (joined === "show-ref --verify refs/heads/feature/S01-001") {
+        throw new Error("no local branch");
+      }
+
+      return "" as any;
+    });
+
+    await projectGitService.createBranch(baseProject, "feature/S01-001");
+
+    expect(mockExec).toHaveBeenCalledWith(
+      "git",
+      ["reset", "--hard", "HEAD"],
+      expect.objectContaining({ cwd: baseProject.clone_path })
+    );
+    expect(checkoutMainAttempts).toBe(2);
+  });
+
+  it("resets index and retries checkout when finalizeMergedBranch hits unresolved-index error", async () => {
+    let checkoutMainAttempts = 0;
+
+    mockExec.mockImplementation((_cmd, args) => {
+      const joined = (args as string[]).join(" ");
+
+      if (joined === `checkout ${baseProject.default_branch}`) {
+        checkoutMainAttempts += 1;
+        if (checkoutMainAttempts === 1) throw unresolvedIndexError();
+      }
+
+      if (joined === "show-ref --verify refs/remotes/origin/feature/S01-001") {
+        throw new Error("no remote branch");
+      }
+      if (joined === "show-ref --verify refs/heads/feature/S01-001") {
+        throw new Error("no local branch");
+      }
+
+      return "" as any;
+    });
+
+    await projectGitService.finalizeMergedBranch(baseProject, "feature/S01-001");
+
+    expect(mockExec).toHaveBeenCalledWith(
+      "git",
+      ["reset", "--hard", "HEAD"],
+      expect.objectContaining({ cwd: baseProject.clone_path })
+    );
+    expect(checkoutMainAttempts).toBe(2);
+  });
+});
+
 describe("projectGitService.commitAll checkout recovery", () => {
   beforeEach(() => {
     vi.clearAllMocks();
