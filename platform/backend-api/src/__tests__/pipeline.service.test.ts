@@ -543,7 +543,7 @@ describe("PipelineService", () => {
       expect(run.current_step).toBe("complete");
     });
 
-    it("planner next mode with pr details transitions to awaiting_pr_review", async () => {
+    it("planner next mode with pr details still transitions to complete", async () => {
       const plannerRow = makeRow({
         entry_point: "planner",
         current_step: "planner",
@@ -554,7 +554,7 @@ describe("PipelineService", () => {
       });
 
       mocks.selectWhere.mockResolvedValueOnce([plannerRow]);
-      const savedRow = makeRow({ current_step: "complete", status: "awaiting_pr_review", pr_number: 42 });
+      const savedRow = makeRow({ current_step: "complete", status: "complete", pr_number: 42 });
       mocks.updateReturning.mockResolvedValueOnce([savedRow]);
 
       const run = await service.completeStep(
@@ -565,7 +565,7 @@ describe("PipelineService", () => {
         false
       );
 
-      expect(run.status).toBe("awaiting_pr_review");
+      expect(run.status).toBe("complete");
       expect(run.current_step).toBe("complete");
     });
 
