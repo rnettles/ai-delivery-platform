@@ -441,6 +441,15 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
     }
 
     if (!currentTaskId || !verification.task_id || verification.task_id !== currentTaskId) {
+      context.notify(
+        `❗ Cannot close task: verifier reported ${verification.task_id ?? "n/a"} but active task is ${currentTaskId ?? "n/a"}. ` +
+        "Complete verification for the active task before requesting sprint close-out."
+      );
+      context.log("Sprint Controller close-out blocked: verification task mismatch", {
+        pipeline_id: pipelineId,
+        verification_task_id: verification.task_id,
+        current_task_id: currentTaskId,
+      });
       throw new HttpError(
         409,
         "VERIFICATION_TASK_MISMATCH",

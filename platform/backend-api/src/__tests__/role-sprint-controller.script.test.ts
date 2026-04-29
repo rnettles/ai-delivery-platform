@@ -222,6 +222,7 @@ Implement brand tokens.
     });
 
     const script = new SprintControllerScript();
+    const context = makeContext();
     await expect(
       script.run(
         {
@@ -233,9 +234,13 @@ Implement brand tokens.
             "artifacts/sprint_plan_s01.md",
           ],
         },
-        makeContext()
+        context
       )
     ).rejects.toThrow("Verifier PASS does not match the active task context");
+
+    expect(context.notify).toHaveBeenCalledWith(
+      "❗ Cannot close task: verifier reported S01-999 but active task is S01-001. Complete verification for the active task before requesting sprint close-out."
+    );
   });
 
   it("accepts close-out when verifier PASS matches current task", async () => {
