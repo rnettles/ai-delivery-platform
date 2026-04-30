@@ -82,10 +82,54 @@ class GovernanceService {
    */
   async getComposedPrompt(role: string): Promise<string> {
     const [invariants, rolePrompt] = await Promise.all([
-      this.getRule("process_invariants"),
+      this.processInvariantsFor(role),
       this.getPrompt(role),
     ]);
     return `## PROCESS INVARIANTS (non-overridable)\n\n${invariants}\n\n---\n\n## ROLE-SPECIFIC MECHANICS\n\n${rolePrompt}`;
+  }
+
+  /**
+   * Phase 12 (ADR-033): role-scoped process invariants. Returns only the
+   * sections of `process_invariants` whose `<!-- roles: ... -->` tag includes
+   * the requested role. If no role tags appear in the file, the full content
+   * is returned (backward compatible — invariants apply to all roles).
+   *
+   * Tag syntax (placed on the line immediately before a markdown section):
+   *   <!-- roles: planner, sprint-controller, implementer, verifier -->
+   *   ## Section Heading
+   *   ...content...
+   *
+   * Untagged sections always apply to every role (safety default).
+   */
+  async processInvariantsFor(role: string): Promise<string> {
+    const full = await this.getRule("process_invariants");
+    if (!/<!--\s*roles:/i.test(full)) return full;
+
+    const lines = full.split(/\r?\n/);
+    const out: string[] = [];
+    let activeAllowed: boolean | null = null; // null = no tag seen for current section
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const tagMatch = line.match(/<!--\s*roles:\s*([^>]+?)\s*-->/i);
+      if (tagMatch) {
+        const roles = tagMatch[1].split(",").map((r) => r.trim().toLowerCase());
+        activeAllowed = roles.includes(role.toLowerCase()) || roles.includes("all");
+        continue; // do not emit the tag itself
+      }
+      // A new top-level heading without a preceding tag resets to "applies to all".
+      if (/^#{1,3}\s/.test(line) && activeAllowed === null) {
+        activeAllowed = true;
+      } else if (/^#{1,3}\s/.test(line) && activeAllowed !== null) {
+        // If the next heading has no tag immediately above it, default to applies-to-all.
+        // (Handled by checking the previous emitted line for a tag.)
+        const prev = lines[i - 1] ?? "";
+        if (!/<!--\s*roles:/i.test(prev)) activeAllowed = true;
+      }
+      if (activeAllowed === null || activeAllowed === true) {
+        out.push(line);
+      }
+    }
+    return out.join("\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
   }
 
   async getRule(key: string): Promise<string> {
