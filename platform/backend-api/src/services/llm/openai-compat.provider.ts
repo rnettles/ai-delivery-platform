@@ -2,6 +2,7 @@ import { logger } from "../logger.service";
 import {
   ChatMessage,
   ChatOptions,
+  LlmCallMeta,
   LlmProvider,
   ToolCall,
   ToolChatOptions,
@@ -9,6 +10,7 @@ import {
   ToolDefinition,
   ToolExecutor,
 } from "./llm-provider.interface";
+import { tokenMeter } from "./token-meter.service";
 
 interface OpenAiCompletionResponse {
   usage?: {
@@ -56,7 +58,7 @@ export class OpenAiCompatProvider implements LlmProvider {
       max_tokens: options.max_tokens ?? 4096,
     };
     const data = await this.post(body);
-    this.logTelemetry("chat", body, data);
+    this.logTelemetry("chat", body, data, options.meta);
     const content = data.choices?.[0]?.message?.content;
     if (!content) throw new Error("OpenAI-compat provider returned an empty response");
     logger.info("LLM chat complete", { provider: "openai-compat", deployment: this.deployment, messages_count: messages.length });
@@ -68,10 +70,15 @@ export class OpenAiCompatProvider implements LlmProvider {
       messages,
       temperature: options.temperature ?? 0.2,
       max_tokens: options.max_tokens ?? 4096,
-      response_format: { type: "json_object" },
+      response_format: options.output_schema
+        ? {
+            type: "json_schema",
+            json_schema: { strict: true, name: "response", schema: options.output_schema },
+          }
+        : { type: "json_object" },
     };
     const data = await this.post(body);
-    this.logTelemetry("chatJson", body, data);
+    this.logTelemetry("chatJson", body, data, options.meta);
     const content = data.choices?.[0]?.message?.content;
     if (!content) throw new Error("OpenAI-compat provider returned an empty response");
     logger.info("LLM chatJson complete", { provider: "openai-compat", deployment: this.deployment });
@@ -104,7 +111,7 @@ export class OpenAiCompatProvider implements LlmProvider {
       };
 
       const data = await this.post(body);
-      this.logTelemetry("chatWithTools", body, data);
+      this.logTelemetry("chatWithTools", body, data, options.meta, iterations);
       const choice = data.choices?.[0];
       if (!choice) throw new Error("OpenAI-compat provider returned no choices");
 
@@ -195,17 +202,47 @@ export class OpenAiCompatProvider implements LlmProvider {
     throw new Error(`OpenAI-compat error: exceeded ${MAX_RETRIES} retries`);
   }
 
-  private logTelemetry(kind: "chat" | "chatJson" | "chatWithTools", requestBody: Record<string, unknown>, responseBody: OpenAiCompletionResponse): void {
+  private logTelemetry(
+    kind: "chat" | "chatJson" | "chatWithTools",
+    requestBody: Record<string, unknown>,
+    responseBody: OpenAiCompletionResponse,
+    meta?: LlmCallMeta,
+    iteration?: number
+  ): void {
     if (!this.telemetryEnabled) return;
 
     const usage = responseBody.usage;
+    const promptTokens = usage?.prompt_tokens ?? 0;
+    const completionTokens = usage?.completion_tokens ?? 0;
+    const totalTokens = usage?.total_tokens ?? promptTokens + completionTokens;
+
     logger.info("LLM usage", {
       provider: "openai-compat",
       deployment: this.deployment,
       kind,
-      input_tokens: usage?.prompt_tokens,
-      output_tokens: usage?.completion_tokens,
-      total_tokens: usage?.total_tokens,
+      input_tokens: promptTokens,
+      output_tokens: completionTokens,
+      total_tokens: totalTokens,
+      role: meta?.role,
+      pipeline_id: meta?.pipeline_id,
+      run_id: meta?.run_id,
+      call_type: meta?.call_type ?? kind,
+      iteration,
+    });
+
+    // Phase 11: aggregate per-run usage. tokenMeter.record() will silently skip
+    // aggregation if neither pipeline_id nor run_id is provided.
+    tokenMeter.record({
+      provider: "openai-compat",
+      deployment: this.deployment,
+      role: meta?.role,
+      pipeline_id: meta?.pipeline_id,
+      run_id: meta?.run_id,
+      call_type: meta?.call_type ?? kind,
+      iteration,
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      total_tokens: totalTokens,
     });
 
     if (!this.traceEnabled) return;

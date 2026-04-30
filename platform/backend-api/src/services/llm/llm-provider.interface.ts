@@ -5,18 +5,44 @@ export interface ChatMessage {
   name?: string;         // present when role = "tool"
 }
 
+export interface LlmCallMeta {
+  /** Logical role making the call (e.g. "implementer", "verifier"). */
+  role?: string;
+  /** Pipeline run id for token aggregation. */
+  pipeline_id?: string;
+  /** Optional sub-run id within the pipeline (e.g. retry attempt). */
+  run_id?: string;
+  /** Free-form description for telemetry filtering (e.g. "governance-checks"). */
+  call_type?: string;
+}
+
 export interface ChatOptions {
   temperature?: number;
   max_tokens?: number;
+  /**
+   * Phase 10 (ADR-033): when set, the provider issues
+   * `response_format: { type: "json_schema", ... }` with strict mode so the
+   * server rejects malformed responses at the API layer.
+   */
+  output_schema?: Record<string, unknown>;
+  /** Phase 11 (ADR-033): metadata propagated through to telemetry. */
+  meta?: LlmCallMeta;
 }
 
 // ─── Tool definitions ─────────────────────────────────────────────────────────
 
 export interface ToolParameterSchema {
   type: string;
-  properties?: Record<string, { type: string; description?: string }>;
+  properties?: Record<string, ToolPropertySchema>;
   required?: string[];
   description?: string;
+}
+
+export interface ToolPropertySchema {
+  type: string;
+  description?: string;
+  /** When `type === "array"`, describes the element schema. */
+  items?: { type: string; description?: string };
 }
 
 export interface ToolDefinition {
