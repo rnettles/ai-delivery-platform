@@ -9,6 +9,7 @@ import { projectGitService } from "../services/project-git.service";
 import { designInputGateService } from "../services/design-input-gate.service";
 import { ToolDefinition, ToolCall } from "../services/llm/llm-provider.interface";
 import { HttpError } from "../utils/http-error";
+import { parseBrief } from "../utils/brief-parser";
 import { config } from "../config";
 import fs from "fs/promises";
 import path from "path";
@@ -163,6 +164,40 @@ const FILESYSTEM_TOOLS: ToolDefinition[] = [
       required: ["task_id", "sprint_id", "summary", "files_changed"],
     },
   },
+  {
+    // Phase 4 (ADR-033): cross-session continuity. The implementer should call
+    // this once before finishing — and again whenever it pauses on a blocker —
+    // so the next run can resume cleanly even if iterations are exhausted.
+    name: "set_progress",
+    description:
+      "Persist current work state for cross-session continuity. Call before finishing, and " +
+      "any time you pause on a blocker, so the next run can resume cleanly. Writes to " +
+      "project_work/ai_project_tasks/active/progress.json.",
+    parameters: {
+      type: "object",
+      properties: {
+        current_focus: {
+          type: "string",
+          description: "One-sentence description of what you are currently working on.",
+        },
+        open_todos: {
+          type: "array",
+          description: "Outstanding work items still to be done.",
+          items: { type: "string" },
+        },
+        blockers: {
+          type: "array",
+          description: "External blockers or unanswered questions, if any.",
+          items: { type: "string" },
+        },
+        planned_next_action: {
+          type: "string",
+          description: "The single next concrete action to take when work resumes.",
+        },
+      },
+      required: ["current_focus", "planned_next_action"],
+    },
+  },
 ];
 
 export class ImplementerScript implements Script<Record<string, unknown>, unknown> {
@@ -261,7 +296,7 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       throw new Error(`Implementer cannot proceed without git persistence: ${String(err)}`);
     }
 
-    const designInputs = await designInputGateService.requireRelevantDesignInputs(pipelineId, "implementer");
+    const designInputs = await designInputGateService.requireRelevantDesignInputs(pipelineId, "implementer", "plan", "implementer");
     context.notify(
       `📚 Design inputs validated (${designInputs.sample_files.length} found). ` +
       `Using project: \`${designInputs.project_name}\``
@@ -335,11 +370,64 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
     if (taskArtifact) contextParts.push(`# current_task.json\n\n${taskArtifact.content}`);
     if (sprintArtifact) contextParts.push(`# Sprint Plan (context)\n\n${sprintArtifact.content}`);
 
+    // ─── Phase 2 (ADR-033): auto-inject referenced design docs ─────────────
+    // Reads `## Design References` from the brief, loads each referenced file from
+    // the repo, and injects it directly into context. ADRs are prioritised over
+    // FRs so contract-of-record wins when the budget is tight.
+    if (briefArtifact && clonePath) {
+      const parsed = parseBrief(briefArtifact.content);
+      if (parsed.designRefs.length > 0) {
+        const ranked = [...parsed.designRefs].sort((a, b) => {
+          const score = (p: string) => (/(^|\/)docs\/adr\//i.test(p) ? 0 : 1);
+          return score(a) - score(b);
+        });
+        const MAX_TOTAL_CHARS = 6000;
+        let used = 0;
+        const blocks: string[] = [];
+        for (const relpath of ranked) {
+          if (used >= MAX_TOTAL_CHARS) break;
+          const safeAbs = this.safeResolve(clonePath, relpath);
+          if (!safeAbs) continue;
+          try {
+            const raw = await fs.readFile(safeAbs, "utf-8");
+            const remaining = MAX_TOTAL_CHARS - used;
+            const slice = raw.length > remaining ? `${raw.slice(0, remaining)}\n[...truncated]` : raw;
+            blocks.push(`# Design Reference: ${relpath}\n\n${slice}`);
+            used += slice.length;
+          } catch {
+            // Reference missing — skip silently; LLM still has the brief.
+          }
+        }
+        if (blocks.length > 0) {
+          contextParts.push(blocks.join("\n\n---\n\n"));
+          context.log("Implementer: injected design references", {
+            count: blocks.length,
+            chars: used,
+          });
+        }
+      }
+    }
+
     // Inject prior-run state so subsequent runs skip already-passing gates and continue from where
     // the prior run stopped rather than re-reading the brief and starting from scratch.
     if (clonePath) {
       const priorCtx = await this.loadPriorRunContext(clonePath, project.project_id, sprintBranch ?? undefined);
       if (priorCtx) contextParts.push(`# Prior Run Context\n\n${priorCtx}`);
+
+      // ─── Phase 3 (ADR-033): structured prior-run extras ────────────────────
+      const progressBlock = await this.loadProgressArtifact(clonePath);
+      if (progressBlock) contextParts.push(`# Prior Run State\n\n${progressBlock}`);
+
+      const corrections = await this.extractCorrections(clonePath);
+      if (corrections) contextParts.push(`# Required Corrections (from prior verification)\n\n${corrections}`);
+
+      if (sprintBranch) {
+        const changedFiles = await this.computeChangedFiles(clonePath, sprintBranch);
+        if (changedFiles && changedFiles.length > 0) {
+          const lines = changedFiles.map((c) => `- ${c.status} \`${c.path}\``);
+          contextParts.push(`# Files Changed Since Branch Diverged\n\n${lines.join("\n")}`);
+        }
+      }
     }
 
     const repoNote = clonePath
@@ -363,6 +451,38 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       summary: string;
       files_changed: FileChange[];
     } | null = null;
+
+    /** Phase 4 (ADR-033): last `set_progress` snapshot written by the agent. */
+    let lastProgress: {
+      current_focus: string;
+      open_todos: string[];
+      blockers: string[];
+      planned_next_action: string;
+      recorded_at: string;
+    } | null = null;
+
+    /** Phase 4 helper: persist progress snapshot to repo `active/progress.json`. */
+    const persistProgress = async (snapshot: {
+      current_focus: string;
+      open_todos: string[];
+      blockers: string[];
+      planned_next_action: string;
+      recorded_at: string;
+    }): Promise<void> => {
+      if (!clonePath) return;
+      const repoPath = path.join(
+        clonePath,
+        "project_work",
+        "ai_project_tasks",
+        "active",
+        "progress.json"
+      );
+      const json = JSON.stringify(snapshot, null, 2);
+      await fs.mkdir(path.dirname(repoPath), { recursive: true });
+      await fs.writeFile(repoPath, json, "utf-8");
+      // Note: progress.json lives only in the repo clone. checkpointCommitOnFailure
+      // will commit it alongside test_results.json so the next run picks it up.
+    };
 
     const toolExecutor = async (toolCall: ToolCall): Promise<string> => {
       const { name, arguments: args } = toolCall;
@@ -425,6 +545,21 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
         if (!command) return "Error: command is required";
         if (!clonePath) return "Error: no repository available";
         const timestamp = new Date().toISOString();
+
+        // ─── Phase 9 (ADR-033): cross-run gate evidence reuse ──────────────
+        // If the prior run recorded an exit_code=0 for this exact command and
+        // none of the relevant files changed since, reuse the prior pass.
+        const cached = await this.tryReuseGateResult(
+          clonePath,
+          command,
+          sprintBranch ?? undefined
+        );
+        if (cached) {
+          gateResults.push(cached);
+          context.notify(`✅ Gate reused (cached from prior run): \`${command.slice(0, 60)}\``);
+          return `exit_code=0\nstdout:\n${cached.stdout}\nstderr:\n${cached.stderr}`;
+        }
+
         try {
           const { stdout, stderr } = await execAsync(command, {
             cwd: clonePath,
@@ -453,6 +588,35 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
           gateResults.push(result);
           context.notify(`❌ Gate failed: \`${command.slice(0, 60)}\` (exit ${result.exit_code})`);
           return `exit_code=${result.exit_code}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`;
+        }
+      }
+
+      if (name === "set_progress") {
+        const snapshot = {
+          current_focus: String(args["current_focus"] ?? ""),
+          open_todos: Array.isArray(args["open_todos"])
+            ? (args["open_todos"] as unknown[]).map(String)
+            : [],
+          blockers: Array.isArray(args["blockers"])
+            ? (args["blockers"] as unknown[]).map(String)
+            : [],
+          planned_next_action: String(args["planned_next_action"] ?? ""),
+          recorded_at: new Date().toISOString(),
+        };
+        if (!snapshot.current_focus || !snapshot.planned_next_action) {
+          return "Error: current_focus and planned_next_action are required";
+        }
+        lastProgress = snapshot;
+        try {
+          await persistProgress(snapshot);
+          context.log("Implementer: set_progress recorded", {
+            current_focus: snapshot.current_focus,
+            todos: snapshot.open_todos.length,
+            blockers: snapshot.blockers.length,
+          });
+          return "OK: progress recorded";
+        } catch (err) {
+          return `Error persisting progress: ${String(err)}`;
         }
       }
 
@@ -503,7 +667,11 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
         ],
         FILESYSTEM_TOOLS,
         toolExecutor,
-        { maxIterations: 30, max_tokens: 8192 }
+        {
+          maxIterations: 30,
+          max_tokens: 8192,
+          meta: { role: "implementer", pipeline_id: pipelineId, call_type: "agent-loop" },
+        }
       );
     } catch (err) {
       if (String(err).includes("max iterations")) {
@@ -513,6 +681,25 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
           gate_results: gateResults.length,
         });
         context.notify("⚠️ Max iterations reached — checkpointing work-in-progress to branch");
+
+        // Phase 4 (ADR-033): if the agent never called set_progress, synthesize a
+        // minimal record so the next run still has structured continuity context.
+        if (!lastProgress) {
+          const failingGates = latestResultPerCommand(gateResults).filter((r) => r.exit_code !== 0);
+          const synthetic = {
+            current_focus: writtenFiles.length > 0
+              ? `In-flight implementation; last edited ${writtenFiles[writtenFiles.length - 1].path}`
+              : "Implementation in progress (no files written yet).",
+            open_todos: failingGates.map((g) => `Fix failing gate: \`${g.command}\``),
+            blockers: failingGates.length === 0 ? ["MAX_ITERATIONS reached without finish."] : [],
+            planned_next_action: failingGates.length > 0
+              ? `Resolve ${failingGates.length} failing gate(s) and re-run.`
+              : "Continue implementation from current branch state and call finish.",
+            recorded_at: new Date().toISOString(),
+          };
+          lastProgress = synthetic;
+          try { await persistProgress(synthetic); } catch { /* best effort */ }
+        }
       } else {
         throw err;
       }
@@ -607,9 +794,20 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
     // Commit + push to sprint branch. PR creation is owned by Sprint Controller at sprint close-out.
     let commitSha: string | undefined;
     try {
-      const subjectLine = payload.summary.split(/\n/)[0].trim().slice(0, 60);
-      const fileLines = payload.files_changed.map((f) => `- ${f.action}: ${f.path}`).join("\n");
-      const message = `feat(${payload.task_id}): ${subjectLine}\n\n${fileLines}`;
+      // Phase 5 (ADR-033): script-templated commit message. The script controls
+      // the prefix, scope and file list deterministically; the LLM only supplies
+      // a one-sentence summary. Subject capped at 72 chars per Conventional Commits.
+      const prefix = `feat(${payload.task_id}): `;
+      const summarySentence = payload.summary
+        .split(/[\n\r]/)[0]
+        .replace(/\s+/g, " ")
+        .trim();
+      const subject = (prefix + summarySentence).slice(0, 72);
+      const fileLines = payload.files_changed
+        .map((f) => `- ${f.action}: ${f.path}`)
+        .join("\n");
+      const filesSummary = `${payload.files_changed.length} file(s) changed`;
+      const message = `${subject}\n\n${filesSummary}\n\n${fileLines}`;
       commitSha = await projectGitService.commitAll(project, sprintBranch, message);
       await projectGitService.push(project, sprintBranch);
       context.log("Implementer: committed", { commit_sha: commitSha, sprint_branch: sprintBranch });
@@ -708,11 +906,37 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       : [];
     const nextArtifacts = Array.from(new Set([...existingArtifacts, implementationSummaryPath]));
 
+    // Phase 6 (ADR-033): lifecycle state-machine guard. Only permit transitions
+    // along the canonical happy-path; preserve prior status on any other input.
+    //   active           → ready_for_verification
+    //   in_progress      → ready_for_verification   (IMP-001 contract)
+    //   ready_for_verification → verified | needs_fixes
+    const ALLOWED_TRANSITIONS: Record<string, string[]> = {
+      active: ["ready_for_verification"],
+      in_progress: ["ready_for_verification"],
+      ready_for_verification: ["verified", "needs_fixes"],
+    };
+    const proposedStatus = "ready_for_verification";
+    const priorStatus = typeof base.status === "string" ? base.status : "active";
+    const allowed = ALLOWED_TRANSITIONS[priorStatus] ?? [];
+    const finalStatus = allowed.includes(proposedStatus) || priorStatus === proposedStatus
+      ? proposedStatus
+      : priorStatus;
+    if (finalStatus !== proposedStatus) {
+      // Log via console.warn so this surfaces in operator logs without requiring a
+      // logger handle here (this method is intentionally synchronous/pure-ish).
+      // eslint-disable-next-line no-console
+      console.warn(
+        `Implementer: invalid status transition '${priorStatus}' -> '${proposedStatus}'; preserving prior status.`
+      );
+    }
+
     return {
       ...base,
       task_id: finishPayload.task_id,
-      // IMP-001: terminal status is always ready_for_verification regardless of prior state.
-      status: "ready_for_verification",
+      // IMP-001 + Phase 6: terminal status is ready_for_verification when transition is valid;
+      // otherwise prior status is preserved per the state-machine guard above.
+      status: finalStatus,
       artifacts: nextArtifacts,
     };
   }
@@ -900,9 +1124,184 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
   }
 
   /**
-   * Write test_results.json to the canonical repo path unconditionally — before any throw — so:
-   * 1. The next run can inject prior gate context into its prompt via loadPriorRunContext.
-   * 2. The operator can check out the branch and inspect gate state locally.
+   * Phase 9 (ADR-033): cross-run gate evidence reuse. Checks whether the prior
+   * run's `test_results.json` recorded a successful run of the same command and
+   * whether any files matching the command's pattern have changed since. If
+   * both conditions hold, returns a cached GateResult; otherwise null.
+   */
+  private async tryReuseGateResult(
+    clonePath: string,
+    command: string,
+    sprintBranch?: string
+  ): Promise<GateResult | null> {
+    const repoTestResultsPath = path.join(
+      clonePath,
+      "project_work",
+      "ai_project_tasks",
+      "active",
+      "test_results.json"
+    );
+    let priorGates: GateResult[] = [];
+    try {
+      const raw = await fs.readFile(repoTestResultsPath, "utf-8");
+      const parsed = JSON.parse(raw) as { gate_results?: GateResult[] };
+      priorGates = parsed.gate_results ?? [];
+    } catch {
+      return null;
+    }
+    if (priorGates.length === 0) return null;
+
+    // Find the most recent successful prior run of this exact command.
+    const priorPass = [...priorGates]
+      .reverse()
+      .find((g) => g.command === command && g.exit_code === 0);
+    if (!priorPass) return null;
+
+    // Default file pattern map per ADR-033 plan.
+    const COMMAND_PATTERNS: { match: RegExp; relevant: RegExp[] }[] = [
+      { match: /^npm\s+test\b/, relevant: [/__tests__\//, /\.test\.[jt]sx?$/, /\.spec\.[jt]sx?$/] },
+      { match: /^npx\s+tsc\b/, relevant: [/\.ts$/, /\.tsx$/, /tsconfig.*\.json$/] },
+      { match: /^npm\s+run\s+lint\b/, relevant: [/\.[jt]sx?$/, /\.eslintrc/] },
+    ];
+    const patterns = COMMAND_PATTERNS.find((p) => p.match.test(command))?.relevant;
+
+    if (!sprintBranch) return null;
+    const changed = await this.computeChangedFiles(clonePath, sprintBranch);
+    if (!changed) return null;
+
+    // If we don't know what files matter for this command, be conservative and re-run.
+    if (!patterns) return null;
+    const anyRelevantChange = changed.some((c) =>
+      patterns.some((re) => re.test(c.path))
+    );
+    if (anyRelevantChange) return null;
+
+    return {
+      command,
+      exit_code: 0,
+      stdout: "(cached from prior run)",
+      stderr: "",
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Phase 3 (ADR-033): load `progress.json` artifact written by the `set_progress`
+   * tool on the previous run. Returns a markdown block describing current focus,
+   * open todos, blockers and the planned next action — or null if the file is
+   * absent / unparseable.
+   */
+  private async loadProgressArtifact(clonePath: string): Promise<string | null> {
+    const progressPath = path.join(
+      clonePath,
+      "project_work",
+      "ai_project_tasks",
+      "active",
+      "progress.json"
+    );
+    try {
+      const raw = await fs.readFile(progressPath, "utf-8");
+      const p = JSON.parse(raw) as {
+        current_focus?: string;
+        open_todos?: string[];
+        blockers?: string[];
+        planned_next_action?: string;
+        recorded_at?: string;
+      };
+      const lines: string[] = [];
+      if (p.recorded_at) lines.push(`> Recorded at: ${p.recorded_at}`);
+      if (p.current_focus) lines.push("", `**Current focus:** ${p.current_focus}`);
+      if (p.planned_next_action) lines.push(`**Planned next action:** ${p.planned_next_action}`);
+      if (p.open_todos && p.open_todos.length > 0) {
+        lines.push("", "**Open todos:**");
+        for (const t of p.open_todos) lines.push(`- ${t}`);
+      }
+      if (p.blockers && p.blockers.length > 0) {
+        lines.push("", "**Blockers:**");
+        for (const b of p.blockers) lines.push(`- ${b}`);
+      }
+      return lines.length > 0 ? lines.join("\n") : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Phase 3 (ADR-033): if the prior verifier run produced a FAIL with
+   * `required_corrections[]`, surface those as a numbered directive list so the
+   * implementer addresses them in priority order. Returns null on PASS or absent.
+   */
+  private async extractCorrections(clonePath: string): Promise<string | null> {
+    const verResultPath = path.join(
+      clonePath,
+      "project_work",
+      "ai_project_tasks",
+      "active",
+      "verification_result.json"
+    );
+    try {
+      const raw = await fs.readFile(verResultPath, "utf-8");
+      const v = JSON.parse(raw) as {
+        result?: string;
+        required_corrections?: string[];
+      };
+      if (v.result !== "FAIL") return null;
+      const items = v.required_corrections ?? [];
+      if (items.length === 0) return null;
+      return items.map((item, i) => `${i + 1}. ${item}`).join("\n");
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Phase 3 (ADR-033): list files changed on the sprint branch since it diverged
+   * from the default branch. Used as a fact-list (not a raw diff) so the LLM
+   * knows what's already been touched without spending tokens on the patch.
+   */
+  private async computeChangedFiles(
+    clonePath: string,
+    sprintBranch: string
+  ): Promise<{ path: string; status: "A" | "M" | "D" }[] | null> {
+    try {
+      // Determine the default branch the sprint branch was cut from.
+      let defaultBranch = "master";
+      try {
+        const { stdout } = await execAsync(
+          "git symbolic-ref --short refs/remotes/origin/HEAD",
+          { cwd: clonePath, timeout: 5000 }
+        );
+        const head = stdout.trim().replace(/^origin\//, "");
+        if (head) defaultBranch = head;
+      } catch {
+        // fall back to master/main
+        try {
+          await execAsync("git rev-parse --verify origin/main", { cwd: clonePath, timeout: 5000 });
+          defaultBranch = "main";
+        } catch { /* keep master */ }
+      }
+
+      const mergeBaseRef = `origin/${defaultBranch}`;
+      const { stdout } = await execAsync(
+        `git diff --name-status ${mergeBaseRef}...${sprintBranch}`,
+        { cwd: clonePath, timeout: 15_000, maxBuffer: 4 * 1024 * 1024 }
+      );
+      const lines = stdout.split("\n").map((l) => l.trim()).filter(Boolean);
+      const out: { path: string; status: "A" | "M" | "D" }[] = [];
+      for (const line of lines) {
+        const m = /^([AMD])\s+(.+)$/.exec(line);
+        if (!m) continue;
+        out.push({ path: m[2], status: m[1] as "A" | "M" | "D" });
+      }
+      return out;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Persist accumulated gate results to `project_work/ai_project_tasks/active/test_results.json`
+   * within the cloned repo so that downstream roles (and the next run) can read them.
    */
   private async writeTestResultsToRepo(
     clonePath: string,
