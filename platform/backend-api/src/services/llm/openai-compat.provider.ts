@@ -156,20 +156,43 @@ export class OpenAiCompatProvider implements LlmProvider {
 
   private async post(body: Record<string, unknown>): Promise<OpenAiCompletionResponse> {
     const url = `${this.endpoint}/openai/deployments/${this.deployment}/chat/completions?api-version=2024-08-01-preview`;
+    const MAX_RETRIES = 5;
+    const BASE_DELAY_MS = 2000;
 
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "api-key": this.apiKey },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(120_000),
-    });
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "api-key": this.apiKey },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(120_000),
+      });
 
-    if (!response.ok) {
+      if (response.ok) {
+        return response.json() as Promise<OpenAiCompletionResponse>;
+      }
+
       const text = await response.text();
+
+      // Retry on 429 (rate limit) and 5xx (transient server errors) with exponential backoff + jitter
+      if ((response.status === 429 || response.status >= 500) && attempt < MAX_RETRIES) {
+        // Honour Retry-After header if present (value is seconds)
+        const retryAfterSec = Number(response.headers.get("retry-after") ?? 0);
+        const backoff = retryAfterSec > 0
+          ? retryAfterSec * 1000
+          : BASE_DELAY_MS * Math.pow(2, attempt) + Math.random() * 1000;
+        logger.warn(`OpenAI-compat ${response.status} — retrying in ${Math.round(backoff)}ms (attempt ${attempt + 1}/${MAX_RETRIES})`, {
+          provider: "openai-compat",
+          status: response.status,
+          attempt: attempt + 1,
+        });
+        await new Promise((resolve) => setTimeout(resolve, backoff));
+        continue;
+      }
+
       throw new Error(`OpenAI-compat error ${response.status}: ${text.slice(0, 500)}`);
     }
 
-    return response.json() as Promise<OpenAiCompletionResponse>;
+    throw new Error(`OpenAI-compat error: exceeded ${MAX_RETRIES} retries`);
   }
 
   private logTelemetry(kind: "chat" | "chatJson" | "chatWithTools", requestBody: Record<string, unknown>, responseBody: OpenAiCompletionResponse): void {
