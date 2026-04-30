@@ -174,6 +174,63 @@ const AI_RULES_CANDIDATE_PATHS = [
 
 const DEFAULT_VERIFY_COMMANDS = ["npm test", "npm run lint", "npx tsc --noEmit"];
 
+/**
+ * Phase 10 (ADR-033): JSON schema for the governance LLM response.
+ * Wired through `output_schema` so OpenAI-compatible providers enforce
+ * structural validity in strict mode rather than relying on post-hoc parsing.
+ *
+ * Strict-mode requirements: every object must list all properties in `required`
+ * and set `additionalProperties: false`. Free-form arrays use `items: {type:"string"}`.
+ */
+const GOVERNANCE_RESPONSE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["checks", "summary", "required_corrections", "handoff"],
+  properties: {
+    checks: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["check_number", "check_name", "result", "evidence", "failure_detail"],
+        properties: {
+          check_number: { type: "integer" },
+          check_name: { type: "string" },
+          result: { type: "string", enum: ["PASS", "FAIL", "NOT_RUN"] },
+          evidence: { type: "string" },
+          // OpenAI strict mode requires every property listed in `required` to be
+          // present; nullable string lets the LLM omit detail on PASS without
+          // breaking validation.
+          failure_detail: { type: ["string", "null"] },
+        },
+      },
+    },
+    summary: { type: "string" },
+    required_corrections: { type: "array", items: { type: "string" } },
+    handoff: {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "changed_scope",
+        "verification_state",
+        "open_risks",
+        "next_role_action",
+        "evidence_refs",
+      ],
+      properties: {
+        changed_scope: { type: "array", items: { type: "string" } },
+        verification_state: { type: "string", enum: ["pass", "fail", "not_run"] },
+        open_risks: { type: "array", items: { type: "string" } },
+        next_role_action: {
+          type: "string",
+          enum: ["implementer_retry", "none", "escalate"],
+        },
+        evidence_refs: { type: "array", items: { type: "string" } },
+      },
+    },
+  },
+} as const;
+
 export class VerifierScript implements Script<Record<string, unknown>, unknown> {
   public readonly descriptor = {
     name: "role.verifier",
@@ -652,7 +709,12 @@ Be precise and evidence-based. Reference specific artifact content in evidence f
       const llm = await opts.provider.chatJson<LlmGovernanceResponse>([
         { role: "system", content: opts.systemPrompt },
         { role: "user", content: userContent },
-      ], { meta: { role: "verifier", pipeline_id: opts.pipelineId, call_type: "governance-checks" } });
+      ], {
+        meta: { role: "verifier", pipeline_id: opts.pipelineId, call_type: "governance-checks" },
+        // Phase 10 (ADR-033): enforce response shape API-side via json_schema
+        // (strict mode). Eliminates retries on malformed governance output.
+        output_schema: GOVERNANCE_RESPONSE_SCHEMA,
+      });
       if (!llm?.checks?.length) return fallback;
 
       // Ensure evidence_refs non-empty when governance result is fail (HND-003)

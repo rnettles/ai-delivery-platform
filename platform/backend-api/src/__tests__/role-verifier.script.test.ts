@@ -1558,3 +1558,131 @@ describe("Suite 10 (Phase 9.4): Orchestration compatibility \u2014 FSP-001, FIX-
     expect(result.brief_path).toBeDefined();
   });
 });
+
+// ─── Suite 11 (ADR-033 Phase 8): Deterministic-skip + json_schema ─────────────
+
+describe("Suite 11 (ADR-033 Phase 8): Deterministic checks short-circuit LLM governance", () => {
+  const script = new VerifierScript();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setupCommonMocks();
+    setupAllInputsPresent();
+  });
+
+  it("11.1 — does NOT call chatJson when CI gate (check 7) fails", async () => {
+    mockCommandFail();
+    // chatJson would resolve PASS if invoked — but the deterministic short-circuit
+    // should prevent the call entirely.
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
+
+    const ctx = makeContext();
+    const result = await script.run(
+      {
+        previous_artifacts: [
+          "/artifacts/AI_IMPLEMENTATION_BRIEF.md",
+          "/artifacts/current_task.json",
+          "/artifacts/test_results.json",
+        ],
+        pipeline_id: PIPELINE_ID,
+      },
+      ctx
+    ) as VerifierOutput;
+
+    // The whole point of Phase 8: no governance LLM call on deterministic FAIL.
+    expect(mocks.chatJson).not.toHaveBeenCalled();
+    expect(result.passed).toBe(false);
+  });
+
+  it("11.2 — emits checks 2,3,4,5,6,10 with result=NOT_RUN and skip evidence", async () => {
+    mockCommandFail();
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
+
+    const ctx = makeContext();
+    await script.run(
+      {
+        previous_artifacts: [
+          "/artifacts/AI_IMPLEMENTATION_BRIEF.md",
+          "/artifacts/current_task.json",
+          "/artifacts/test_results.json",
+        ],
+        pipeline_id: PIPELINE_ID,
+      },
+      ctx
+    );
+
+    // verification_result.json is the second writeFile call (after test_results.json
+    // is read). Inspect the JSON written to confirm NOT_RUN evidence.
+    const verificationCall = (mocks.writeFile.mock.calls as Array<[string, string]>).find(
+      ([p]) => typeof p === "string" && p.includes("verification_result.json")
+    );
+    // The artifactService.write mock also receives the JSON content.
+    const writeMockCall = (mocks.write.mock.calls as Array<[string, string, string]>).find(
+      ([, name]) => name && name.toLowerCase().includes("verification_result")
+    );
+    const json = verificationCall ? verificationCall[1] : writeMockCall?.[2];
+    expect(json).toBeTruthy();
+
+    const parsed = JSON.parse(json as string) as VerificationResult;
+    const governance = parsed.checks.filter((c: VerificationCheck) =>
+      [2, 3, 4, 5, 6, 10].includes(c.check_number)
+    );
+    expect(governance).toHaveLength(6);
+    expect(governance.every((c) => c.result === "NOT_RUN")).toBe(true);
+    expect(governance.every((c) => /Skipped/i.test(c.evidence))).toBe(true);
+  });
+
+  it("11.3 — DOES call chatJson when all deterministic checks pass", async () => {
+    mockCommandsPass();
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
+
+    const ctx = makeContext();
+    await script.run(
+      {
+        previous_artifacts: [
+          "/artifacts/AI_IMPLEMENTATION_BRIEF.md",
+          "/artifacts/current_task.json",
+          "/artifacts/test_results.json",
+        ],
+        pipeline_id: PIPELINE_ID,
+      },
+      ctx
+    );
+
+    expect(mocks.chatJson).toHaveBeenCalledTimes(1);
+  });
+
+  it("11.4 — Phase 10: governance chatJson call passes output_schema with strict json_schema fields", async () => {
+    mockCommandsPass();
+    mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
+
+    const ctx = makeContext();
+    await script.run(
+      {
+        previous_artifacts: [
+          "/artifacts/AI_IMPLEMENTATION_BRIEF.md",
+          "/artifacts/current_task.json",
+          "/artifacts/test_results.json",
+        ],
+        pipeline_id: PIPELINE_ID,
+      },
+      ctx
+    );
+
+    expect(mocks.chatJson).toHaveBeenCalledTimes(1);
+    const opts = mocks.chatJson.mock.calls[0][1] as {
+      meta?: { role?: string; call_type?: string };
+      output_schema?: Record<string, unknown>;
+    };
+    expect(opts.meta?.role).toBe("verifier");
+    expect(opts.meta?.call_type).toBe("governance-checks");
+    // json_schema enforcement (Phase 10): output_schema must describe checks/handoff shape.
+    expect(opts.output_schema).toBeDefined();
+    expect(opts.output_schema?.type).toBe("object");
+    const props = opts.output_schema?.properties as Record<string, unknown>;
+    expect(props.checks).toBeDefined();
+    expect(props.handoff).toBeDefined();
+    expect(props.summary).toBeDefined();
+    expect(props.required_corrections).toBeDefined();
+  });
+});
