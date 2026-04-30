@@ -108,14 +108,11 @@ interface ResolvedCommand {
 /**
  * Phase 6: All known Task Flags parsed structurally from the brief (TFC-002).
  * Safe defaults provided for all absent flags — no inference permitted.
+ * Phase 1 (ADR-033): canonical definition lives in `../utils/brief-parser.ts`;
+ * re-exported here for backward compatibility with existing imports.
  */
-export interface TaskFlags {
-  task_id?: string;
-  ui_evidence_required: boolean;
-  architecture_contract_change: boolean;
-  fr_ids_in_scope: string[];
-  incident_tier?: string;
-}
+import { parseTaskFlags as _parseTaskFlags, type TaskFlags } from "../utils/brief-parser";
+export type { TaskFlags };
 
 /**
  * Handoff contract — matches AI_HANDOFF_CONTRACT.md.
@@ -206,7 +203,7 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
 
     const previousArtifacts = typed.previous_artifacts ?? [];
 
-    const designInputs = await designInputGateService.requireRelevantDesignInputs(pipelineId, "verifier");
+    const designInputs = await designInputGateService.requireRelevantDesignInputs(pipelineId, "verifier", "plan", "verifier");
     context.notify(
       `📚 Design inputs validated (${designInputs.sample_files.length} found). ` +
       `Using project: \`${designInputs.project_name}\``
@@ -279,18 +276,60 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
     // ── Phases 3/6: Governance checks via LLM (checks 2, 3, 4, 5, 6, 10) ─────
     // Phase 6.1: parse task flags structurally for deterministic governance context (TFC-002)
     const taskFlags = this.parseTaskFlags(brief.content);
-    const systemPrompt = await governanceService.getComposedPrompt("verifier");
-    const provider = await llmFactory.forRole("verifier");
-    const governanceResult = await this.evaluateGovernanceChecks({
-      provider,
-      systemPrompt,
-      taskId,
-      briefContent: brief.content,
-      taskContent: task.content,
-      testResultsContent: testResults.content,
-      commandResults,
-      taskFlags,
-    });
+
+    // ── Phase 8 (ADR-033): run deterministic checks 1, 7, 8, 9 in parallel BEFORE the LLM call.
+    // If any deterministic check fails, skip the governance LLM call entirely — saves ~2–4k
+    // tokens on every CI failure and emits FAIL immediately with checks 2–6, 10 = NOT_RUN.
+    const [check1, check7, check8, check9] = await Promise.all([
+      Promise.resolve(this.buildTaskIdAlignmentCheck(taskId, brief.content, task.content)),
+      Promise.resolve(this.buildCiEvidenceCheck(commandResults, testResults.content)),
+      this.runUxEvidenceCheck(brief.content, repoPath),
+      Promise.resolve(this.buildArtifactIntegrityCheck(taskId, repoPath)),
+    ]);
+
+    const deterministicChecks = [check1, check7, check8, check9];
+    const deterministicFailed = deterministicChecks.some((c) => c.result === "FAIL");
+
+    let governanceResult: LlmGovernanceResponse;
+    if (deterministicFailed) {
+      context.log("Verifier: deterministic check failed — skipping LLM governance call (Phase 8)", {
+        failed_checks: deterministicChecks.filter((c) => c.result === "FAIL").map((c) => c.check_number),
+      });
+      governanceResult = {
+        checks: [2, 3, 4, 5, 6, 10].map((n) => ({
+          check_number: n,
+          check_name: REV002_CHECK_NAMES[n - 1].name,
+          result: "NOT_RUN" as const,
+          evidence: "Skipped — deterministic check failed",
+        })),
+        summary: "Deterministic checks failed; LLM governance evaluation skipped (Phase 8).",
+        required_corrections: [],
+        handoff: {
+          task_id: taskId,
+          changed_scope: [],
+          verification_state: "fail",
+          open_risks: ["Deterministic verification check failed; governance not evaluated."],
+          next_role_action: "implementer_retry",
+          evidence_refs: deterministicChecks
+            .filter((c) => c.result === "FAIL")
+            .map((c) => `check-${c.check_number}:${c.check_name}`),
+        },
+      };
+    } else {
+      const systemPrompt = await governanceService.getComposedPrompt("verifier");
+      const provider = await llmFactory.forRole("verifier");
+      governanceResult = await this.evaluateGovernanceChecks({
+        provider,
+        systemPrompt,
+        taskId,
+        briefContent: brief.content,
+        taskContent: task.content,
+        testResultsContent: testResults.content,
+        commandResults,
+        taskFlags,
+        pipelineId,
+      });
+    }
 
     // ── Phases 3/5: Build all 10 ordered checks ───────────────────────────────
     const checks = this.buildOrderedChecks({
@@ -303,10 +342,9 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
       testResultsContent: testResults.content,
     });
 
-    // Check 8 (UI evidence) — replace placeholder with concrete result
-    const uxCheck = await this.runUxEvidenceCheck(brief.content, repoPath);
+    // Phase 8: substitute the deterministic UX check (check 8) computed above.
     const check8Idx = checks.findIndex((c) => c.check_number === 8);
-    if (check8Idx >= 0) checks[check8Idx] = uxCheck;
+    if (check8Idx >= 0) checks[check8Idx] = check8;
 
     // ── Aggregate ─────────────────────────────────────────────────────────────
     const failedChecks = checks.filter((c) => c.result === "FAIL");
@@ -556,6 +594,8 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
     commandResults: CommandResult[];
     /** Phase 6: deterministic task flag context passed to LLM (TFC-002). */
     taskFlags: TaskFlags;
+    /** Phase 11 (ADR-033): pipeline id for telemetry/metering. */
+    pipelineId?: string;
   }): Promise<LlmGovernanceResponse> {
     const sections = [
       `# AI_IMPLEMENTATION_BRIEF.md\n\n${opts.briefContent}`,
@@ -612,7 +652,7 @@ Be precise and evidence-based. Reference specific artifact content in evidence f
       const llm = await opts.provider.chatJson<LlmGovernanceResponse>([
         { role: "system", content: opts.systemPrompt },
         { role: "user", content: userContent },
-      ]);
+      ], { meta: { role: "verifier", pipeline_id: opts.pipelineId, call_type: "governance-checks" } });
       if (!llm?.checks?.length) return fallback;
 
       // Ensure evidence_refs non-empty when governance result is fail (HND-003)
@@ -837,62 +877,7 @@ Be precise and evidence-based. Reference specific artifact content in evidence f
    * Replaces the former parseUiEvidenceRequired() helper.
    */
   parseTaskFlags(briefContent: string): TaskFlags {
-    const flags: TaskFlags = {
-      ui_evidence_required: false,
-      architecture_contract_change: false,
-      fr_ids_in_scope: [],
-    };
-
-    // task_id
-    const taskIdJson = /"task_id"\s*:\s*"([^"]+)"/.exec(briefContent);
-    if (taskIdJson) flags.task_id = taskIdJson[1];
-    else {
-      const taskIdMd = /\*\*task_id:\*\*\s*(\S+)/.exec(briefContent);
-      if (taskIdMd) flags.task_id = taskIdMd[1].trim();
-    }
-
-    // ui_evidence_required
-    const uiJson = /"ui_evidence_required"\s*:\s*(true|false)/.exec(briefContent);
-    if (uiJson) flags.ui_evidence_required = uiJson[1] === "true";
-    else {
-      const uiMd = /\*\*ui_evidence_required:\*\*\s*(true|false)/i.exec(briefContent);
-      if (uiMd) flags.ui_evidence_required = uiMd[1].toLowerCase() === "true";
-    }
-
-    // architecture_contract_change
-    const archJson = /"architecture_contract_change"\s*:\s*(true|false)/.exec(briefContent);
-    if (archJson) flags.architecture_contract_change = archJson[1] === "true";
-    else {
-      const archMd = /\*\*architecture_contract_change:\*\*\s*(true|false)/i.exec(briefContent);
-      if (archMd) flags.architecture_contract_change = archMd[1].toLowerCase() === "true";
-    }
-
-    // fr_ids_in_scope — JSON array: ["FR-001", "FR-002"]
-    const frJson = /"fr_ids_in_scope"\s*:\s*\[([^\]]*)\]/.exec(briefContent);
-    if (frJson) {
-      flags.fr_ids_in_scope = frJson[1]
-        .split(",")
-        .map((s) => s.trim().replace(/^"|"$/g, ""))
-        .filter(Boolean);
-    } else {
-      const frMd = /\*\*fr_ids_in_scope:\*\*\s*([^\n]+)/.exec(briefContent);
-      if (frMd) {
-        flags.fr_ids_in_scope = frMd[1]
-          .split(/[,\s]+/)
-          .map((s) => s.trim())
-          .filter(Boolean);
-      }
-    }
-
-    // incident_tier
-    const tierJson = /"incident_tier"\s*:\s*"([^"]+)"/.exec(briefContent);
-    if (tierJson) flags.incident_tier = tierJson[1];
-    else {
-      const tierMd = /\*\*incident_tier:\*\*\s*(\S+)/.exec(briefContent);
-      if (tierMd) flags.incident_tier = tierMd[1].trim();
-    }
-
-    return flags;
+    return _parseTaskFlags(briefContent);
   }
 
   /**
