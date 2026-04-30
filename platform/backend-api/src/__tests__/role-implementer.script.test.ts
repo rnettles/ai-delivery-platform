@@ -706,3 +706,292 @@ describe("ImplementerScript gate execution and role boundaries", () => {
     expect(payload.summary).toBe("all_passed");
   });
 });
+
+// ─── ADR-033 Phase 14: implementer helpers ────────────────────────────────────
+
+describe("ImplementerScript ADR-033 helpers (Phase 14)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (fs.readFile as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("not found"));
+    (fs.readdir as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("not found"));
+    (fs.mkdir as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (fs.writeFile as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (fs.access as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("not found"));
+
+    mocks.findFirst.mockImplementation(async (paths: string[]) => {
+      if (paths.some((p) => p.includes("AI_IMPLEMENTATION_BRIEF")))
+        return { path: "artifacts/brief.md", content: "# Brief\n\n## Task Flags\nfr_ids_in_scope: []\narchitecture_contract_change: false\nui_evidence_required: false\nincident_tier: none" };
+      if (paths.some((p) => p.includes("current_task")))
+        return { path: "artifacts/ct.json", content: JSON.stringify({ task_id: "S04-001", sprint_id: "SPR-4", status: "in_progress" }) };
+      if (paths.some((p) => p.includes("sprint_plan")))
+        return { path: "artifacts/sprint.md", content: "# Sprint" };
+      return null;
+    });
+    mocks.get.mockResolvedValue({ project_id: "proj-1", sprint_branch: "feature/S04-001" });
+    mocks.getById.mockResolvedValue({ project_id: "proj-1", name: "demo", repo_url: "https://github.com/x/y", clone_path: "C:/repo", default_branch: "main" });
+    mocks.ensureReady.mockResolvedValue(undefined);
+    mocks.checkoutBranch.mockResolvedValue(undefined);
+    mocks.requireRelevantDesignInputs.mockResolvedValue({ sample_files: [], project_name: "demo" });
+    mocks.getComposedPrompt.mockResolvedValue("prompt");
+    mocks.commitAll.mockResolvedValue("sha14");
+    mocks.push.mockResolvedValue(undefined);
+    mocks.findOpenPullRequestByHead.mockResolvedValue(null);
+    mocks.createPullRequestWithRecovery.mockResolvedValue({ pr: { number: 14, url: "u", html_url: "hu", state: "open", merged: false }, preflight_metadata: [], remediation_performed: false });
+    let wc = 0;
+    mocks.write.mockImplementation(async (_: string, name: string) => `artifacts/${++wc}_${name}`);
+    mocks.execMock.mockImplementation((_: string, __: unknown, cb: (...a: unknown[]) => void) => cb(null, { stdout: "ok", stderr: "" }));
+  });
+
+  // ─── Phase 4: set_progress tool ────────────────────────────────────────────
+
+  it("set_progress: writes progress.json with current_focus + planned_next_action", async () => {
+    let toolResult: string | undefined;
+    mocks.chatWithTools.mockImplementation(async (_m: unknown, _t: unknown, exec: (call: { name: string; arguments: Record<string, unknown> }) => Promise<string>) => {
+      toolResult = await exec({
+        name: "set_progress",
+        arguments: {
+          current_focus: "Editing role-implementer.script.ts",
+          open_todos: ["wire up handler", "add tests"],
+          blockers: [],
+          planned_next_action: "Run tsc and re-verify",
+        },
+      });
+      await exec({ name: "finish", arguments: { task_id: "S04-001", sprint_id: "SPR-4", summary: "Done", files_changed: "[]" } });
+    });
+
+    const script = new ImplementerScript();
+    await script.run({ pipeline_id: "pipe-prog", previous_artifacts: ["artifacts/AI_IMPLEMENTATION_BRIEF.md", "artifacts/current_task.json", "artifacts/sprint_plan_spr_4.md"] }, makeContext());
+
+    expect(toolResult).toMatch(/OK/i);
+    const writeFileMock = fs.writeFile as unknown as ReturnType<typeof vi.fn>;
+    const progressCall = (writeFileMock.mock.calls as Array<[string, string]>).find(
+      ([p]) => typeof p === "string" && p.endsWith("progress.json")
+    );
+    expect(progressCall).toBeDefined();
+    const payload = JSON.parse(progressCall![1]);
+    expect(payload).toMatchObject({
+      current_focus: "Editing role-implementer.script.ts",
+      planned_next_action: "Run tsc and re-verify",
+      open_todos: ["wire up handler", "add tests"],
+      blockers: [],
+    });
+    expect(payload.recorded_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  // ─── Phase 4: max-iter fallback synthesis ─────────────────────────────────
+
+  it("max-iter fallback: synthesizes progress.json when set_progress was never called", async () => {
+    mocks.chatWithTools.mockImplementation(async () => {
+      throw new Error("LLM tool-call loop exceeded max iterations (30)");
+    });
+
+    const script = new ImplementerScript();
+    await expect(
+      script.run({ pipeline_id: "pipe-fb", previous_artifacts: ["artifacts/AI_IMPLEMENTATION_BRIEF.md", "artifacts/current_task.json", "artifacts/sprint_plan_spr_4.md"] }, makeContext())
+    ).rejects.toMatchObject({ code: "MAX_ITERATIONS" });
+
+    const writeFileMock = fs.writeFile as unknown as ReturnType<typeof vi.fn>;
+    const progressCall = (writeFileMock.mock.calls as Array<[string, string]>).find(
+      ([p]) => typeof p === "string" && p.endsWith("progress.json")
+    );
+    expect(progressCall).toBeDefined();
+    const payload = JSON.parse(progressCall![1]);
+    expect(typeof payload.current_focus).toBe("string");
+    expect(typeof payload.planned_next_action).toBe("string");
+    expect(payload.recorded_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  // ─── Phase 6: lifecycle state-machine guard ───────────────────────────────
+
+  it("status transition: in_progress → ready_for_verification is allowed", async () => {
+    mocks.chatWithTools.mockImplementation(async (_m: unknown, _t: unknown, exec: (call: { name: string; arguments: Record<string, unknown> }) => Promise<string>) => {
+      await exec({ name: "finish", arguments: { task_id: "S04-001", sprint_id: "SPR-4", summary: "Done", files_changed: "[]" } });
+    });
+
+    const script = new ImplementerScript();
+    await script.run({ pipeline_id: "pipe-st", previous_artifacts: ["artifacts/AI_IMPLEMENTATION_BRIEF.md", "artifacts/current_task.json", "artifacts/sprint_plan_spr_4.md"] }, makeContext());
+
+    const ctWriteCall = (mocks.write.mock.calls as Array<[string, string, string]>).find(
+      ([, name]) => name === "current_task.json"
+    );
+    expect(ctWriteCall).toBeDefined();
+    const written = JSON.parse(ctWriteCall![2]);
+    expect(written.status).toBe("ready_for_verification");
+  });
+
+  it("status transition: invalid prior status (e.g. blocked) is preserved", async () => {
+    mocks.findFirst.mockImplementation(async (paths: string[]) => {
+      if (paths.some((p) => p.includes("AI_IMPLEMENTATION_BRIEF")))
+        return { path: "artifacts/brief.md", content: "# Brief\n\n## Task Flags\nfr_ids_in_scope: []" };
+      if (paths.some((p) => p.includes("current_task")))
+        return { path: "artifacts/ct.json", content: JSON.stringify({ task_id: "S04-001", sprint_id: "SPR-4", status: "blocked" }) };
+      if (paths.some((p) => p.includes("sprint_plan")))
+        return { path: "artifacts/sprint.md", content: "# Sprint" };
+      return null;
+    });
+
+    mocks.chatWithTools.mockImplementation(async (_m: unknown, _t: unknown, exec: (call: { name: string; arguments: Record<string, unknown> }) => Promise<string>) => {
+      await exec({ name: "finish", arguments: { task_id: "S04-001", sprint_id: "SPR-4", summary: "Done", files_changed: "[]" } });
+    });
+
+    const script = new ImplementerScript();
+    await script.run({ pipeline_id: "pipe-st2", previous_artifacts: ["artifacts/AI_IMPLEMENTATION_BRIEF.md", "artifacts/current_task.json", "artifacts/sprint_plan_spr_4.md"] }, makeContext());
+
+    const ctWriteCall = (mocks.write.mock.calls as Array<[string, string, string]>).find(
+      ([, name]) => name === "current_task.json"
+    );
+    expect(ctWriteCall).toBeDefined();
+    const written = JSON.parse(ctWriteCall![2]);
+    expect(written.status).toBe("blocked");
+  });
+
+  // ─── Phase 5: script-templated commit message ─────────────────────────────
+
+  it("commit message: templated as feat(<task_id>): <summary> with file body", async () => {
+    mocks.chatWithTools.mockImplementation(async (_m: unknown, _t: unknown, exec: (call: { name: string; arguments: Record<string, unknown> }) => Promise<string>) => {
+      await exec({
+        name: "finish",
+        arguments: {
+          task_id: "S04-001",
+          sprint_id: "SPR-4",
+          summary: "Implement set_progress tool and lifecycle guard",
+          files_changed: JSON.stringify([{ path: "src/foo.ts", action: "Modify", description: "x" }]),
+        },
+      });
+    });
+
+    const script = new ImplementerScript();
+    await script.run({ pipeline_id: "pipe-msg", previous_artifacts: ["artifacts/AI_IMPLEMENTATION_BRIEF.md", "artifacts/current_task.json", "artifacts/sprint_plan_spr_4.md"] }, makeContext());
+
+    expect(mocks.commitAll).toHaveBeenCalled();
+    const message = (mocks.commitAll.mock.calls[0] as unknown[])[2] as string;
+    expect(message.split("\n")[0]).toMatch(/^feat\(S04-001\): /);
+    expect(message).toContain("src/foo.ts");
+  });
+
+  // ─── Phase 3: extractCorrections injection ────────────────────────────────
+
+  it("prior corrections: FAIL corrections from verification_result.json injected into context", async () => {
+    const verificationResult = JSON.stringify({
+      task_id: "S04-001",
+      result: "FAIL",
+      required_corrections: ["Fix failing tsc error in foo.ts", "Add missing test for bar()"],
+    });
+
+    const readFileMock = fs.readFile as unknown as ReturnType<typeof vi.fn>;
+    readFileMock.mockImplementation(async (filePath: string) => {
+      if (typeof filePath === "string" && filePath.endsWith("verification_result.json")) {
+        return verificationResult;
+      }
+      throw new Error("not found");
+    });
+
+    let captured: string | null = null;
+    mocks.chatWithTools.mockImplementation(async (
+      messages: Array<{ role: string; content: string }>,
+      _t: unknown,
+      exec: (call: { name: string; arguments: Record<string, unknown> }) => Promise<string>
+    ) => {
+      captured = messages.find((m) => m.role === "user")?.content ?? null;
+      await exec({ name: "finish", arguments: { task_id: "S04-001", sprint_id: "SPR-4", summary: "Done", files_changed: "[]" } });
+    });
+
+    const script = new ImplementerScript();
+    await script.run({ pipeline_id: "pipe-corr", previous_artifacts: ["artifacts/AI_IMPLEMENTATION_BRIEF.md", "artifacts/current_task.json", "artifacts/sprint_plan_spr_4.md"] }, makeContext());
+
+    expect(captured).toContain("Fix failing tsc error in foo.ts");
+    expect(captured).toContain("Add missing test for bar()");
+  });
+
+  // ─── Phase 9: cross-run gate evidence reuse ──────────────────────────────
+
+  it("gate reuse: prior exit_code=0 returned as cached when no relevant files changed", async () => {
+    const priorTestResults = JSON.stringify({
+      task_id: "S04-001",
+      sprint_id: "SPR-4",
+      gate_results: [
+        { command: "npm test", exit_code: 0, stdout: "ok", stderr: "", timestamp: "2024-01-01T00:00:00.000Z" },
+      ],
+    });
+
+    const readFileMock = fs.readFile as unknown as ReturnType<typeof vi.fn>;
+    readFileMock.mockImplementation(async (filePath: string) => {
+      if (typeof filePath === "string" && filePath.endsWith("test_results.json")) {
+        return priorTestResults;
+      }
+      throw new Error("not found");
+    });
+
+    let actualNpmTestRan = false;
+    mocks.execMock.mockImplementation((cmd: string, _opts: unknown, cb: (e: null, r: { stdout: string; stderr: string }) => void) => {
+      if (typeof cmd === "string" && cmd.includes("git diff --name-status")) {
+        return cb(null, { stdout: "M\tdocs/readme.md\n", stderr: "" });
+      }
+      if (typeof cmd === "string" && cmd.includes("git symbolic-ref")) {
+        return cb(null, { stdout: "origin/main\n", stderr: "" });
+      }
+      if (cmd === "npm test") {
+        actualNpmTestRan = true;
+      }
+      cb(null, { stdout: "ok", stderr: "" });
+    });
+
+    let runCommandResult: string | undefined;
+    mocks.chatWithTools.mockImplementation(async (_m: unknown, _t: unknown, exec: (call: { name: string; arguments: Record<string, unknown> }) => Promise<string>) => {
+      runCommandResult = await exec({ name: "run_command", arguments: { command: "npm test" } });
+      await exec({ name: "finish", arguments: { task_id: "S04-001", sprint_id: "SPR-4", summary: "Done", files_changed: "[]" } });
+    });
+
+    const script = new ImplementerScript();
+    await script.run({ pipeline_id: "pipe-cache", previous_artifacts: ["artifacts/AI_IMPLEMENTATION_BRIEF.md", "artifacts/current_task.json", "artifacts/sprint_plan_spr_4.md"] }, makeContext());
+
+    expect(runCommandResult).toBeDefined();
+    expect(runCommandResult).toMatch(/cached/i);
+    expect(actualNpmTestRan).toBe(false);
+  });
+
+  it("gate reuse: command is re-run when relevant test files changed", async () => {
+    const priorTestResults = JSON.stringify({
+      task_id: "S04-001",
+      sprint_id: "SPR-4",
+      gate_results: [
+        { command: "npm test", exit_code: 0, stdout: "ok", stderr: "", timestamp: "2024-01-01T00:00:00.000Z" },
+      ],
+    });
+
+    const readFileMock = fs.readFile as unknown as ReturnType<typeof vi.fn>;
+    readFileMock.mockImplementation(async (filePath: string) => {
+      if (typeof filePath === "string" && filePath.endsWith("test_results.json")) {
+        return priorTestResults;
+      }
+      throw new Error("not found");
+    });
+
+    let actualNpmTestRan = false;
+    mocks.execMock.mockImplementation((cmd: string, _opts: unknown, cb: (e: null, r: { stdout: string; stderr: string }) => void) => {
+      if (typeof cmd === "string" && cmd.includes("git diff --name-status")) {
+        return cb(null, { stdout: "M\tsrc/__tests__/foo.test.ts\n", stderr: "" });
+      }
+      if (typeof cmd === "string" && cmd.includes("git symbolic-ref")) {
+        return cb(null, { stdout: "origin/main\n", stderr: "" });
+      }
+      if (cmd === "npm test") {
+        actualNpmTestRan = true;
+        return cb(null, { stdout: "fresh run", stderr: "" });
+      }
+      cb(null, { stdout: "ok", stderr: "" });
+    });
+
+    let runCommandResult: string | undefined;
+    mocks.chatWithTools.mockImplementation(async (_m: unknown, _t: unknown, exec: (call: { name: string; arguments: Record<string, unknown> }) => Promise<string>) => {
+      runCommandResult = await exec({ name: "run_command", arguments: { command: "npm test" } });
+      await exec({ name: "finish", arguments: { task_id: "S04-001", sprint_id: "SPR-4", summary: "Done", files_changed: "[]" } });
+    });
+
+    const script = new ImplementerScript();
+    await script.run({ pipeline_id: "pipe-nocache", previous_artifacts: ["artifacts/AI_IMPLEMENTATION_BRIEF.md", "artifacts/current_task.json", "artifacts/sprint_plan_spr_4.md"] }, makeContext());
+
+    expect(actualNpmTestRan).toBe(true);
+    expect(runCommandResult).not.toMatch(/cached/i);
+  });
+});
