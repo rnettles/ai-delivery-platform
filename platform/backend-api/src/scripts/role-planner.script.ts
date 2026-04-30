@@ -181,7 +181,7 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
       context.log("Planner: open-phase pre-condition check skipped", { reason: String(err) });
     }
 
-    const designInputs = await designInputGateService.requireRelevantDesignInputs(pipelineId, "planner", entryMode);
+    const designInputs = await designInputGateService.requireRelevantDesignInputs(pipelineId, "planner", entryMode, "planner");
     context.notify(
       `📚 Design inputs loaded: ${designInputs.fr_context.length} FR/PRD, ` +
       `${designInputs.adr_context.length} ADR, ${designInputs.tdn_context.length} TDN file(s) ` +
@@ -304,7 +304,7 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
     const plan = await provider.chatJson<PlannerPhasePlan>([
       { role: "system", content: systemPrompt },
       { role: "user", content: userContent },
-    ]);
+    ], { meta: { role: "planner", pipeline_id: pipelineId, call_type: "phase-plan" } });
 
     // Detect LLM-reported semantic errors before field validation
     const planAsRecord = plan as unknown as Record<string, unknown>;
@@ -1021,7 +1021,7 @@ ${designArtifacts}
     const llm = await provider.chatJson<SprintLlmResponse>([
       { role: "system", content: systemPrompt },
       { role: "user", content: userContent },
-    ]);
+    ], { meta: { role: "sprint-controller", pipeline_id: pipelineId, call_type: "sprint-plan" } });
 
     if (!llm.sprint_plan?.sprint_id) {
       throw new Error("Sprint planning LLM response missing required fields");

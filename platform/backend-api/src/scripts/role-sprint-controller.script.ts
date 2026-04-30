@@ -239,7 +239,7 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
   ): Promise<SprintControllerSetupOutput> {
     context.notify("🗂️ Breaking phase plan into sprint tasks and drafting implementation brief...");
 
-    const designInputs = await designInputGateService.requireRelevantDesignInputs(pipelineId, "sprint-controller");
+    const designInputs = await designInputGateService.requireRelevantDesignInputs(pipelineId, "sprint-controller", "plan", "sprint-controller");
     context.notify(
       `📚 Design inputs validated (${designInputs.sample_files.length} found). ` +
       `Using project: \`${designInputs.project_name}\``
@@ -325,7 +325,7 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
     const llm = await provider.chatJson<LlmResponse>([
       { role: "system", content: systemPrompt },
       { role: "user", content: userContent },
-    ]);
+    ], { meta: { role: "sprint-controller", pipeline_id: pipelineId, call_type: "setup" } });
 
     if (!llm.sprint_plan?.sprint_id || !llm.first_task?.task_id) {
       throw new Error("Sprint Controller LLM response missing required fields");

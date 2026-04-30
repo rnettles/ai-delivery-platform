@@ -15,6 +15,33 @@ const INTAKE_ROOT = "project_work/ai_project_tasks/intake";
 
 export type EntryMode = "intake" | "plan";
 
+/**
+ * Phase 7 (ADR-033): role-aware loading profiles. Determines how much design
+ * context the gate loads into memory for each role. The full file walk for
+ * `sample_files` always runs (cheap, validates the project layout), but
+ * fr/adr/tdn content loads are scoped per role.
+ */
+export type RoleProfile = "planner" | "sprint-controller" | "implementer" | "verifier";
+
+interface LoadProfile {
+  fr: number;
+  adr: number;
+  tdn: number;
+}
+
+const DEFAULT_PROFILE: LoadProfile = { fr: 4, adr: 3, tdn: 3 };
+
+const ROLE_LOAD_PROFILES: Record<RoleProfile, LoadProfile> = {
+  planner: { fr: 4, adr: 3, tdn: 3 },
+  // Sprint controller: FRs only — ADR/TDN already filtered by phase plan.
+  "sprint-controller": { fr: 2, adr: 0, tdn: 0 },
+  // Implementer: brief carries explicit `## Design References` (Phase 2). The gate
+  // only validates layout; design content is injected from brief refs at call site.
+  implementer: { fr: 0, adr: 0, tdn: 0 },
+  // Verifier: governed by AI_RULES.md and brief task flags only — design content not needed.
+  verifier: { fr: 0, adr: 0, tdn: 0 },
+};
+
 const DESIGN_FILE_EXTENSIONS = new Set([".md", ".txt", ".json", ".yaml", ".yml"]);
 
 // Files matching these patterns are scaffolding/reference only and must not be loaded
@@ -26,10 +53,6 @@ const EXCLUDED_FILENAME_PATTERNS = [
 
 // Maximum characters per file loaded into LLM context (prevents token overflow)
 const MAX_FILE_CHARS = 6000;
-// Per-category file limits — FRs get priority, ADRs and TDNs are secondary
-const MAX_FR_FILES = 4;
-const MAX_ADR_FILES = 3;
-const MAX_TDN_FILES = 3;
 
 export interface DesignFile {
   path: string;
@@ -65,7 +88,8 @@ export class DesignInputGateService {
   async requireRelevantDesignInputs(
     pipelineId: string,
     role: string,
-    entryMode: EntryMode = "plan"
+    entryMode: EntryMode = "plan",
+    roleProfile?: RoleProfile
   ): Promise<DesignInputGateResult> {
     const run = await pipelineService.get(pipelineId);
     if (!run.project_id) {
@@ -87,9 +111,18 @@ export class DesignInputGateService {
       );
     }
 
-    // Ensure gate checks run against the freshest project state (not a stale clone).
+    // Phase 13 (ADR-033): throttle forcePull. Only re-pull on the first invocation
+    // of this pipeline run (within 60s of creation) or when an operator forces it.
+    // Cuts redundant `git fetch + reset --hard` latency on subsequent role calls.
     if (project) {
-      await projectGitService.ensureReady(project, { forcePull: true });
+      const createdAtMs = run.created_at ? Date.parse(run.created_at) : NaN;
+      const firstInvocation = Number.isFinite(createdAtMs)
+        ? Date.now() - createdAtMs < 60_000
+        : true;
+      const operatorForcedPull = (run.metadata as Record<string, unknown> | undefined)
+        ?.operator_forced_pull === true;
+      const shouldForcePull = firstInvocation || operatorForcedPull;
+      await projectGitService.ensureReady(project, { forcePull: shouldForcePull });
     }
 
     const repoRoot = path.isAbsolute(project.clone_path)
@@ -111,11 +144,25 @@ export class DesignInputGateService {
         }
       );
     }
+    // Phase 7 (ADR-033): resolve effective load profile. roleProfile param wins;
+    // otherwise infer from `role` string. Unknown roles fall back to DEFAULT_PROFILE.
+    const inferredProfile = (roleProfile
+      ?? (Object.keys(ROLE_LOAD_PROFILES) as RoleProfile[]).find((r) => r === role))
+      ?? null;
+    const loadProfile: LoadProfile = inferredProfile
+      ? ROLE_LOAD_PROFILES[inferredProfile]
+      : DEFAULT_PROFILE;
 
-    // Load design artifact content for LLM context injection
-    const frContext = await this.loadContext(repoRoot, FR_ROOTS, MAX_FR_FILES);
-    const adrContext = await this.loadContext(repoRoot, ADR_ROOTS, MAX_ADR_FILES);
-    const tdnContext = await this.loadContext(repoRoot, TDN_ROOTS, MAX_TDN_FILES);
+    // Load design artifact content for LLM context injection (scoped to role profile)
+    const frContext = loadProfile.fr > 0
+      ? await this.loadContext(repoRoot, FR_ROOTS, loadProfile.fr)
+      : [];
+    const adrContext = loadProfile.adr > 0
+      ? await this.loadContext(repoRoot, ADR_ROOTS, loadProfile.adr)
+      : [];
+    const tdnContext = loadProfile.tdn > 0
+      ? await this.loadContext(repoRoot, TDN_ROOTS, loadProfile.tdn)
+      : [];
 
     // Human-AI authority boundary (ADR-008): in plan mode, require at least one Approved FRD
     if (entryMode === "plan") {
