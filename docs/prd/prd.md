@@ -54,12 +54,12 @@ This system solves these by:
 
 ---
 
-# 4. Non-Goals (Phase 1)
+# 4. Non-Goals (Current Phase)
 
-- Fully autonomous software development
-- Replacement of developer tooling (e.g., VSCode)
-- Complex semantic validation
-- Automated code implementation
+- Fully agentic, unsupervised production deployment without PR review
+- Replacement of developer tooling (e.g., VS Code, GitHub)
+- Complex semantic correctness validation beyond schema and CI gates
+- Cross-organization governance federation
 
 ---
 
@@ -84,28 +84,41 @@ This system solves these by:
 # 6. Core Capabilities
 
 ## 6.1 Request Intake
-- Accept requests via Slack
-- Normalize and structure requests
+- Accept requests via Slack slash commands (n8n adapter) and CLI
+- Normalize and route to canonical pipeline endpoints
 
 ## 6.2 AI Planning
-- Generate Phase artifact
-- Generate Sprint Plan artifact
+- Generate Phase plan and Sprint plan artifacts
+- Stage tasks with structured implementation briefs (deterministic-contract sections)
 
-## 6.3 Task Staging
-- Generate structured task artifacts
-- Align tasks with Sprint Plan
+## 6.3 Sprint Execution
+- Sprint Controller creates a sprint feature branch and stages tasks
+- Implementer is a coding agent that writes code via LLM tool calls
+- Verifier executes real test/lint/type-check commands; LLM only for failure triage
+- Implementer retries on Verifier failure (max 3 attempts) with structured corrections
 
-## 6.4 Validation
-- Enforce artifact existence and structure
-- Prevent invalid state transitions
+## 6.4 PR-Gated Human Review
+- Sprint Controller (close-out) opens a GitHub Pull Request
+- Pipeline waits at `awaiting_pr_review` until merge
+- PR is the single human gate per sprint
 
-## 6.5 Human Approval
-- Pause workflow at key boundaries
-- Support approve / reject / revise
+## 6.5 Validation
+- Deterministic-first checks (filesystem, CI gates) before any LLM governance call
+- Schema validation at the canonical execution contract boundary
+- Hybrid artifact contracts: scripts own state fields; LLM writes narrative
 
-## 6.6 State Tracking
-- Track runtime state in Postgres
-- Link state to Git artifacts
+## 6.6 Human Override
+- Approve, takeover, handoff, skip, cancel actions available at any pipeline state
+- All actions recorded immutably in pipeline step history
+
+## 6.7 Multi-Project Support
+- Project registry maps Slack channels and operator scopes to project repositories
+- Per-project Git clones with scoped lifecycle
+
+## 6.8 Pipeline State and Observability
+- Pipeline runs persisted in Postgres with full step history
+- Immutable execution records per governed execution
+- Replayable execution model
 
 ---
 
@@ -165,22 +178,26 @@ Mitigation:
 
 # 10. Dependencies
 
-- Git-based AI Governance system
-- n8n orchestration platform
-- Postgres database
-- Slack integration
-- LLM provider (OpenAI or equivalent)
+- Git (platform-owned governance + project repositories)
+- Execution Service (Express + Drizzle ORM, TypeScript)
+- Postgres (pipeline runs, execution records, projects, coordination context)
+- n8n (Slack interface adapter only)
+- CLI (`platform/cli`) as a first-class operator interface
+- GitHub (PR lifecycle for sprint close-out)
+- LLM provider(s) via abstraction layer (Azure OpenAI / OpenAI-compatible, Anthropic)
+- Slack (conversational interface)
 
 ---
 
 # 11. Future Vision
 
-Beyond Phase 1, the system will expand to include:
+Future expansions under consideration:
 
-- Implementer role (code generation)
-- Verifier role (validation/testing)
-- Fix loop (automated iteration)
-- Advanced validation (semantic + rule-based)
+- Documentation agent that syncs docs to delivered sprints
+- Cross-run gate evidence reuse to skip already-passed checks on retries
+- Native Slack adapter inside the Execution Service (deprecating the n8n hop)
+- Token metering and per-pipeline cost telemetry
+- Process-invariant scoping by role to reduce prompt overhead
 
 ---
 

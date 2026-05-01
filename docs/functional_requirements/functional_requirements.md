@@ -162,8 +162,9 @@ These requirements specify **what the system must do**, independent of implement
 # 11. Orchestration Responsibilities
 
 ## FR-9.1 Orchestration Scope
-- n8n or equivalent orchestration SHALL manage sequencing, retries, and routing only.
-- Orchestration SHALL NOT embed governed business logic.
+- The Execution Service SHALL own pipeline sequencing, retries, and routing (per ADR-022).
+- External orchestration (e.g., n8n) SHALL act only as an interface adapter (per ADR-007, ADR-023) and SHALL NOT embed governed sequencing or business logic.
+- Role transitions SHALL be driven by role registry definitions (`on_success`, `on_fail`, `gate`) — not by hardcoded orchestration workflows.
 
 ## FR-9.2 Generalized Execution Model
 - System SHALL support generalized target execution (role or script) through one contract model.
@@ -171,7 +172,7 @@ These requirements specify **what the system must do**, independent of implement
 
 ## FR-9.3 Failure Handling
 - System SHALL emit structured errors for contract, validation, authorization, and runtime failures.
-- Orchestration SHALL be able to branch deterministically on error category.
+- Pipeline routing SHALL be able to branch deterministically on error category.
 
 ---
 
@@ -207,9 +208,10 @@ These requirements specify **what the system must do**, independent of implement
 - Pipeline Run state SHALL be recoverable after failure, restart, or human intervention.
 
 ## FR-12.2 Role Sequence
-- System SHALL execute governed roles in a defined sequence: Planner → Sprint Controller → Implementer → Verifier → Fixer (conditional) → Sprint Controller (close-out).
+- System SHALL execute governed roles in a defined sequence: Planner → Sprint Controller (setup) → Implementer → Verifier → Sprint Controller (close-out) (per ADR-022, ADR-030).
 - Role sequence SHALL be governed by role definitions in the registry, not hardcoded in orchestration workflows.
-- The Fixer role SHALL be invoked only when Verifier produces a failing result.
+- On Verifier failure, the pipeline SHALL route back to Implementer with `verification_result.json` and failure context appended; there SHALL NOT be a separate Fixer role (per ADR-030 §6).
+- The maximum number of Implementer attempts (initial + retries) SHALL be 3; exceeding this limit SHALL transition the pipeline to `failed` and emit a human-escalation notification.
 
 ## FR-12.3 Variable Entry Points
 - System SHALL support starting a Pipeline Run at any role in the sequence.
@@ -225,6 +227,48 @@ These requirements specify **what the system must do**, independent of implement
 - System SHALL record the artifact paths produced at each pipeline step.
 - Artifact paths SHALL be queryable by pipeline_id and step name.
 - Each pipeline step SHALL reference the execution_id of the underlying governed execution.
+
+## FR-12.6 Execution Mode
+- Pipeline creation SHALL accept an `execution_mode` value of `next`, `next-flow`, or `full-sprint` (per ADR-022, ADR-030, ADR-032).
+  - `next` — run only the entry role, then stop.
+  - `next-flow` — chain through downstream flow from the entry role; for non-planner entries, stop on Verifier PASS.
+  - `full-sprint` — run autonomously end-to-end; bypass intra-sprint human gates and continue to PR-gated close-out.
+- Execution mode SHALL be specified at pipeline creation time and recorded in pipeline metadata.
+
+## FR-12.7 Autonomous Sprint Execution and PR-Gated Review
+- In `full-sprint` mode, intra-sprint human approval gates (Planner, Sprint Controller setup, Implementer, Verifier) SHALL be auto-advanced (per ADR-030).
+- Sprint Controller (setup) SHALL create a sprint feature branch and record its name in pipeline metadata.
+- Sprint Controller (close-out) SHALL open a GitHub Pull Request from the feature branch to the default branch and transition the pipeline to `awaiting_pr_review`.
+- Pipeline completion SHALL be triggered by PR merge detection (webhook or polling).
+- Implementer SHALL operate as a coding agent, writing code via LLM tool calls bounded by the implementation brief and the file scope declared therein.
+- Verifier SHALL execute real test/lint/type-check commands; the LLM SHALL be invoked only for failure triage and to produce `required_corrections`.
+
+## FR-12.8 Guardrail-Triggered Escalation
+- The system SHALL escalate to human review on any of the following (per ADR-030 §7):
+  - Implementer retry limit exceeded
+  - Out-of-scope file modification by Implementer
+  - Scope drift detected by Verifier
+  - Schema validation failure after configured retry limit
+  - Failed git operation (merge conflict, push rejection)
+- Escalation SHALL post a structured notification and pause the pipeline at `failed` or `paused_takeover` as appropriate.
+
+# 14a. Deterministic Artifact Contracts
+
+## FR-15.1 Hybrid Artifact Schema
+- Implementer-facing artifacts SHALL follow a hybrid schema (per ADR-033): deterministic state fields owned exclusively by scripts; tagged narrative sections written by the LLM.
+- Scripts SHALL pre-compute facts that can be derived without LLM judgment and inject them as structured inputs rather than raw documents.
+
+## FR-15.2 Implementation Brief Sections
+- `AI_IMPLEMENTATION_BRIEF.md` SHALL contain stable tagged sections parseable by a shared `parseBrief()` helper: `## Task Flags`, `## Acceptance Criteria`, `## Design References`, `## Canonical Values`, `## Deliverables Checklist`.
+- Sprint Controller (script) SHALL be the sole writer of these structured sections.
+
+## FR-15.3 Cross-Run Continuity
+- Implementer SHALL persist run state via a `set_progress` tool whose handler writes a `progress.json` artifact and a stable checkpoint (per ADR-033).
+- Subsequent runs SHALL load `progress.json` and `verification_result.json` corrections and inject them as structured directives (not raw text dumps).
+
+## FR-15.4 Deterministic-First Verification
+- Verifier SHALL evaluate script-determined checks (task_id alignment, CI gates, UX evidence, deliverables) before invoking the LLM.
+- If any deterministic check fails, the LLM governance check SHALL be skipped and the result SHALL be FAIL.
 
 ---
 

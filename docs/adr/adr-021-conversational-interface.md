@@ -1,7 +1,7 @@
 # ADR-021: Conversational Interface and Command Model
 
 ## Status
-Proposed
+Accepted
 
 ## Date
 2026-04-18
