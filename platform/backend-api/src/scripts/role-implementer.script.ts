@@ -812,7 +812,7 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       await projectGitService.push(project, sprintBranch);
       context.log("Implementer: committed", { commit_sha: commitSha, sprint_branch: sprintBranch });
       context.log("Implementer: pushed", { commit_sha: commitSha, sprint_branch: sprintBranch });
-      context.notify(`💾 Committed ${payload.files_changed.length} file(s) to \`${sprintBranch}\` (${commitSha?.slice(0, 7)})`);
+      context.notify(`Implementer: Committed ${payload.files_changed.length} file(s) to \`${sprintBranch}\` (${commitSha?.slice(0, 7)}) — ${subject}`);
     } catch (err) {
       context.log("Implementer: git commit/push failed", {
         error: String(err),

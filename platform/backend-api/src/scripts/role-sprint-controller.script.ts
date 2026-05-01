@@ -680,7 +680,6 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
         prNumber = pr.number;
         prUrl = pr.html_url;
         await pipelineService.setPrDetails(pipelineId, pr.number, pr.html_url, run.sprint_branch);
-        context.notify(`🔗 PR #${pr.number} ready for review: <${pr.html_url}|View Pull Request>`);
       } catch (err) {
         context.log("Sprint Controller: PR create/find failed (non-fatal)", { error: String(err) });
         context.notify(
