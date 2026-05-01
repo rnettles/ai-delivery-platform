@@ -1714,8 +1714,8 @@ switch ($commandName) {
         if (-not (Test-Path $dirPath)) { continue }
 
         # Find non-.gitkeep files tracked by git in this dir
-        $tracked = git ls-files $dir 2>&1 | Where-Object { $_ -notmatch '\.gitkeep$' }
-        if ($tracked) {
+        $tracked = @(git ls-files $dir 2>&1 | Where-Object { $_ -notmatch '\.gitkeep$' })
+        if ($tracked.Count -gt 0) {
           Write-Host "  Removing from $dir`: $($tracked.Count) file(s)" -ForegroundColor Yellow
           foreach ($f in $tracked) {
             git rm -f $f | Out-Null
