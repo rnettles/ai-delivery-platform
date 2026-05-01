@@ -143,6 +143,16 @@ function chatJsonFixture(
     return plannerPhasePlanFixture(ctx);
   }
   if (role === "planner" && callType === "sprint-plan") return plannerSprintFixture(ctx);
+  if (role === "sprint-controller" && callType === "task-flags") {
+    return {
+      task_flags: {
+        fr_ids_in_scope: ["FR-DRYRUN-001"],
+        architecture_contract_change: false,
+        ui_evidence_required: false,
+        incident_tier: "none",
+      },
+    };
+  }
   if (role === "sprint-controller") return sprintControllerSetupFixture(ctx);
   if (role === "verifier") return verifierFixture(ctx);
   // Fallback: empty object — script will likely throw, surfacing the gap.

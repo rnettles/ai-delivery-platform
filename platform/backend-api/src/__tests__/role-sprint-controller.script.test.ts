@@ -124,6 +124,111 @@ vi.mock("../services/design-input-gate.service", () => ({
 import { SprintControllerScript } from "../scripts/role-sprint-controller.script";
 import { ScriptExecutionContext } from "../scripts/script.interface";
 
+// ─── Staged sprint plan markdown fixtures ───────────────────────────────────
+// Must satisfy parseActiveSprintPlan() and parseFirstTaskFromSprintPlan().
+const DEFAULT_SPRINT_PLAN_MD = `# Sprint Plan: S01
+
+**Phase:** PH-001
+**Name:** Sprint 1
+**Status:** staged
+**Execution mode:** normal
+
+## Goals
+- Deliver feature
+
+## Tasks
+- S01-001
+
+---
+
+## First Task Detail: S01-001
+
+**Implement feature** [S]
+
+Do it.
+
+**Files likely affected:**
+- \`src/file.ts\`
+
+**Acceptance criteria:**
+- Done
+`;
+
+const FAST_TRACK_SPRINT_PLAN_MD = `# Sprint Plan: S01
+
+**Phase:** PH-001
+**Name:** Sprint 1
+**Status:** staged
+**Execution mode:** fast-track
+**Lane:** ui-critical
+**Rationale:** Deadline pressure
+**Intake:** RC-042
+
+## Goals
+- Deliver feature
+
+## Tasks
+- S01-001
+
+---
+
+## First Task Detail: S01-001
+
+**Implement feature** [S]
+
+Do it.
+
+**Files likely affected:**
+- \`src/file.ts\`
+
+**Acceptance criteria:**
+- Done
+`;
+
+const FAST_TRACK_NO_LANE_SPRINT_PLAN_MD = `# Sprint Plan: S01
+
+**Phase:** PH-001
+**Name:** Sprint 1
+**Status:** staged
+**Execution mode:** fast-track
+**Rationale:** Deadline pressure
+**Intake:** RC-042
+
+## Goals
+- Deliver feature
+
+## Tasks
+- S01-001
+
+---
+
+## First Task Detail: S01-001
+
+**Implement feature** [S]
+
+Do it.
+
+**Files likely affected:**
+- \`src/file.ts\`
+
+**Acceptance criteria:**
+- Done
+`;
+
+/** Wire path-aware readdir/readFile mocks for a fresh setup (no active task, staged sprint plan present). */
+function wireReadFileFreshSetup(sprintPlanMd = DEFAULT_SPRINT_PLAN_MD) {
+  mocks.readdir.mockImplementation(async (dirPath: string) => {
+    if (String(dirPath).includes("staged_sprints")) {
+      return [{ isFile: () => true, name: "sprint_plan_s01.md" }];
+    }
+    return [];
+  });
+  mocks.readFile.mockImplementation(async (filePath: string) => {
+    if (String(filePath).includes("sprint_plan_s01.md")) return sprintPlanMd;
+    throw new Error("ENOENT");
+  });
+}
+
 function makeContext(): ScriptExecutionContext {
   return {
     execution_id: "exec-1",
@@ -359,10 +464,9 @@ describe("Phase 5 — Task Flags and Fast-Track Controls", () => {
     };
   }
 
-  /** Wire common mocks for a fresh runSetup() path (no active task, no phase plan in pipeline). */
-  function setupFreshRun() {
-    mocks.readdir.mockResolvedValue([]);
-    mocks.readFile.mockRejectedValue(new Error("ENOENT"));
+  /** Wire common mocks for a fresh runSetup() path (no active task, staged sprint plan present). */
+  function setupFreshRun(sprintPlanMd = DEFAULT_SPRINT_PLAN_MD) {
+    wireReadFileFreshSetup(sprintPlanMd);
     mocks.findFirst.mockResolvedValue(null);
     mocks.getComposedPrompt.mockResolvedValue("system prompt");
     mocks.requireRelevantDesignInputs.mockResolvedValue({
@@ -460,19 +564,11 @@ describe("Phase 5 — Task Flags and Fast-Track Controls", () => {
   // ── 5.3 Fast-track prerequisite enforcement ───────────────────────────────
 
   it("5.3 throws FAST_TRACK_PREREQUISITES_MISSING when fast-track sprint plan is missing lane", async () => {
-    setupFreshRun();
-    mocks.chatJson.mockResolvedValue(
-      makeLlmResponse({
-        sprint_plan: {
-          execution_mode: "fast-track",
-          // fast_track_lane intentionally absent
-          fast_track_rationale: "Deadline",
-          fast_track_intake_id: "RC-001",
-        },
-      })
-    );
+    setupFreshRun(FAST_TRACK_NO_LANE_SPRINT_PLAN_MD);
+    mocks.chatJson.mockResolvedValue(makeLlmResponse());
     // next_steps.md mentions fast-track so only the lane check fails
     mocks.readFile.mockImplementation(async (filePath: string) => {
+      if (String(filePath).includes("sprint_plan_")) return FAST_TRACK_NO_LANE_SPRINT_PLAN_MD;
       if (String(filePath).includes("next_steps.md")) return "This sprint runs in fast-track mode.";
       throw new Error("ENOENT");
     });
@@ -484,19 +580,11 @@ describe("Phase 5 — Task Flags and Fast-Track Controls", () => {
   });
 
   it("5.3 throws FAST_TRACK_PREREQUISITES_MISSING when next_steps.md does not mention fast-track", async () => {
-    setupFreshRun();
-    mocks.chatJson.mockResolvedValue(
-      makeLlmResponse({
-        sprint_plan: {
-          execution_mode: "fast-track",
-          fast_track_lane: "ui-critical",
-          fast_track_rationale: "Deadline pressure",
-          fast_track_intake_id: "RC-042",
-        },
-      })
-    );
+    setupFreshRun(FAST_TRACK_SPRINT_PLAN_MD);
+    mocks.chatJson.mockResolvedValue(makeLlmResponse());
     // next_steps.md exists but does NOT mention fast-track
     mocks.readFile.mockImplementation(async (filePath: string) => {
+      if (String(filePath).includes("sprint_plan_")) return FAST_TRACK_SPRINT_PLAN_MD;
       if (String(filePath).includes("next_steps.md")) return "Next steps: implement the feature normally.";
       throw new Error("ENOENT");
     });
@@ -508,19 +596,13 @@ describe("Phase 5 — Task Flags and Fast-Track Controls", () => {
   });
 
   it("5.3 throws FAST_TRACK_PREREQUISITES_MISSING when next_steps.md is absent", async () => {
-    setupFreshRun();
-    mocks.chatJson.mockResolvedValue(
-      makeLlmResponse({
-        sprint_plan: {
-          execution_mode: "fast-track",
-          fast_track_lane: "ui-critical",
-          fast_track_rationale: "Deadline pressure",
-          fast_track_intake_id: "RC-042",
-        },
-      })
-    );
-    // All readFile calls throw ENOENT (next_steps.md not found)
-    mocks.readFile.mockRejectedValue(new Error("ENOENT"));
+    setupFreshRun(FAST_TRACK_SPRINT_PLAN_MD);
+    mocks.chatJson.mockResolvedValue(makeLlmResponse());
+    // Sprint plan readable but next_steps.md throws ENOENT
+    mocks.readFile.mockImplementation(async (filePath: string) => {
+      if (String(filePath).includes("sprint_plan_")) return FAST_TRACK_SPRINT_PLAN_MD;
+      throw new Error("ENOENT");
+    });
 
     const script = new SprintControllerScript();
     await expect(
@@ -529,10 +611,9 @@ describe("Phase 5 — Task Flags and Fast-Track Controls", () => {
   });
 
   it("5.3 normal execution mode does not invoke fast-track prerequisite check", async () => {
-    setupFreshRun();
-    mocks.chatJson.mockResolvedValue(makeLlmResponse({ sprint_plan: { execution_mode: "normal" } }));
-    // next_steps.md read would throw if called — but it must NOT be called for normal mode
-    mocks.readFile.mockRejectedValue(new Error("ENOENT"));
+    setupFreshRun(); // DEFAULT_SPRINT_PLAN_MD has execution_mode: normal
+    mocks.chatJson.mockResolvedValue(makeLlmResponse());
+    // next_steps.md must NOT be read for normal mode — readFile will throw if called with that path
 
     const script = new SprintControllerScript();
     await script.run({ pipeline_id: "pipe-1", previous_artifacts: [] }, makeContext());
@@ -546,18 +627,10 @@ describe("Phase 5 — Task Flags and Fast-Track Controls", () => {
   // ── 5.4 Fast Track Controls block injection ───────────────────────────────
 
   it("5.4 brief includes Fast Track Controls block for fast-track execution mode", async () => {
-    setupFreshRun();
-    mocks.chatJson.mockResolvedValue(
-      makeLlmResponse({
-        sprint_plan: {
-          execution_mode: "fast-track",
-          fast_track_lane: "ui-critical",
-          fast_track_rationale: "Deadline pressure",
-          fast_track_intake_id: "RC-042",
-        },
-      })
-    );
+    setupFreshRun(FAST_TRACK_SPRINT_PLAN_MD);
+    mocks.chatJson.mockResolvedValue(makeLlmResponse());
     mocks.readFile.mockImplementation(async (filePath: string) => {
+      if (String(filePath).includes("sprint_plan_")) return FAST_TRACK_SPRINT_PLAN_MD;
       if (String(filePath).includes("next_steps.md")) return "Approved fast-track sprint for this cycle.";
       throw new Error("ENOENT");
     });
@@ -620,8 +693,7 @@ describe("Phase 6 — Input/Output Contract Reconciliation", () => {
   }
 
   function wireSetupRun() {
-    mocks.readdir.mockResolvedValue([]);
-    mocks.readFile.mockRejectedValue(new Error("ENOENT"));
+    wireReadFileFreshSetup();
     mocks.findFirst.mockResolvedValue(null);
     mocks.getComposedPrompt.mockResolvedValue("system prompt");
     mocks.requireRelevantDesignInputs.mockResolvedValue({
@@ -1005,18 +1077,15 @@ describe("Phase 7 — Orchestration and Instruction Gating", () => {
     mocks.findFirst.mockImplementation(async (paths: string[]) => {
       if (paths.some((p) => p.includes("sprint_closeout.json")))
         return { path: "artifacts/sprint_closeout.json", content: PHASE2_CLOSEOUT_CONTENT };
-      // No verification_result.json, no phase plan — setup falls through to LLM
+      // No verification_result.json, no phase plan — setup falls through to staged sprint plan
       return null;
     });
-    mocks.readdir.mockResolvedValue([]);
-    mocks.readFile.mockRejectedValue(new Error("ENOENT"));
+    wireReadFileFreshSetup();
     mocks.requireRelevantDesignInputs.mockResolvedValue({ sample_files: [], project_name: "demo", clone_path: "C:/repo" });
     mocks.getComposedPrompt.mockResolvedValue("system prompt");
     mocks.get.mockResolvedValue({ project_id: "proj-1" });
     mocks.getById.mockResolvedValue({ project_id: "proj-1", clone_path: "C:/repo", default_branch: "main" });
     mocks.chatJson.mockResolvedValue({
-      sprint_plan: { sprint_id: "S01", phase_id: "PH-001", name: "Sprint 1", goals: ["goal"], tasks: ["S01-002"], status: "staged", execution_mode: "normal" },
-      first_task: { task_id: "S01-002", title: "Next task", description: "Do it.", acceptance_criteria: ["Done"], estimated_effort: "S", files_likely_affected: ["src/f.ts"], status: "pending" },
       task_flags: { fr_ids_in_scope: ["FR-2"], architecture_contract_change: false, ui_evidence_required: false, incident_tier: "none" },
     });
     mocks.createPullRequestWithRecovery.mockResolvedValue({
@@ -1046,8 +1115,7 @@ describe("Phase 9 — Verification and Regression Coverage", () => {
   }
 
   function wireFreshSetup() {
-    mocks.readdir.mockResolvedValue([]);
-    mocks.readFile.mockRejectedValue(new Error("ENOENT"));
+    wireReadFileFreshSetup();
     mocks.findFirst.mockResolvedValue(null);
     mocks.getComposedPrompt.mockResolvedValue("system prompt");
     mocks.requireRelevantDesignInputs.mockResolvedValue({ sample_files: [], project_name: "demo", clone_path: "C:/repo" });
@@ -1181,13 +1249,12 @@ describe("Phase 9 — Verification and Regression Coverage", () => {
       if (paths.some((p) => p.includes("sprint_closeout.json"))) return { path: "artifacts/sprint_closeout.json", content: closeoutAfterP2 };
       return null;
     });
-    mocks.readdir.mockResolvedValue([]);
-    mocks.readFile.mockRejectedValue(new Error("ENOENT"));
+    wireReadFileFreshSetup();
     mocks.requireRelevantDesignInputs.mockResolvedValue({ sample_files: [], project_name: "demo", clone_path: "C:/repo" });
     mocks.getComposedPrompt.mockResolvedValue("system prompt");
     mocks.get.mockResolvedValue({ project_id: "proj-1" });
     mocks.getById.mockResolvedValue({ project_id: "proj-1", clone_path: "C:/repo", default_branch: "main" });
-    mocks.chatJson.mockResolvedValue(makeValidLlmResponse());
+    mocks.chatJson.mockResolvedValue({ task_flags: { fr_ids_in_scope: ["FR-2"], architecture_contract_change: false, ui_evidence_required: false, incident_tier: "none" } });
     mocks.createPullRequestWithRecovery.mockResolvedValue({ pr: { number: 4, html_url: "https://github.com/test/pr/4" }, remediation_performed: false });
 
     const p3Out = await script.run({ pipeline_id: "pipe-1", previous_artifacts: ["artifacts/sprint_closeout.json"], close_out_phase: "stage_next" }, makeContext()) as Record<string, unknown>;

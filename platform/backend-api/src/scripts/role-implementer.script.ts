@@ -1037,13 +1037,15 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
 
     let sprintArtifact: ArtifactContextFile | null = null;
     try {
-      const entries = await fs.readdir(activeDir, { withFileTypes: true });
+      // Sprint plans live in staged_sprints/ (not active/) — Planner owns sprint plan creation.
+      const stagedSprintsDir = path.join(clonePath, "project_work", "ai_project_tasks", "staged_sprints");
+      const entries = await fs.readdir(stagedSprintsDir, { withFileTypes: true });
       const sprintPlanEntry = entries.find((entry) => entry.isFile() && /^sprint_plan_.*\.md$/i.test(entry.name));
       if (sprintPlanEntry) {
-        sprintArtifact = await readOptional(path.join(activeDir, sprintPlanEntry.name));
+        sprintArtifact = await readOptional(path.join(stagedSprintsDir, sprintPlanEntry.name));
       }
     } catch {
-      // no active dir
+      // no staged_sprints dir — non-fatal
     }
 
     return {

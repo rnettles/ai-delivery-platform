@@ -21,7 +21,7 @@ describe("MockLlmProvider", () => {
     expect(result.phase_id).toBe("P01");
     expect(Array.isArray(result.fr_ids_in_scope)).toBe(true);
     expect((result.fr_ids_in_scope as string[]).length).toBeGreaterThan(0);
-    expect(result.status).toBe("Draft");
+    expect(result.status).toBe("Planning");
   });
 
   it("planner sprint-plan returns sprint_plan + first_task + task_flags", async () => {
@@ -117,7 +117,7 @@ describe("MockLlmProvider", () => {
     expect(result.phase_id).toBe("P99");
     expect(result.name).toBe("Override");
     // Untouched fields preserved
-    expect(result.status).toBe("Draft");
+    expect(result.status).toBe("Planning");
   });
 
   it("chatWithTools emits write_file → set_progress → finish for implementer", async () => {

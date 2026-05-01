@@ -138,9 +138,7 @@ function validateRequiredTaskFlags(flags: TaskFlags): void {
   }
 }
 
-interface LlmResponse {
-  sprint_plan: SprintPlan;
-  first_task: SprintTask;
+interface TaskFlagsLlmResponse {
   task_flags: TaskFlags;
 }
 
@@ -237,7 +235,7 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
     previousArtifacts: string[],
     context: ScriptExecutionContext
   ): Promise<SprintControllerSetupOutput> {
-    context.notify("🗂️ Breaking phase plan into sprint tasks and drafting implementation brief...");
+    context.notify("🗂️ Loading staged sprint plan and staging task package...");
 
     const designInputs = await designInputGateService.requireRelevantDesignInputs(pipelineId, "sprint-controller", "plan", "sprint-controller");
     context.notify(
@@ -245,6 +243,7 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       `Using project: \`${designInputs.project_name}\``
     );
 
+    // If a task package is already open in active/, reuse it rather than creating a second one.
     const activeTaskPackage = await this.loadOpenActiveTaskPackage(designInputs.clone_path);
     if (activeTaskPackage) {
       context.notify(
@@ -254,11 +253,27 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       return this.publishExistingTaskPackage(pipelineId, activeTaskPackage, context);
     }
 
+    // Load staged sprint plan — Planner owns sprint plan creation and commits to staged_sprints/.
+    const stagedSprint = await this.findStagedSprintPlan(designInputs.clone_path);
+    if (!stagedSprint) {
+      throw new HttpError(
+        409,
+        "NO_STAGED_SPRINT_PLAN",
+        "Sprint Controller requires a staged sprint plan in project_work/ai_project_tasks/staged_sprints/. " +
+          "Run the Planner to generate and stage a sprint plan before invoking Sprint Controller.",
+        { staged_sprints_path: "project_work/ai_project_tasks/staged_sprints/" }
+      );
+    }
+
+    context.notify(
+      `📋 Sprint plan loaded: \`${stagedSprint.sprintPlan.sprint_id}\` — ` +
+      `task ${stagedSprint.firstTask.task_id}: ${stagedSprint.firstTask.title}`
+    );
+
+    // Load phase plan for gate checks (from previousArtifacts or staged_phases/ fallback).
     let phasePlanArtifact = await artifactService.findFirst(
       previousArtifacts.filter((p) => p.includes("phase_plan")).concat(previousArtifacts)
     );
-
-    // Fallback: if no phase plan in pipeline artifacts, read most recent one from project repo staged_phases/
     if (!phasePlanArtifact) {
       const stagedPhasesDir = path.join(
         designInputs.clone_path,
@@ -272,7 +287,6 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
           .filter((e) => e.isFile() && /^phase_plan_.*\.md$/i.test(e.name))
           .map((e) => path.join(stagedPhasesDir, e.name));
         if (planFiles.length > 0) {
-          // Pick most recently modified phase plan
           const withMtime = await Promise.all(
             planFiles.map(async (fp) => ({ fp, mtime: (await fs.stat(fp)).mtimeMs }))
           );
@@ -282,7 +296,6 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
           context.notify(`📄 Phase plan loaded from repo: \`${path.basename(withMtime[0].fp)}\``);
         }
       } catch {
-        // staged_phases dir doesn't exist yet — non-fatal, continue without phase plan
         context.log("Sprint Controller: no staged_phases dir found, continuing without phase plan");
       }
     }
@@ -300,7 +313,6 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
           { phase_status: phaseStatus }
         );
       }
-
       // Gate: all required TDNs must be Approved before sprint staging (AI_RULES.md Design Artifact Rules)
       const blockingTdns = this.extractBlockingTdns(phasePlanArtifact.content);
       if (blockingTdns.length > 0) {
@@ -314,42 +326,30 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       }
     }
 
-    const nextSprintNum = await this.getNextSprintNumber(designInputs.clone_path);
-    const sprintLabel = `Sprint ${nextSprintNum}`;
-    const userContent = phasePlanArtifact
-      ? `Phase plan:\n\n${phasePlanArtifact.content}\n\nProduce a sprint plan and implementation brief for ${sprintLabel}, Task 1.`
-      : `No phase plan found. Produce a generic 2-task ${sprintLabel} with a foundational first task.`;
+    // LLM call for task_flags only — Sprint Controller owns gate artifacts (not sprint plan creation).
+    const userContent = [
+      `Sprint plan:\n\n${stagedSprint.sprintPlanContent}`,
+      phasePlanArtifact ? `\nPhase plan:\n\n${phasePlanArtifact.content}` : "",
+      `\nGenerate task flags for task ${stagedSprint.firstTask.task_id}.`,
+    ].join("");
 
     const systemPrompt = await governanceService.getComposedPrompt("sprint-controller");
     const provider = await llmFactory.forRole("sprint-controller");
-    const llm = await provider.chatJson<LlmResponse>([
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userContent },
-    ], { meta: { role: "sprint-controller", pipeline_id: pipelineId, call_type: "setup" } });
+    const llm = await provider.chatJson<TaskFlagsLlmResponse>(
+      [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userContent },
+      ],
+      { meta: { role: "sprint-controller", pipeline_id: pipelineId, call_type: "task-flags" } }
+    );
 
-    if (!llm.sprint_plan?.sprint_id || !llm.first_task?.task_id) {
-      throw new Error("Sprint Controller LLM response missing required fields");
-    }
-
-    const canonicalIds = await this.allocateCanonicalIds(designInputs.clone_path, nextSprintNum);
-    llm.sprint_plan.sprint_id = canonicalIds.sprintId;
-    llm.first_task.task_id = canonicalIds.taskId;
-    if (Array.isArray(llm.sprint_plan.tasks) && llm.sprint_plan.tasks.length > 0) {
-      llm.sprint_plan.tasks[0] = canonicalIds.taskId;
-    } else {
-      llm.sprint_plan.tasks = [canonicalIds.taskId];
-    }
-
-    context.notify(`🎯 First task identified: *${llm.first_task.task_id}* — ${llm.first_task.title}\n> Effort: ${llm.first_task.estimated_effort} | ${llm.first_task.files_likely_affected.length} file(s) likely affected`);
-
-    // Phase 5.1 (TFC-001): Validate all four required task flags before brief emission.
-    // Sprint-controller is the sole authority for task flags (TFC-003); flags come only from the LLM call above.
+    // Phase 5.1 (TFC-001): Validate required task flags before brief emission.
     validateRequiredTaskFlags(llm.task_flags);
 
     // Phase 5.3 (SCT-005, GTR-003, RUL-008): Parse execution mode and enforce fast-track prerequisites.
-    const isFastTrack = llm.sprint_plan.execution_mode === "fast-track";
+    const isFastTrack = stagedSprint.sprintPlan.execution_mode === "fast-track";
     if (isFastTrack) {
-      await this.enforceFastTrackPrerequisites(designInputs.clone_path, llm.sprint_plan);
+      await this.enforceFastTrackPrerequisites(designInputs.clone_path, stagedSprint.sprintPlan);
     }
 
     // UX gate: user_flow.md must be Approved before staging any user-facing sprint (AI_RULES.md UX Artifact Rules)
@@ -377,32 +377,23 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       }
     }
 
-    // Write sprint_plan.md — matches naming convention:
-    // project_work/ai_project_tasks/active/sprint_plan_<SPRINT_ID>.md
-    const sprintPlanContent = this.formatSprintMarkdown(llm.sprint_plan, llm.first_task);
-    const sprintPlanPath = await artifactService.write(
-      pipelineId,
-      `sprint_plan_${llm.sprint_plan.sprint_id.toLowerCase()}.md`,
-      sprintPlanContent
+    context.notify(
+      `🎯 Staging task: *${stagedSprint.firstTask.task_id}* — ${stagedSprint.firstTask.title}\n` +
+      `> Effort: ${stagedSprint.firstTask.estimated_effort} | ${stagedSprint.firstTask.files_likely_affected.length} file(s) likely affected`
     );
 
-    // Write AI_IMPLEMENTATION_BRIEF.md — the Implementer's source of truth
+    // Write AI_IMPLEMENTATION_BRIEF.md — the Implementer's source of truth.
     // Phase 5.4 (SCT-005): isFastTrack controls Fast Track Controls block injection.
-    const briefContent = this.formatBrief(llm.first_task, llm.task_flags, llm.sprint_plan, isFastTrack);
-    const briefPath = await artifactService.write(
-      pipelineId,
-      "AI_IMPLEMENTATION_BRIEF.md",
-      briefContent
-    );
+    const briefContent = this.formatBrief(stagedSprint.firstTask, llm.task_flags, stagedSprint.sprintPlan, isFastTrack);
+    const briefPath = await artifactService.write(pipelineId, "AI_IMPLEMENTATION_BRIEF.md", briefContent);
 
-    // Write current_task.json — required by Verifier and Fixer
-    // Phase 9.1 (PTH-001): brief_path must reference the canonical active brief path so Implementer
-    // and Verifier can resolve the brief without ambiguity.
+    // Write current_task.json — required by Verifier and Fixer.
+    // Phase 9.1 (PTH-001): brief_path references the canonical active brief path.
     const canonicalBriefPath = path.join("project_work", "ai_project_tasks", "active", "AI_IMPLEMENTATION_BRIEF.md");
     const currentTask = {
-      task_id: llm.first_task.task_id,
-      title: llm.first_task.title,
-      description: llm.first_task.description,
+      task_id: stagedSprint.firstTask.task_id,
+      title: stagedSprint.firstTask.title,
+      description: stagedSprint.firstTask.description,
       assigned_to: "implementer",
       status: "pending",
       brief_path: canonicalBriefPath,
@@ -412,6 +403,13 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       pipelineId,
       "current_task.json",
       JSON.stringify(currentTask, null, 2)
+    );
+
+    // Write sprint plan to artifacts bus for downstream consumers (e.g. runCloseOut sprint_id extraction).
+    const sprintPlanPath = await artifactService.write(
+      pipelineId,
+      stagedSprint.sprintPlanName,
+      stagedSprint.sprintPlanContent
     );
 
     const run = await pipelineService.get(pipelineId);
@@ -424,56 +422,58 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
     let prUrl: string | undefined;
     let sprintStatePath = "";
     if (project) {
-      sprintBranch = buildTaskFeatureBranch(llm.first_task.task_id);
+      sprintBranch = buildTaskFeatureBranch(stagedSprint.firstTask.task_id);
       await projectGitService.ensureReady(project);
       await projectGitService.createBranch(project, sprintBranch);
       await pipelineService.setSprintBranch(pipelineId, sprintBranch);
       context.notify(`🌿 Branch \`${sprintBranch}\` created and ready`);
 
-      // Persist planning artifacts to repo (AI_RUNTIME_PATHS.md)
+      // Persist task package to active/ on the feature branch.
+      // Sprint plan stays in staged_sprints/ — only brief and current_task go in active/.
       const activeDir = path.join("project_work", "ai_project_tasks", "active");
       const repoBase = path.isAbsolute(project.clone_path)
         ? project.clone_path
         : path.join(process.cwd(), project.clone_path);
       await fs.mkdir(path.join(repoBase, activeDir), { recursive: true });
-      await fs.writeFile(
-        path.join(repoBase, activeDir, `sprint_plan_${llm.sprint_plan.sprint_id.toLowerCase()}.md`),
-        sprintPlanContent,
-        "utf-8"
-      );
       await fs.writeFile(path.join(repoBase, activeDir, "AI_IMPLEMENTATION_BRIEF.md"), briefContent, "utf-8");
       await fs.writeFile(
         path.join(repoBase, activeDir, "current_task.json"),
         JSON.stringify(currentTask, null, 2),
         "utf-8"
       );
-      // 6.1 (SCT sprint_state): Write sprint_state.json to repo — documents active_task_id for downstream consumers.
+      // 6.1 (SCT sprint_state): Write sprint_state.json — documents active_task_id for downstream consumers.
       const sprintStateDir = path.join(repoBase, "project_work", "ai_state");
       await fs.mkdir(sprintStateDir, { recursive: true });
       const sprintStateContent = JSON.stringify(
-        { sprint_id: llm.sprint_plan.sprint_id, active_task_id: llm.first_task.task_id, completed_tasks: [] },
+        {
+          sprint_id: stagedSprint.sprintPlan.sprint_id,
+          active_task_id: stagedSprint.firstTask.task_id,
+          completed_tasks: [],
+        },
         null,
         2
       );
       await fs.writeFile(path.join(sprintStateDir, "sprint_state.json"), sprintStateContent, "utf-8");
       sprintStatePath = await artifactService.write(pipelineId, "sprint_state.json", sprintStateContent);
+
       await projectGitService.commitAll(
         project,
         sprintBranch,
-        `chore(${llm.first_task.task_id}): stage sprint artifacts`
+        `chore(${stagedSprint.firstTask.task_id}): stage task package`
       );
       await projectGitService.push(project, sprintBranch);
 
       const prResult = await prRemediationService.createPullRequestWithRecovery(project, {
-        title: `[${llm.sprint_plan.sprint_id}] Stage sprint artifacts`,
+        title: `[${stagedSprint.sprintPlan.sprint_id}] ${stagedSprint.firstTask.task_id} implementation`,
         body: [
-          "## Staged Sprint Review",
-          `Sprint: ${llm.sprint_plan.sprint_id}`,
-          `Phase: ${llm.sprint_plan.phase_id}`,
+          "## Sprint Implementation",
+          `Sprint: ${stagedSprint.sprintPlan.sprint_id}`,
+          `Phase: ${stagedSprint.sprintPlan.phase_id}`,
           `Branch: ${sprintBranch}`,
           "",
-          "Review the staged sprint artifacts in project_work/ai_project_tasks/active/.",
-          `First task: ${llm.first_task.task_id} - ${llm.first_task.title}`,
+          `Task: **${stagedSprint.firstTask.task_id}** — ${stagedSprint.firstTask.title}`,
+          "",
+          "Review the task package in project_work/ai_project_tasks/active/.",
         ].join("\n"),
         head: sprintBranch,
         base: project.default_branch,
@@ -485,33 +485,31 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       if (prResult.remediation_performed) {
         context.notify("🛠️ PR create was auto-remediated after a 404 and retried once.");
       }
-      context.notify(`📋 Sprint artifacts committed, pushed, and opened as PR #${pr.number}: <${pr.html_url}|View Pull Request>`);
+      context.notify(`📋 Task package committed and opened as PR #${pr.number}: <${pr.html_url}|View Pull Request>`);
     }
 
     context.log("Sprint Controller setup complete", {
-      sprint_id: llm.sprint_plan.sprint_id,
-      first_task: llm.first_task.task_id,
+      sprint_id: stagedSprint.sprintPlan.sprint_id,
+      first_task: stagedSprint.firstTask.task_id,
       brief_path: briefPath,
       sprint_branch: sprintBranch,
     });
 
-    const output: SprintControllerSetupOutput = {
+    return {
       mode: "setup",
-      sprint_id: llm.sprint_plan.sprint_id,
-      phase_id: llm.sprint_plan.phase_id,
+      sprint_id: stagedSprint.sprintPlan.sprint_id,
+      phase_id: stagedSprint.sprintPlan.phase_id,
       sprint_plan_path: sprintPlanPath,
       brief_path: briefPath,
       current_task_path: currentTaskPath,
       sprint_state_path: sprintStatePath,
       task_flags: llm.task_flags,
-      first_task: llm.first_task,
+      first_task: stagedSprint.firstTask,
       sprint_branch: sprintBranch,
       pr_number: prNumber,
       pr_url: prUrl,
       artifact_paths: [sprintPlanPath, briefPath, currentTaskPath, ...(sprintStatePath ? [sprintStatePath] : [])],
     };
-
-    return output;
   }
 
   private async runCloseOut(
@@ -978,6 +976,83 @@ ${fastTrackSection}
   }
 
   /**
+   * Reads the most recently modified sprint plan from staged_sprints/ and returns the parsed
+   * SprintPlan + SprintTask (first task). Returns null if no staged sprint plan is found.
+   */
+  private async findStagedSprintPlan(clonePath: string): Promise<{
+    sprintPlan: SprintPlan;
+    firstTask: SprintTask;
+    sprintPlanContent: string;
+    sprintPlanName: string;
+  } | null> {
+    const stagedSprintsDir = path.join(clonePath, "project_work", "ai_project_tasks", "staged_sprints");
+    try {
+      const entries = await fs.readdir(stagedSprintsDir, { withFileTypes: true });
+      const planEntries = entries
+        .filter((e) => e.isFile() && /^sprint_plan_.*\.md$/i.test(e.name))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      if (planEntries.length === 0) return null;
+
+      // Take lexically last entry — sprint plan naming convention puts most recent last.
+      const selectedEntry = planEntries[planEntries.length - 1];
+      const selectedPath = path.join(stagedSprintsDir, selectedEntry.name);
+      const content = await fs.readFile(selectedPath, "utf-8");
+      const filename = selectedEntry.name;
+      const sprintPlan = this.parseActiveSprintPlan(content, filename, "");
+      const firstTask = this.parseFirstTaskFromSprintPlan(content);
+      if (!firstTask) return null;
+
+      return { sprintPlan, firstTask, sprintPlanContent: content, sprintPlanName: filename };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Parses the "## First Task Detail: {task_id}" section from a sprint plan markdown
+   * to extract the structured SprintTask. Returns null if the section is absent.
+   */
+  private parseFirstTaskFromSprintPlan(markdown: string): SprintTask | null {
+    const headerMatch = /## First Task Detail:\s*(\S+)/i.exec(markdown);
+    if (!headerMatch) return null;
+    const taskId = headerMatch[1].trim();
+
+    const sectionStart = markdown.indexOf("## First Task Detail:");
+    const sectionContent = markdown.slice(sectionStart);
+
+    const titleLineMatch = /\*\*(.+?)\*\*\s*\[([SML])\]/.exec(sectionContent);
+    const title = titleLineMatch?.[1]?.trim() ?? taskId;
+    const effort = (titleLineMatch?.[2] ?? "M") as SprintTask["estimated_effort"];
+
+    const descMatch = /\*\*.+?\*\*\s*\[[SML]\]\n\n([\s\S]*?)\n\*\*Files likely affected:\*\*/i.exec(sectionContent);
+    const description = descMatch?.[1]?.trim() ?? "";
+
+    const filesMatch = /\*\*Files likely affected:\*\*\n([\s\S]*?)(?=\n\*\*Acceptance criteria:|$)/i.exec(sectionContent);
+    const filesAffected = (filesMatch?.[1] ?? "")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.startsWith("- "))
+      .map((l) => l.slice(2).replace(/^`|`$/g, "").trim());
+
+    const criteriaMatch = /\*\*Acceptance criteria:\*\*\n([\s\S]*?)(?=\n---|$)/i.exec(sectionContent);
+    const acceptance = (criteriaMatch?.[1] ?? "")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.startsWith("- "))
+      .map((l) => l.slice(2).trim());
+
+    return {
+      task_id: taskId,
+      title,
+      description,
+      acceptance_criteria: acceptance,
+      estimated_effort: effort,
+      files_likely_affected: filesAffected,
+      status: "pending",
+    };
+  }
+
+  /**
    * Scans active/ and history/ directories for sprint_plan_sNN.md files and returns
    * the next sprint number (max found + 1, or 1 if none exist).
    */
@@ -1049,14 +1124,6 @@ ${fastTrackSection}
     const currentTaskPath = path.join(activeDir, "current_task.json");
 
     try {
-      const entries = await fs.readdir(activeDir, { withFileTypes: true });
-      const sprintPlanEntry = entries.find((entry) => entry.isFile() && /^sprint_plan_.*\.md$/i.test(entry.name));
-      if (!sprintPlanEntry) {
-        return null;
-      }
-
-      const sprintPlanName = sprintPlanEntry.name;
-      const sprintPlanContent = await fs.readFile(path.join(activeDir, sprintPlanName), "utf-8");
       const briefContent = await fs.readFile(briefPath, "utf-8");
       const currentTaskContent = await fs.readFile(currentTaskPath, "utf-8");
       const currentTask = JSON.parse(currentTaskContent) as {
@@ -1071,7 +1138,31 @@ ${fastTrackSection}
         return null;
       }
 
-      const sprintPlan = this.parseActiveSprintPlan(sprintPlanContent, sprintPlanName, currentTask.task_id);
+      // Sprint plan lives in staged_sprints/ (not active/) — load it from there.
+      const stagedSprintsDir = path.join(clonePath, "project_work", "ai_project_tasks", "staged_sprints");
+      let sprintPlanName = `sprint_plan_unknown.md`;
+      let sprintPlanContent = "";
+      let sprintPlan: SprintPlan = {
+        sprint_id: "unknown",
+        phase_id: "unknown",
+        name: "Open Sprint",
+        goals: [],
+        tasks: [currentTask.task_id],
+        status: "staged",
+      };
+
+      try {
+        const entries = await fs.readdir(stagedSprintsDir, { withFileTypes: true });
+        const sprintPlanEntry = entries.find((e) => e.isFile() && /^sprint_plan_.*\.md$/i.test(e.name));
+        if (sprintPlanEntry) {
+          sprintPlanName = sprintPlanEntry.name;
+          sprintPlanContent = await fs.readFile(path.join(stagedSprintsDir, sprintPlanEntry.name), "utf-8");
+          sprintPlan = this.parseActiveSprintPlan(sprintPlanContent, sprintPlanName, currentTask.task_id);
+        }
+      } catch {
+        // staged_sprints/ not found — use defaults
+      }
+
       const parsedBrief = this.parseBriefContent(briefContent);
 
       return {
@@ -1151,6 +1242,10 @@ ${fastTrackSection}
     const name = /^\*\*Name:\*\*\s+(.+)$/m.exec(markdown)?.[1]?.trim() ?? `Sprint ${sprintId}`;
     const status = /^\*\*Status:\*\*\s+(.+)$/m.exec(markdown)?.[1]?.trim() ?? "staged";
     const tasks = this.extractSectionBullets(markdown, "Tasks");
+    const executionMode = /^\*\*Execution mode:\*\*\s+(.+)$/im.exec(markdown)?.[1]?.trim() as SprintPlan["execution_mode"] | undefined;
+    const fastTrackLane = /^\*\*Lane:\*\*\s+(.+)$/m.exec(markdown)?.[1]?.trim();
+    const fastTrackRationale = /^\*\*Rationale:\*\*\s+(.+)$/m.exec(markdown)?.[1]?.trim();
+    const fastTrackIntakeId = /^\*\*Intake:\*\*\s+(.+)$/m.exec(markdown)?.[1]?.trim();
 
     return {
       sprint_id: sprintId,
@@ -1159,6 +1254,10 @@ ${fastTrackSection}
       goals: this.extractSectionBullets(markdown, "Goals"),
       tasks: tasks.length > 0 ? tasks : [taskId],
       status: "staged",
+      ...(executionMode ? { execution_mode: executionMode } : {}),
+      ...(fastTrackLane ? { fast_track_lane: fastTrackLane } : {}),
+      ...(fastTrackRationale ? { fast_track_rationale: fastTrackRationale } : {}),
+      ...(fastTrackIntakeId ? { fast_track_intake_id: fastTrackIntakeId } : {}),
     };
   }
 

@@ -408,7 +408,12 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
       context.notify(`📁 Phase plan persisted to \`${repoRelPath}\` on \`${project.default_branch}\``);
     }
 
-    context.log("Planner complete", { phase_id: plan.phase_id, artifact_path: artifactPath });
+    context.log("Planner phase plan complete", { phase_id: plan.phase_id, artifact_path: artifactPath });
+
+    // Immediately stage Sprint 1 plan after phase plan commit (two discrete commits on main).
+    if (project) {
+      await this.runInitialSprintPlanning(pipelineId, artifactContent, description, context);
+    }
 
     const output: PlannerOutput = {
       phase_id: plan.phase_id,
@@ -417,6 +422,75 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
     };
 
     return output;
+  }
+
+  /**
+   * Step 1.3 (Phase 1): Called immediately after the phase plan is committed to staged_phases/.
+   * Generates Sprint 1 plan (with first task detail) and commits it to staged_sprints/ on main.
+   * This makes the Planner the sole owner of sprint plan creation.
+   */
+  private async runInitialSprintPlanning(
+    pipelineId: string,
+    phasePlanContent: string,
+    description: string,
+    context: ScriptExecutionContext
+  ): Promise<void> {
+    const run = await pipelineService.get(pipelineId);
+    const project = run.project_id ? await projectService.getById(run.project_id) : null;
+    if (!project) return;
+
+    const repoBase = path.isAbsolute(project.clone_path)
+      ? project.clone_path
+      : path.join(process.cwd(), project.clone_path);
+    const stagedSprintsDir = path.join(repoBase, "project_work", "ai_project_tasks", "staged_sprints");
+
+    // Skip if a sprint plan already exists — planner is idempotent.
+    try {
+      const existing = await fs.readdir(stagedSprintsDir);
+      if (existing.some((e) => /^sprint_plan_.*\.md$/i.test(e))) {
+        context.notify("ℹ️ Sprint plan already exists in staged_sprints/ — skipping Sprint 1 generation.");
+        return;
+      }
+    } catch {
+      // staged_sprints/ doesn't exist yet — that's fine, we'll create it
+    }
+
+    context.notify("📋 Staging Sprint 1 plan from phase plan...");
+
+    interface SprintLlmResponse {
+      sprint_plan: { sprint_id: string; phase_id: string; name: string; goals: string[]; tasks: string[]; status: "staged"; execution_mode?: "normal" | "fast-track" };
+      first_task: { task_id: string; title: string; description: string; acceptance_criteria: string[]; estimated_effort: "S" | "M" | "L"; files_likely_affected: string[]; status: "pending" };
+    }
+
+    const userContent =
+      `Phase plan:\n\n${phasePlanContent}\n\n` +
+      `Produce a sprint plan for Sprint 1 including the first task detail. ` +
+      (description ? `Additional context: ${description}` : "");
+
+    const systemPrompt = await governanceService.getComposedPrompt("sprint-controller");
+    const provider = await llmFactory.forRole("sprint-controller");
+    const llm = await provider.chatJson<SprintLlmResponse>(
+      [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userContent },
+      ],
+      { meta: { role: "sprint-controller", pipeline_id: pipelineId, call_type: "sprint-plan" } }
+    );
+
+    if (!llm.sprint_plan?.sprint_id || !llm.first_task?.task_id) {
+      throw new Error("Sprint planning LLM response missing required fields (sprint_id, first_task.task_id)");
+    }
+
+    const sprintPlanContent = this.formatSprintMarkdown(llm.sprint_plan, llm.first_task);
+    const sprintPlanFilename = `sprint_plan_${llm.sprint_plan.sprint_id.toLowerCase()}.md`;
+    const repoRelPath = path.join("project_work", "ai_project_tasks", "staged_sprints", sprintPlanFilename);
+
+    await fs.mkdir(stagedSprintsDir, { recursive: true });
+    await fs.writeFile(path.join(stagedSprintsDir, sprintPlanFilename), sprintPlanContent, "utf-8");
+    await projectGitService.ensureReady(project);
+    await projectGitService.commitAll(project, project.default_branch, `plan: stage ${llm.sprint_plan.sprint_id} sprint plan`);
+    await projectGitService.push(project, project.default_branch);
+    context.notify(`📁 Sprint plan staged at \`${repoRelPath}\` on \`${project.default_branch}\``);
   }
 
   private formatMarkdown(plan: PlannerPhasePlan): string {
@@ -1027,8 +1101,10 @@ ${designArtifacts}
       throw new Error("Sprint planning LLM response missing required fields");
     }
 
-    // Planner sprint mode only stages sprint_plan artifacts.
-    const sprintPlanContent = this.formatSprintMarkdownFromPlan(llm.sprint_plan);
+    // Use full format (with first task detail) when first_task is available so SCT can parse it.
+    const sprintPlanContent = llm.first_task
+      ? this.formatSprintMarkdown(llm.sprint_plan, llm.first_task)
+      : this.formatSprintMarkdownFromPlan(llm.sprint_plan);
 
     const sprintPlanPath = await artifactService.write(
       pipelineId,
@@ -1036,57 +1112,24 @@ ${designArtifacts}
       sprintPlanContent
     );
 
-    // Persist to project repo and create sprint branch
+    // Persist sprint plan to staged_sprints/ on main — no branch or PR (Planner owns sprint plan creation,
+    // Sprint Controller owns branch/PR creation when it stages the task package).
     const run = await pipelineService.get(pipelineId);
     const project = run.project_id ? await projectService.getById(run.project_id) : null;
-    let sprintBranch: string | undefined;
 
     if (project) {
-      const sprintBranchSuffix =
-        llm.first_task?.task_id ??
-        llm.sprint_plan.sprint_id.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-      sprintBranch = `feature/${sprintBranchSuffix}`;
-      await projectGitService.ensureReady(project);
-      await projectGitService.createBranch(project, sprintBranch);
-      await pipelineService.setSprintBranch(pipelineId, sprintBranch);
-      context.notify(`🌿 Branch \`${sprintBranch}\` created and ready`);
-
       const repoBase = path.isAbsolute(project.clone_path)
         ? project.clone_path
         : path.join(process.cwd(), project.clone_path);
-      const activeDir = path.join(repoBase, "project_work", "ai_project_tasks", "active");
-      await fs.mkdir(activeDir, { recursive: true });
-      await fs.writeFile(
-        path.join(activeDir, `sprint_plan_${llm.sprint_plan.sprint_id.toLowerCase()}.md`),
-        sprintPlanContent,
-        "utf-8"
-      );
-      await projectGitService.commitAll(
-        project,
-        sprintBranch,
-        `chore(${llm.sprint_plan.sprint_id}): stage sprint plan`
-      );
-      await projectGitService.push(project, sprintBranch);
-
-      const prResult = await prRemediationService.createPullRequestWithRecovery(project, {
-        title: `[${llm.sprint_plan.sprint_id}] Stage sprint artifacts`,
-        body: [
-          "## Staged Sprint Review",
-          `Sprint: ${llm.sprint_plan.sprint_id}`,
-          `Phase: ${llm.sprint_plan.phase_id}`,
-          `Branch: ${sprintBranch}`,
-          "",
-          "Review the staged sprint plan in project_work/ai_project_tasks/active/.",
-        ].join("\n"),
-        head: sprintBranch,
-        base: project.default_branch,
-      });
-      const pr = prResult.pr;
-      await pipelineService.setPrDetails(pipelineId, pr.number, pr.html_url, sprintBranch);
-      if (prResult.remediation_performed) {
-        context.notify("🛠️ PR create was auto-remediated after a 404 and retried once.");
-      }
-      context.notify(`📋 Sprint artifacts committed, pushed, and opened as PR #${pr.number}: <${pr.html_url}|View Pull Request>`);
+      const sprintPlanFilename = `sprint_plan_${llm.sprint_plan.sprint_id.toLowerCase()}.md`;
+      const stagedSprintsDir = path.join(repoBase, "project_work", "ai_project_tasks", "staged_sprints");
+      const repoRelPath = path.join("project_work", "ai_project_tasks", "staged_sprints", sprintPlanFilename);
+      await fs.mkdir(stagedSprintsDir, { recursive: true });
+      await fs.writeFile(path.join(stagedSprintsDir, sprintPlanFilename), sprintPlanContent, "utf-8");
+      await projectGitService.ensureReady(project);
+      await projectGitService.commitAll(project, project.default_branch, `plan: stage ${llm.sprint_plan.sprint_id} sprint plan`);
+      await projectGitService.push(project, project.default_branch);
+      context.notify(`📁 Sprint plan staged at \`${repoRelPath}\` on \`${project.default_branch}\``);
     }
 
     return {
