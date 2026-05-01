@@ -50,6 +50,14 @@ export interface PipelineSlackMetadata {
   source: "slack" | "api";
 }
 
+export type PipelineAction =
+  | "approve"
+  | "cancel"
+  | "retry"
+  | "takeover"
+  | "handoff"
+  | "skip";
+
 export interface PipelineRun {
   pipeline_id: string;
   entry_point: PipelineRole;

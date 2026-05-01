@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { UIStepGroup, UIStepStatus } from "@/types";
 import { StepCard } from "./StepCard";
+import { GateCard } from "./GateCard";
 
 const STATUS_DOT: Record<UIStepStatus, string> = {
   running:  "bg-blue-500 animate-pulse",
@@ -22,9 +23,11 @@ const ROLE_LABEL: Record<string, string> = {
 interface StepGroupProps {
   group: UIStepGroup;
   isFirst: boolean;
+  pipelineId: string;
+  onArtifactSelect: (path: string) => void;
 }
 
-export function StepGroup({ group, isFirst: _isFirst }: StepGroupProps) {
+export function StepGroup({ group, isFirst: _isFirst, pipelineId, onArtifactSelect }: StepGroupProps) {
   const defaultOpen = group.status === "running" || group.status === "failed";
   const [open, setOpen] = useState(defaultOpen);
 
@@ -51,7 +54,12 @@ export function StepGroup({ group, isFirst: _isFirst }: StepGroupProps) {
 
       {open && (
         <div className="border-t border-gray-100 px-4 pb-4 pt-3">
-          <StepCard record={group.record} />
+          <StepCard
+            record={group.record}
+            pipelineId={pipelineId}
+            onArtifactSelect={onArtifactSelect}
+          />
+          <GateCard record={group.record} />
         </div>
       )}
     </div>

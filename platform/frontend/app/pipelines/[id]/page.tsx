@@ -1,9 +1,11 @@
 "use client";
 
-import { use } from "react";
+import { use, useState } from "react";
 import { usePipeline } from "@/hooks/usePipeline";
 import { PipelineHeader } from "@/components/pipeline/PipelineHeader";
 import { PipelineTimeline } from "@/components/pipeline/PipelineTimeline";
+import { ActionBar } from "@/components/pipeline/ActionBar";
+import { SidePanel } from "@/components/pipeline/SidePanel";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -12,6 +14,7 @@ interface PageProps {
 export default function PipelineDetailPage({ params }: PageProps) {
   const { id } = use(params);
   const { pipeline, timeline, isLoading, isError, error } = usePipeline(id);
+  const [selectedArtifact, setSelectedArtifact] = useState<string | null>(null);
 
   if (isLoading) {
     return (
@@ -36,16 +39,23 @@ export default function PipelineDetailPage({ params }: PageProps) {
   return (
     <div className="flex min-h-screen flex-col">
       <PipelineHeader pipeline={pipeline} />
+      <ActionBar pipeline={pipeline} />
       <div className="flex flex-1 gap-6 p-6">
         {/* Timeline — left column */}
         <main className="flex-1 min-w-0">
-          <PipelineTimeline groups={timeline.groups} />
+          <PipelineTimeline
+            groups={timeline.groups}
+            pipelineId={pipeline.pipeline_id}
+            onArtifactSelect={setSelectedArtifact}
+          />
         </main>
 
-        {/* Right panel placeholder — Slice 2 (SidePanel / ArtifactViewer) */}
-        <aside className="w-80 flex-shrink-0 rounded-lg border border-dashed border-gray-200 p-4 text-center text-xs text-gray-400">
-          Artifact panel — Slice 2
-        </aside>
+        {/* Right panel — artifact viewer */}
+        <SidePanel
+          pipelineId={pipeline.pipeline_id}
+          selectedPath={selectedArtifact}
+          onClose={() => setSelectedArtifact(null)}
+        />
       </div>
     </div>
   );

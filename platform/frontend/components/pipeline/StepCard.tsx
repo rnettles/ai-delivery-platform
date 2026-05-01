@@ -1,10 +1,13 @@
 import type { PipelineStepRecord } from "@/types";
+import { ArtifactBadge } from "./ArtifactBadge";
 
 interface StepCardProps {
   record: PipelineStepRecord;
+  pipelineId: string;
+  onArtifactSelect: (path: string) => void;
 }
 
-export function StepCard({ record }: StepCardProps) {
+export function StepCard({ record, pipelineId, onArtifactSelect }: StepCardProps) {
   return (
     <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
       <dt className="font-medium text-gray-500">Actor</dt>
@@ -51,13 +54,13 @@ export function StepCard({ record }: StepCardProps) {
         <>
           <dt className="font-medium text-gray-500">Artifacts</dt>
           <dd className="flex flex-wrap gap-1">
-            {record.artifact_paths.map((p) => (
-              <span
+            {[...new Set(record.artifact_paths)].map((p) => (
+              <ArtifactBadge
                 key={p}
-                className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-gray-700"
-              >
-                {p}
-              </span>
+                path={p}
+                pipelineId={pipelineId}
+                onSelect={onArtifactSelect}
+              />
             ))}
           </dd>
         </>
