@@ -698,7 +698,7 @@ ${designArtifacts}
       pr_url: pr.html_url,
     });
 
-    // When pr_confirmed, archive sprint plan to history/task_history/{sprint_id}/ and
+    // When pr_confirmed, archive sprint plan to history/{phase_id}/{sprint_id}/ and
     // check if the phase is complete (no staged sprints remain) — if so, archive the phase plan.
     if (sprintCloseOut.close_out_phase_completed === "pr_confirmed") {
       try {

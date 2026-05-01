@@ -579,16 +579,21 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       );
     }
 
-    const sprintCompleteArtifacts = [
-      sprintPlanArtifact?.path,
-      currentTaskArtifact?.path,
-      ...previousArtifacts.filter(
-        (p) =>
-          p.includes("AI_IMPLEMENTATION_BRIEF") ||
-          p.includes("verification_result.json") ||
-          p.includes("verification_result.md")
-      ),
-    ].filter((p): p is string => Boolean(p));
+    const sprintCompleteArtifacts = [...new Set(
+      [
+        sprintPlanArtifact?.path,
+        currentTaskArtifact?.path,
+        ...previousArtifacts.filter(
+          (p) =>
+            !/[/\\]active[/\\]/.test(p) &&
+            (p.includes("AI_IMPLEMENTATION_BRIEF") ||
+              p.includes("verification_result.json") ||
+              p.includes("verification_result.md"))
+        ),
+      ]
+      .filter((p): p is string => Boolean(p))
+      .map((p) => path.basename(p))
+    )];
 
     // Phase 7 (SCT-006): resolve sprint_id once so it can be written to both the artifact and the return.
     const sprintId = this.extractSprintId(sprintPlanArtifact?.path, pipelineId);
@@ -599,7 +604,7 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
     let prUrl: string | undefined;
     const project = run.project_id ? await projectService.getById(run.project_id) : null;
     if (project && run.sprint_branch) {
-      // Archive active/ task package to history/task_history/{sprint}/{task}/ and clear active/.
+      // Archive active/ task package to history/{phase_id}/{sprint_id}/{task_id}/ and clear active/.
       try {
         const repoBase = path.isAbsolute(project.clone_path)
           ? project.clone_path
@@ -607,10 +612,20 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
         const activeDir = path.join(repoBase, "project_work", "ai_project_tasks", "active");
         const archiveSprintId = sprintId || "unknown";
         const archiveTaskId = taskIdForCloseout || "unknown";
+        // Resolve phase_id from current_task.json before the active slot is cleared.
+        let archivePhaseId = "MISC";
+        try {
+          const ct = JSON.parse(await fs.readFile(path.join(activeDir, "current_task.json"), "utf-8"));
+          if (typeof ct?.phase_id === "string" && ct.phase_id.trim()) archivePhaseId = ct.phase_id.trim();
+        } catch { /* fall back to MISC */ }
         const taskHistoryDir = path.join(
-          repoBase, "project_work", "ai_project_tasks",
-          "history", "task_history", archiveSprintId, archiveTaskId
+          repoBase, "project_work",
+          "history", archivePhaseId, archiveSprintId, archiveTaskId
         );
+        // Ensure the clone is clean and on the sprint branch BEFORE writing archive files,
+        // so ensureReady's cleanWorkingTree (git clean -fd) cannot wipe the new files.
+        await projectGitService.ensureReady(project);
+        await projectGitService.checkoutBranch(project, run.sprint_branch);
         await fs.mkdir(taskHistoryDir, { recursive: true });
         for (const filename of ["AI_IMPLEMENTATION_BRIEF.md", "current_task.json", "test_results.json", "verification_result.json"]) {
           try {
@@ -629,13 +644,12 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
         } catch {
           // non-fatal
         }
-        await projectGitService.ensureReady(project);
         await projectGitService.commitAll(
           project, run.sprint_branch,
           `chore(${archiveSprintId}): archive task ${archiveTaskId} to history`
         );
         await projectGitService.push(project, run.sprint_branch);
-        context.notify(`📦 Task ${archiveTaskId} archived to \`history/task_history/${archiveSprintId}/${archiveTaskId}/\` and active/ cleared`);
+        context.notify(`📦 Task ${archiveTaskId} archived to \`history/${archivePhaseId}/${archiveSprintId}/${archiveTaskId}/\` and active/ cleared`);
       } catch (err) {
         context.log("Sprint Controller: task archive failed (non-fatal)", { error: String(err) });
       }
@@ -776,11 +790,22 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
         await projectGitService.checkoutBranch(project, project.default_branch);
         await projectGitService.ensureReady(project, { forcePull: true });
         const sprintIdForFile = closeout.sprint_id ?? "unknown";
+        // Resolve phase_id from the staged sprint plan (or fall back to MISC).
+        let closeoutPhaseId = "MISC";
+        try {
+          const stagedDir = path.join(project.clone_path, "project_work", "ai_project_tasks", "staged_sprints");
+          const candidates = await fs.readdir(stagedDir);
+          for (const name of candidates) {
+            if (!/^sprint_plan_.*\.md$/i.test(name)) continue;
+            const content = await fs.readFile(path.join(stagedDir, name), "utf-8");
+            const m = /^\*{0,2}Phase:\*{0,2}\s*(.+?)\s*$/im.exec(content);
+            if (m) { closeoutPhaseId = m[1].trim(); break; }
+          }
+        } catch { /* fall back to MISC */ }
         const taskHistoryDir = path.join(
           project.clone_path,
           "project_work",
-          "ai_project_tasks",
-          "history", "task_history", sprintIdForFile
+          "history", closeoutPhaseId, sprintIdForFile
         );
         await fs.mkdir(taskHistoryDir, { recursive: true });
         await fs.writeFile(
@@ -1098,25 +1123,34 @@ ${fastTrackSection}
    * the next sprint number (max found + 1, or 1 if none exist).
    */
   private async getNextSprintNumber(clonePath: string): Promise<number> {
-    const dirsToScan = [
-      path.join(clonePath, "project_work", "ai_project_tasks", "active"),
-      path.join(clonePath, "project_work", "ai_project_tasks", "history"),
-    ];
     let maxSprint = 0;
-    for (const dir of dirsToScan) {
-      try {
-        const entries = await fs.readdir(dir);
-        for (const name of entries) {
-          const m = /^sprint_plan_s(\d+)\.md$/i.exec(name);
-          if (m) {
-            const n = parseInt(m[1], 10);
-            if (n > maxSprint) maxSprint = n;
+
+    // Scan active/ (flat)
+    try {
+      const activeDir = path.join(clonePath, "project_work", "ai_project_tasks", "active");
+      for (const name of await fs.readdir(activeDir)) {
+        const m = /^sprint_plan_s(\d+)\.md$/i.exec(name);
+        if (m) { const n = parseInt(m[1], 10); if (n > maxSprint) maxSprint = n; }
+      }
+    } catch { /* non-fatal */ }
+
+    // Scan unified history/{phase_id}/{sprint_id}/ (2 levels deep)
+    try {
+      const historyRoot = path.join(clonePath, "project_work", "history");
+      for (const phaseEntry of await fs.readdir(historyRoot, { withFileTypes: true })) {
+        if (!phaseEntry.isDirectory()) continue;
+        const phaseDir = path.join(historyRoot, phaseEntry.name);
+        for (const sprintEntry of await fs.readdir(phaseDir, { withFileTypes: true })) {
+          if (!sprintEntry.isDirectory()) continue;
+          const sprintDir = path.join(phaseDir, sprintEntry.name);
+          for (const name of await fs.readdir(sprintDir)) {
+            const m = /^sprint_plan_s(\d+)\.md$/i.exec(name);
+            if (m) { const n = parseInt(m[1], 10); if (n > maxSprint) maxSprint = n; }
           }
         }
-      } catch {
-        // dir doesn't exist — non-fatal
       }
-    }
+    } catch { /* non-fatal */ }
+
     return maxSprint + 1;
   }
 
@@ -1128,33 +1162,43 @@ ${fastTrackSection}
   }
 
   private async getNextTaskNumber(clonePath: string, sprintId: string): Promise<number> {
-    const dirsToScan = [
-      path.join(clonePath, "project_work", "ai_project_tasks", "active"),
-      path.join(clonePath, "project_work", "ai_project_tasks", "history"),
-    ];
     const taskRegex = new RegExp(`\\b${sprintId}-(\\d{3})\\b`, "g");
     let maxTaskNum = 0;
 
-    for (const dir of dirsToScan) {
+    const scanFiles = async (dir: string) => {
       try {
         const entries = await fs.readdir(dir, { withFileTypes: true });
-        const files = entries.filter((e) => e.isFile()).map((e) => path.join(dir, e.name));
-        for (const filePath of files) {
-          let content = "";
+        for (const entry of entries.filter((e) => e.isFile())) {
           try {
-            content = await fs.readFile(filePath, "utf-8");
-          } catch {
-            continue;
-          }
-          for (const match of content.matchAll(taskRegex)) {
-            const n = parseInt(match[1], 10);
-            if (n > maxTaskNum) maxTaskNum = n;
+            const content = await fs.readFile(path.join(dir, entry.name), "utf-8");
+            for (const match of content.matchAll(taskRegex)) {
+              const n = parseInt(match[1], 10);
+              if (n > maxTaskNum) maxTaskNum = n;
+            }
+          } catch { /* non-fatal */ }
+        }
+      } catch { /* dir missing — non-fatal */ }
+    };
+
+    // Scan active/
+    await scanFiles(path.join(clonePath, "project_work", "ai_project_tasks", "active"));
+
+    // Scan unified history/{phase_id}/{sprint_id}/{task_id}/ — recurse 3 levels
+    try {
+      const historyRoot = path.join(clonePath, "project_work", "history");
+      for (const phaseEntry of await fs.readdir(historyRoot, { withFileTypes: true })) {
+        if (!phaseEntry.isDirectory()) continue;
+        const phaseDir = path.join(historyRoot, phaseEntry.name);
+        for (const sprintEntry of await fs.readdir(phaseDir, { withFileTypes: true })) {
+          if (!sprintEntry.isDirectory()) continue;
+          const sprintDir = path.join(phaseDir, sprintEntry.name);
+          await scanFiles(sprintDir);
+          for (const taskEntry of await fs.readdir(sprintDir, { withFileTypes: true })) {
+            if (taskEntry.isDirectory()) await scanFiles(path.join(sprintDir, taskEntry.name));
           }
         }
-      } catch {
-        // directory missing is non-fatal
       }
-    }
+    } catch { /* non-fatal */ }
 
     return maxTaskNum + 1;
   }
