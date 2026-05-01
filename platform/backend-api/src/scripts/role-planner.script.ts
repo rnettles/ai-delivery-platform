@@ -1287,9 +1287,9 @@ ${flagLines}
   }
 
   /**
-   * Archives the sprint plan from staged_sprints/ to history/task_history/{sprint_id}/.
+   * Archives the sprint plan from staged_sprints/ to history/{phase_id}/{sprint_id}/.
    * If no sprint plans remain in staged_sprints/ afterwards, archives phase plans to
-   * history/phase_history/{phase_id}/ (phase complete gate).
+   * history/{phase_id}/ (phase complete gate).
    */
   private async archiveSprintAndCheckPhase(
     project: { clone_path: string; default_branch: string },
@@ -1308,13 +1308,15 @@ ${flagLines}
         const fileSprintId = sprintIdMatch?.[1]?.trim()
           ?? entry.name.replace(/^sprint_plan_/i, "").replace(/\.md$/i, "");
         if (sprintId && fileSprintId.toLowerCase() !== sprintId.toLowerCase()) continue;
+        const phaseIdMatch = /^\*{0,2}Phase:\*{0,2}\s*(.+?)\s*$/im.exec(content);
+        const phaseId = phaseIdMatch?.[1]?.trim() ?? "MISC";
         const archiveDir = path.join(
-          repoBase, "project_work", "ai_project_tasks", "history", "task_history", fileSprintId
+          repoBase, "project_work", "history", phaseId, fileSprintId
         );
         await fs.mkdir(archiveDir, { recursive: true });
         await fs.writeFile(path.join(archiveDir, entry.name), content, "utf-8");
         await fs.unlink(path.join(stagedSprintsDir, entry.name));
-        context.notify(`📦 Sprint plan \`${entry.name}\` archived to \`history/task_history/${fileSprintId}/\``);
+        context.notify(`📦 Sprint plan \`${entry.name}\` archived to \`history/${phaseId}/${fileSprintId}/\``);
       }
     } catch (err) {
       context.log("Planner: sprint plan archive failed (non-fatal)", { error: String(err) });
@@ -1333,7 +1335,7 @@ ${flagLines}
   }
 
   /**
-   * Archives all phase plans from staged_phases/ to history/phase_history/{phase_id}/.
+   * Archives all phase plans from staged_phases/ to history/{phase_id}/.
    * Called when the phase is complete (all sprints in the phase have been confirmed).
    */
   private async archivePhase(repoBase: string, context: ScriptExecutionContext): Promise<void> {
@@ -1347,12 +1349,12 @@ ${flagLines}
         const phaseId = phaseIdMatch?.[1]?.trim()
           ?? entry.name.replace(/^phase_plan_/i, "").replace(/\.md$/i, "");
         const archiveDir = path.join(
-          repoBase, "project_work", "ai_project_tasks", "history", "phase_history", phaseId
+          repoBase, "project_work", "history", phaseId
         );
         await fs.mkdir(archiveDir, { recursive: true });
         await fs.writeFile(path.join(archiveDir, entry.name), content, "utf-8");
         await fs.unlink(path.join(stagedPhasesDir, entry.name));
-        context.notify(`📦 Phase \`${phaseId}\` complete — archived to \`history/phase_history/${phaseId}/\``);
+        context.notify(`📦 Phase \`${phaseId}\` complete — archived to \`history/${phaseId}/\``);
       }
     } catch (err) {
       context.log("Planner: phase archive failed (non-fatal)", { error: String(err) });
