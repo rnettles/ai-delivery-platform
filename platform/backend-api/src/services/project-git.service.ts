@@ -116,12 +116,29 @@ class ProjectGitService {
    *
    * Then `git checkout -B <branch> FETCH_HEAD` creates the local branch (or resets
    * it if it already exists) to exactly the remote commit, so re-runs are idempotent.
+   *
+   * Fallback: if the remote branch no longer exists (e.g. deleted after a PR merge),
+   * and the branch exists locally, checks out the local branch instead. If neither
+   * remote nor local has the branch, the original fetch error is re-thrown.
    */
   async checkoutBranch(project: Project, branchName: string): Promise<void> {
     return this.withLock(project.project_id, () => {
       logger.info("git: checking out existing branch", { project: project.name, branch: branchName });
-      this.git(project.clone_path, ["fetch", "origin", branchName]);
-      this.git(project.clone_path, ["checkout", "-B", branchName, "FETCH_HEAD"]);
+      try {
+        this.git(project.clone_path, ["fetch", "origin", branchName]);
+        this.git(project.clone_path, ["checkout", "-B", branchName, "FETCH_HEAD"]);
+      } catch (fetchErr) {
+        // Remote branch may not exist (e.g. deleted after PR merge). Fall back to local branch.
+        if (this.branchExistsLocal(project.clone_path, branchName)) {
+          logger.warn("git: remote branch not found; falling back to local branch", {
+            project: project.name,
+            branch: branchName,
+          });
+          this.git(project.clone_path, ["checkout", branchName]);
+        } else {
+          throw fetchErr;
+        }
+      }
     });
   }
 

@@ -212,6 +212,80 @@ describe("projectGitService unresolved-index recovery", () => {
   });
 });
 
+describe("projectGitService.checkoutBranch remote-missing fallback", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("falls back to local checkout when remote branch does not exist but local branch does", async () => {
+    mockExec.mockImplementation((_cmd, args) => {
+      const joined = (args as string[]).join(" ");
+      if (joined === "fetch origin feature/S01-001") {
+        throw Object.assign(new Error("fetch failed"), {
+          stderr: "fatal: couldn't find remote ref feature/S01-001",
+        });
+      }
+      // branchExistsLocal: show-ref succeeds
+      if (joined === "show-ref --verify refs/heads/feature/S01-001") {
+        return "abc123 refs/heads/feature/S01-001\n" as any;
+      }
+      return "" as any;
+    });
+
+    await projectGitService.checkoutBranch(baseProject, "feature/S01-001");
+
+    // Should have fallen back to plain checkout (not -B ... FETCH_HEAD)
+    expect(mockExec).toHaveBeenCalledWith(
+      "git",
+      ["checkout", "feature/S01-001"],
+      expect.objectContaining({ cwd: baseProject.clone_path })
+    );
+  });
+
+  it("re-throws the fetch error when neither remote nor local branch exists", async () => {
+    mockExec.mockImplementation((_cmd, args) => {
+      const joined = (args as string[]).join(" ");
+      if (joined === "fetch origin feature/S01-001") {
+        throw Object.assign(new Error("fetch failed"), {
+          stderr: "fatal: couldn't find remote ref feature/S01-001",
+        });
+      }
+      // branchExistsLocal: show-ref fails (no local branch either)
+      if (joined === "show-ref --verify refs/heads/feature/S01-001") {
+        throw new Error("no local branch");
+      }
+      return "" as any;
+    });
+
+    await expect(
+      projectGitService.checkoutBranch(baseProject, "feature/S01-001")
+    ).rejects.toThrow("fetch failed");
+  });
+
+  it("uses fetch + FETCH_HEAD checkout when remote branch exists", async () => {
+    mockExec.mockImplementation((_cmd, args) => {
+      const joined = (args as string[]).join(" ");
+      if (joined === "fetch origin feature/S01-001") return "" as any;
+      if (joined === "checkout -B feature/S01-001 FETCH_HEAD") return "" as any;
+      return "" as any;
+    });
+
+    await projectGitService.checkoutBranch(baseProject, "feature/S01-001");
+
+    expect(mockExec).toHaveBeenCalledWith(
+      "git",
+      ["checkout", "-B", "feature/S01-001", "FETCH_HEAD"],
+      expect.objectContaining({ cwd: baseProject.clone_path })
+    );
+    // Should NOT have called branchExistsLocal
+    expect(mockExec).not.toHaveBeenCalledWith(
+      "git",
+      ["show-ref", "--verify", "refs/heads/feature/S01-001"],
+      expect.anything()
+    );
+  });
+});
+
 describe("projectGitService.commitAll checkout recovery", () => {
   beforeEach(() => {
     vi.clearAllMocks();
