@@ -599,6 +599,37 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
     let prUrl: string | undefined;
     const project = run.project_id ? await projectService.getById(run.project_id) : null;
     if (project && run.sprint_branch) {
+      // Archive active/ task package to history/task_history/{sprint}/{task}/ and clear active/.
+      try {
+        const repoBase = path.isAbsolute(project.clone_path)
+          ? project.clone_path
+          : path.join(process.cwd(), project.clone_path);
+        const activeDir = path.join(repoBase, "project_work", "ai_project_tasks", "active");
+        const taskHistoryDir = path.join(
+          repoBase, "project_work", "ai_project_tasks",
+          "history", "task_history", sprintId, taskIdForCloseout
+        );
+        await fs.mkdir(taskHistoryDir, { recursive: true });
+        for (const filename of ["AI_IMPLEMENTATION_BRIEF.md", "current_task.json"]) {
+          try {
+            const content = await fs.readFile(path.join(activeDir, filename), "utf-8");
+            await fs.writeFile(path.join(taskHistoryDir, filename), content, "utf-8");
+            await fs.unlink(path.join(activeDir, filename));
+          } catch {
+            // file may not exist or already archived — non-fatal
+          }
+        }
+        await projectGitService.ensureReady(project);
+        await projectGitService.commitAll(
+          project, run.sprint_branch,
+          `chore(${sprintId}): archive task ${taskIdForCloseout} to history`
+        );
+        await projectGitService.push(project, run.sprint_branch);
+        context.notify(`📦 Task ${taskIdForCloseout} archived to \`history/task_history/${sprintId}/${taskIdForCloseout}/\` and active/ cleared`);
+      } catch (err) {
+        context.log("Sprint Controller: task archive failed (non-fatal)", { error: String(err) });
+      }
+
       try {
         const existingPr = await githubApiService.findOpenPullRequestByHead({
           repoUrl: project.repo_url,
@@ -734,16 +765,16 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
         await projectGitService.ensureReady(project);
         await projectGitService.checkoutBranch(project, project.default_branch);
         await projectGitService.ensureReady(project, { forcePull: true });
-        const historyDir = path.join(
+        const sprintIdForFile = closeout.sprint_id ?? "unknown";
+        const taskHistoryDir = path.join(
           project.clone_path,
           "project_work",
           "ai_project_tasks",
-          "history"
+          "history", "task_history", sprintIdForFile
         );
-        await fs.mkdir(historyDir, { recursive: true });
-        const sprintIdForFile = closeout.sprint_id ?? "unknown";
+        await fs.mkdir(taskHistoryDir, { recursive: true });
         await fs.writeFile(
-          path.join(historyDir, `sprint_closeout_${sprintIdForFile}.json`),
+          path.join(taskHistoryDir, `sprint_closeout_${sprintIdForFile}.json`),
           JSON.stringify(updated, null, 2),
           "utf-8"
         );

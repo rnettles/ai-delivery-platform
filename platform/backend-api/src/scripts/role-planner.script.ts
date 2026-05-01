@@ -549,6 +549,8 @@ ${designArtifacts}
       last_completed_task_id?: string;
       sprint_complete_artifacts?: string[];
       verifier_summary?: string;
+      sprint_id?: string;
+      close_out_phase_completed?: string;
     };
 
     const existingPlannerCloseoutArtifact = await artifactService.findFirst(
@@ -684,6 +686,27 @@ ${designArtifacts}
       pr_number: pr.number,
       pr_url: pr.html_url,
     });
+
+    // When pr_confirmed, archive sprint plan to history/task_history/{sprint_id}/ and
+    // check if the phase is complete (no staged sprints remain) — if so, archive the phase plan.
+    if (sprintCloseOut.close_out_phase_completed === "pr_confirmed") {
+      try {
+        const repoBase = path.isAbsolute(project.clone_path)
+          ? project.clone_path
+          : path.join(process.cwd(), project.clone_path);
+        await projectGitService.checkoutBranch(project, project.default_branch);
+        await projectGitService.ensureReady(project, { forcePull: true });
+        await this.archiveSprintAndCheckPhase(project, repoBase, sprintCloseOut.sprint_id, context);
+        await projectGitService.commitAll(
+          project,
+          project.default_branch,
+          `chore: archive sprint ${sprintCloseOut.sprint_id ?? "unknown"} to history`
+        );
+        await projectGitService.push(project, project.default_branch);
+      } catch (err) {
+        context.log("Planner: sprint/phase archive failed (non-fatal)", { error: String(err) });
+      }
+    }
 
     return {
       closeout: {
@@ -1250,5 +1273,78 @@ ${flagLines}
 - \`ai_dev_stack/ai_guidance/AI_RUNTIME_POLICY.md\`
 - \`ai_dev_stack/ai_guidance/AI_RUNTIME_GATES.md\`
 `;
+  }
+
+  /**
+   * Archives the sprint plan from staged_sprints/ to history/task_history/{sprint_id}/.
+   * If no sprint plans remain in staged_sprints/ afterwards, archives phase plans to
+   * history/phase_history/{phase_id}/ (phase complete gate).
+   */
+  private async archiveSprintAndCheckPhase(
+    project: { clone_path: string; default_branch: string },
+    repoBase: string,
+    sprintId: string | undefined,
+    context: ScriptExecutionContext
+  ): Promise<void> {
+    const stagedSprintsDir = path.join(repoBase, "project_work", "ai_project_tasks", "staged_sprints");
+
+    try {
+      const entries = await fs.readdir(stagedSprintsDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isFile() || !/^sprint_plan_.*\.md$/i.test(entry.name)) continue;
+        const content = await fs.readFile(path.join(stagedSprintsDir, entry.name), "utf-8");
+        const sprintIdMatch = /^#\s*Sprint\s*Plan:\s*(.+?)\s*$/im.exec(content);
+        const fileSprintId = sprintIdMatch?.[1]?.trim()
+          ?? entry.name.replace(/^sprint_plan_/i, "").replace(/\.md$/i, "");
+        if (sprintId && fileSprintId.toLowerCase() !== sprintId.toLowerCase()) continue;
+        const archiveDir = path.join(
+          repoBase, "project_work", "ai_project_tasks", "history", "task_history", fileSprintId
+        );
+        await fs.mkdir(archiveDir, { recursive: true });
+        await fs.writeFile(path.join(archiveDir, entry.name), content, "utf-8");
+        await fs.unlink(path.join(stagedSprintsDir, entry.name));
+        context.notify(`📦 Sprint plan \`${entry.name}\` archived to \`history/task_history/${fileSprintId}/\``);
+      }
+    } catch (err) {
+      context.log("Planner: sprint plan archive failed (non-fatal)", { error: String(err) });
+    }
+
+    // Phase complete gate: if no sprint plans remain, archive phase plans.
+    try {
+      const remaining = await fs.readdir(stagedSprintsDir, { withFileTypes: true });
+      const hasMoreSprints = remaining.some((e) => e.isFile() && /^sprint_plan_.*\.md$/i.test(e.name));
+      if (!hasMoreSprints) {
+        await this.archivePhase(repoBase, context);
+      }
+    } catch {
+      // staged_sprints/ may not exist — non-fatal
+    }
+  }
+
+  /**
+   * Archives all phase plans from staged_phases/ to history/phase_history/{phase_id}/.
+   * Called when the phase is complete (all sprints in the phase have been confirmed).
+   */
+  private async archivePhase(repoBase: string, context: ScriptExecutionContext): Promise<void> {
+    const stagedPhasesDir = path.join(repoBase, "project_work", "ai_project_tasks", "staged_phases");
+    try {
+      const entries = await fs.readdir(stagedPhasesDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isFile() || !/^phase_plan_.*\.md$/i.test(entry.name)) continue;
+        const content = await fs.readFile(path.join(stagedPhasesDir, entry.name), "utf-8");
+        const phaseIdMatch = /^#\s*Phase\s*Plan:\s*(.+?)\s*$/im.exec(content);
+        const phaseId = phaseIdMatch?.[1]?.trim()
+          ?? entry.name.replace(/^phase_plan_/i, "").replace(/\.md$/i, "");
+        const archiveDir = path.join(
+          repoBase, "project_work", "ai_project_tasks", "history", "phase_history", phaseId
+        );
+        await fs.mkdir(archiveDir, { recursive: true });
+        await fs.writeFile(path.join(archiveDir, entry.name), content, "utf-8");
+        await fs.unlink(path.join(stagedPhasesDir, entry.name));
+        context.notify(`📦 Phase \`${phaseId}\` complete — archived to \`history/phase_history/${phaseId}/\``);
+      }
+    } catch (err) {
+      context.log("Planner: phase archive failed (non-fatal)", { error: String(err) });
+    }
   }
 }

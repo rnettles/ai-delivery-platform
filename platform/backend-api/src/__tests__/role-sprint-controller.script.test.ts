@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => {
   const mkdir = vi.fn();
   const commitAll = vi.fn();
   const pushBranch = vi.fn();
+  const unlink = vi.fn();
 
   return {
     findFirst,
@@ -47,6 +48,7 @@ const mocks = vi.hoisted(() => {
     mkdir,
     commitAll,
     pushBranch,
+    unlink,
   };
 })
 
@@ -56,6 +58,7 @@ vi.mock("fs/promises", () => ({
     readFile: mocks.readFile,
     writeFile: mocks.writeFile,
     mkdir: mocks.mkdir,
+    unlink: mocks.unlink,
   },
 }));
 
@@ -305,6 +308,7 @@ Implement brand tokens.
     mocks.mkdir.mockResolvedValue(undefined);
     mocks.commitAll.mockResolvedValue(undefined);
     mocks.pushBranch.mockResolvedValue(undefined);
+    mocks.unlink.mockResolvedValue(undefined);
   });
 
   it("reuses the existing active task package without calling the LLM or creating a branch", async () => {
@@ -489,6 +493,7 @@ describe("Phase 5 — Task Flags and Fast-Track Controls", () => {
     mocks.mkdir.mockResolvedValue(undefined);
     mocks.commitAll.mockResolvedValue(undefined);
     mocks.pushBranch.mockResolvedValue(undefined);
+    mocks.unlink.mockResolvedValue(undefined);
   });
 
   // ── 5.1 Required flag validation ──────────────────────────────────────────
@@ -742,6 +747,7 @@ describe("Phase 6 — Input/Output Contract Reconciliation", () => {
     mocks.mkdir.mockResolvedValue(undefined);
     mocks.commitAll.mockResolvedValue(undefined);
     mocks.pushBranch.mockResolvedValue(undefined);
+    mocks.unlink.mockResolvedValue(undefined);
   });
 
   // ── 6.1 Setup-mode output alignment ──────────────────────────────────────
@@ -903,6 +909,7 @@ describe("Phase 7 — Orchestration and Instruction Gating", () => {
     mocks.mkdir.mockResolvedValue(undefined);
     mocks.commitAll.mockResolvedValue(undefined);
     mocks.pushBranch.mockResolvedValue(undefined);
+    mocks.unlink.mockResolvedValue(undefined);
   });
 
   // ── 7.1 Phase 1 output carries phase-tracking fields ─────────────────────
@@ -1135,6 +1142,7 @@ describe("Phase 9 — Verification and Regression Coverage", () => {
     mocks.mkdir.mockResolvedValue(undefined);
     mocks.commitAll.mockResolvedValue(undefined);
     mocks.pushBranch.mockResolvedValue(undefined);
+    mocks.unlink.mockResolvedValue(undefined);
   });
 
   // ── 9.1 Pre-stage status gate (SCT-A) ────────────────────────────────────
@@ -1348,5 +1356,156 @@ describe("Phase 9 — Verification and Regression Coverage", () => {
     expect(Array.isArray((out as { sprint_complete_artifacts: string[] }).sprint_complete_artifacts)).toBe(true);
     expect(Array.isArray((out as { artifact_paths: string[] }).artifact_paths)).toBe(true);
     expect((out as { artifact_paths: string[] }).artifact_paths).toContain(out.closeout_path as string);
+  });
+});
+
+// ─── Task Archive (Operator Sequence Step 5) ────────────────────────────────
+describe("Task archive — operator sequence step 5 (task_close)", () => {
+  const VERIFICATION_CONTENT = JSON.stringify({ result: "PASS", task_id: "S01-001", summary: "ok" });
+  const CURRENT_TASK_CONTENT = JSON.stringify({ task_id: "S01-001" });
+
+  function wireCloseOutWithProject() {
+    mocks.findFirst.mockImplementation(async (paths: string[]) => {
+      if (paths.some((p) => p.includes("verification_result.json")))
+        return { path: "artifacts/verification_result.json", content: VERIFICATION_CONTENT };
+      if (paths.some((p) => p.includes("current_task.json")))
+        return { path: "artifacts/current_task.json", content: CURRENT_TASK_CONTENT };
+      if (paths.some((p) => p.includes("implementation_summary")))
+        return { path: "artifacts/implementation_summary.md", content: "# Summary" };
+      if (paths.some((p) => p.includes("sprint_plan_")))
+        return { path: "artifacts/sprint_plan_s01.md", content: "# Sprint Plan: S01" };
+      return null;
+    });
+    mocks.get.mockResolvedValue({ project_id: "proj-1", sprint_branch: "feature/S01-001" });
+    mocks.getById.mockResolvedValue({ project_id: "proj-1", clone_path: "/repo", default_branch: "main", repo_url: "https://github.com/test/repo" });
+    mocks.findOpenPullRequestByHead.mockResolvedValue(null);
+    mocks.createPullRequestWithRecovery.mockResolvedValue({ pr: { number: 5, html_url: "https://github.com/test/pr/5" }, remediation_performed: false });
+    mocks.readFile.mockImplementation(async (filePath: string) => {
+      if (String(filePath).includes("AI_IMPLEMENTATION_BRIEF.md")) return "# AI Implementation Brief\n**Task ID:** S01-001";
+      if (String(filePath).includes("current_task.json")) return CURRENT_TASK_CONTENT;
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.write.mockImplementation(async (_pid: string, name: string) => `artifacts/${name}`);
+    mocks.writeFile.mockResolvedValue(undefined);
+    mocks.mkdir.mockResolvedValue(undefined);
+    mocks.commitAll.mockResolvedValue(undefined);
+    mocks.pushBranch.mockResolvedValue(undefined);
+    mocks.unlink.mockResolvedValue(undefined);
+    mocks.ensureReady.mockResolvedValue(undefined);
+  });
+
+  it("archives active/AI_IMPLEMENTATION_BRIEF.md and active/current_task.json to history/task_history/{sprint}/{task}/", async () => {
+    wireCloseOutWithProject();
+    const script = new SprintControllerScript();
+    await script.run(
+      {
+        pipeline_id: "pipe-1",
+        previous_artifacts: [
+          "artifacts/verification_result.json",
+          "artifacts/current_task.json",
+          "artifacts/implementation_summary.md",
+          "artifacts/sprint_plan_s01.md",
+        ],
+      },
+      makeContext()
+    );
+
+    const mkdirCall = mocks.mkdir.mock.calls.find((c: unknown[]) =>
+      String(c[0]).includes("task_history")
+    );
+    expect(mkdirCall).toBeDefined();
+    expect(String(mkdirCall![0])).toContain("S01");
+    expect(String(mkdirCall![0])).toContain("S01-001");
+
+    const writeFileCall = mocks.writeFile.mock.calls.find((c: unknown[]) =>
+      String(c[0]).includes("task_history") && String(c[0]).includes("AI_IMPLEMENTATION_BRIEF.md")
+    );
+    expect(writeFileCall).toBeDefined();
+  });
+
+  it("removes active/ files (unlink) after archiving them", async () => {
+    wireCloseOutWithProject();
+    const script = new SprintControllerScript();
+    await script.run(
+      {
+        pipeline_id: "pipe-1",
+        previous_artifacts: [
+          "artifacts/verification_result.json",
+          "artifacts/current_task.json",
+          "artifacts/implementation_summary.md",
+          "artifacts/sprint_plan_s01.md",
+        ],
+      },
+      makeContext()
+    );
+
+    const unlinkCalls = mocks.unlink.mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(unlinkCalls.some((p) => p.includes("AI_IMPLEMENTATION_BRIEF.md"))).toBe(true);
+    expect(unlinkCalls.some((p) => p.includes("current_task.json"))).toBe(true);
+    expect(unlinkCalls.every((p) => p.includes("active"))).toBe(true);
+  });
+
+  it("archive is non-fatal: task_close still succeeds if active/ files are missing", async () => {
+    wireCloseOutWithProject();
+    // Make readFile always throw (no active/ files)
+    mocks.readFile.mockRejectedValue(Object.assign(new Error("ENOENT"), { code: "ENOENT" }));
+
+    const script = new SprintControllerScript();
+    const out = await script.run(
+      {
+        pipeline_id: "pipe-1",
+        previous_artifacts: [
+          "artifacts/verification_result.json",
+          "artifacts/current_task.json",
+          "artifacts/implementation_summary.md",
+          "artifacts/sprint_plan_s01.md",
+        ],
+      },
+      makeContext()
+    ) as Record<string, unknown>;
+
+    expect(out.mode).toBe("close_out");
+    expect(out.close_out_phase_completed).toBe("task_close");
+  });
+
+  it("Phase 2 writes sprint gate record to history/task_history/{sprint_id}/ (not history/)", async () => {
+    const closeoutContent = JSON.stringify({
+      sprint_id: "S01",
+      last_completed_task_id: "S01-001",
+      sprint_branch: "feature/S01-001",
+      sprint_complete_artifacts: [],
+      close_out_phase_completed: "task_close",
+    });
+    mocks.findFirst.mockImplementation(async (paths: string[]) => {
+      if (paths.some((p) => p.includes("sprint_closeout.json")))
+        return { path: "artifacts/sprint_closeout.json", content: closeoutContent };
+      return null;
+    });
+    mocks.get.mockResolvedValue({ project_id: "proj-1" });
+    mocks.getById.mockResolvedValue({ project_id: "proj-1", clone_path: "/repo", default_branch: "main" });
+
+    const script = new SprintControllerScript();
+    await script.run(
+      { pipeline_id: "pipe-1", previous_artifacts: ["artifacts/sprint_closeout.json"], close_out_phase: "pr_confirmed" },
+      makeContext()
+    );
+
+    const mkdirCall = mocks.mkdir.mock.calls.find((c: unknown[]) =>
+      String(c[0]).includes("task_history") && String(c[0]).includes("S01")
+    );
+    expect(mkdirCall).toBeDefined();
+
+    const writeFileCall = mocks.writeFile.mock.calls.find((c: unknown[]) =>
+      String(c[0]).includes("task_history") && String(c[0]).includes("sprint_closeout")
+    );
+    expect(writeFileCall).toBeDefined();
+    // Must NOT write to flat history/ directory
+    expect(mocks.writeFile.mock.calls.every((c: unknown[]) =>
+      !String(c[0]).match(/history[/\\]sprint_closeout/)
+    )).toBe(true);
   });
 });

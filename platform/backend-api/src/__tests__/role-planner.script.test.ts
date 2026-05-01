@@ -21,6 +21,12 @@ const mocks = vi.hoisted(() => {
   const findOpenPullRequestByHead = vi.fn();
   const findOpenPullRequestByTitle = vi.fn();
   const requireRelevantDesignInputs = vi.fn();
+  const readdir = vi.fn();
+  const readFile = vi.fn();
+  const writeFile = vi.fn();
+  const mkdir = vi.fn();
+  const unlink = vi.fn();
+  const checkoutBranch = vi.fn();
 
   return {
     findFirst,
@@ -43,6 +49,12 @@ const mocks = vi.hoisted(() => {
     findOpenPullRequestByHead,
     findOpenPullRequestByTitle,
     requireRelevantDesignInputs,
+    readdir,
+    readFile,
+    writeFile,
+    mkdir,
+    unlink,
+    checkoutBranch,
   };
 });
 
@@ -50,6 +62,16 @@ vi.mock("../services/artifact.service", () => ({
   artifactService: {
     findFirst: mocks.findFirst,
     write: mocks.write,
+  },
+}));
+
+vi.mock("fs/promises", () => ({
+  default: {
+    readdir: mocks.readdir,
+    readFile: mocks.readFile,
+    writeFile: mocks.writeFile,
+    mkdir: mocks.mkdir,
+    unlink: mocks.unlink,
   },
 }));
 
@@ -88,6 +110,7 @@ vi.mock("../services/project-git.service", () => ({
     push: mocks.push,
     createBranch: mocks.createBranch,
     commitAll: mocks.commitAll,
+    checkoutBranch: mocks.checkoutBranch,
   },
 }));
 
@@ -297,5 +320,150 @@ describe("PlannerScript next-mode sequencing", () => {
     expect(mocks.createPullRequest).not.toHaveBeenCalled();
     expect(mocks.setPrDetails).toHaveBeenCalledWith("pipe-1", 77, "https://example/pr/77", "feature/t-1");
     expect((result as { metadata: { reused_closeout_artifact: boolean } }).metadata.reused_closeout_artifact).toBe(true);
+  });
+});
+
+// ─── Sprint and Phase Archive (Operator Sequence Steps 6-7) ─────────────────
+describe("Sprint and phase archive — operator sequence steps 6-7", () => {
+  const PROJECT = { project_id: "proj-1", clone_path: "/repo", default_branch: "main", repo_url: "https://github.com/test/repo", name: "test", created_at: "", updated_at: "" };
+
+  function makeSprintCloseOutJson(extra: Record<string, unknown> = {}) {
+    return JSON.stringify({
+      sprint_branch: "feature/S01-001",
+      sprint_id: "S01",
+      last_completed_task_id: "S01-001",
+      sprint_complete_artifacts: [],
+      ...extra,
+    });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.write.mockImplementation(async (_pid: string, name: string) => `artifacts/${name}`);
+    mocks.writeFile.mockResolvedValue(undefined);
+    mocks.mkdir.mockResolvedValue(undefined);
+    mocks.commitAll.mockResolvedValue(undefined);
+    mocks.push.mockResolvedValue(undefined);
+    mocks.unlink.mockResolvedValue(undefined);
+    mocks.ensureReady.mockResolvedValue(undefined);
+    mocks.checkoutBranch.mockResolvedValue(undefined);
+    mocks.findFirst.mockResolvedValue(null);
+    mocks.get.mockResolvedValue({ project_id: "proj-1", sprint_branch: "feature/S01-001" });
+    mocks.getById.mockResolvedValue(PROJECT);
+    mocks.getByName.mockResolvedValue(null);
+    mocks.findOpenPullRequestByHead.mockResolvedValue({ number: 10, html_url: "https://example/pr/10" });
+    mocks.findOpenPullRequestByTitle.mockResolvedValue(null);
+    mocks.readdir.mockResolvedValue([]);
+    mocks.readFile.mockRejectedValue(new Error("ENOENT"));
+  });
+
+  it("archives sprint plan from staged_sprints/ to history/task_history/{sprint_id}/ on pr_confirmed", async () => {
+    const sprintPlanContent = `# Sprint Plan: S01\n**Phase:** PH-001\n**Status:** staged\n## Goals\n- g\n## Tasks\n- S01-001`;
+    mocks.readdir.mockImplementation(async (dirPath: string) => {
+      if (String(dirPath).includes("staged_sprints")) {
+        return [{ isFile: () => true, name: "sprint_plan_s01.md" }];
+      }
+      return []; // staged_phases/ and empty staged_sprints/ (after deletion)
+    });
+    mocks.readFile.mockImplementation(async (filePath: string) => {
+      if (String(filePath).includes("sprint_plan_s01.md")) return sprintPlanContent;
+      throw new Error("ENOENT");
+    });
+
+    const planner = new PlannerScript();
+    await (planner as never).runSprintCloseOut(
+      "pipe-1",
+      [],
+      JSON.stringify({ result: "PASS", task_id: "S01-001" }),
+      makeSprintCloseOutJson({ close_out_phase_completed: "pr_confirmed" }),
+      makeContext()
+    );
+
+    const writeFileCall = mocks.writeFile.mock.calls.find((c: unknown[]) =>
+      String(c[0]).includes("task_history") && String(c[0]).includes("sprint_plan_s01.md")
+    );
+    expect(writeFileCall).toBeDefined();
+    expect(String(writeFileCall![0])).toContain("S01");
+
+    const unlinkCall = mocks.unlink.mock.calls.find((c: unknown[]) =>
+      String(c[0]).includes("sprint_plan_s01.md")
+    );
+    expect(unlinkCall).toBeDefined();
+    expect(String(unlinkCall![0])).toContain("staged_sprints");
+  });
+
+  it("archives phase plan to history/phase_history/{phase_id}/ when no sprint plans remain", async () => {
+    const sprintPlanContent = `# Sprint Plan: S01\n**Phase:** PH-001\n**Status:** staged`;
+    const phasePlanContent = `# Phase Plan: PH-001\n**Status:** Active`;
+    const readdirCallCount = { count: 0 };
+    mocks.readdir.mockImplementation(async (dirPath: string) => {
+      if (String(dirPath).includes("staged_sprints")) {
+        // First call: return sprint plan; second call (remaining check): return empty (sprint was unlinked)
+        readdirCallCount.count++;
+        if (readdirCallCount.count === 1) return [{ isFile: () => true, name: "sprint_plan_s01.md" }];
+        return [];
+      }
+      if (String(dirPath).includes("staged_phases")) {
+        return [{ isFile: () => true, name: "phase_plan_ph_001.md" }];
+      }
+      return [];
+    });
+    mocks.readFile.mockImplementation(async (filePath: string) => {
+      if (String(filePath).includes("sprint_plan_s01.md")) return sprintPlanContent;
+      if (String(filePath).includes("phase_plan_ph_001.md")) return phasePlanContent;
+      throw new Error("ENOENT");
+    });
+
+    const planner = new PlannerScript();
+    await (planner as never).runSprintCloseOut(
+      "pipe-1",
+      [],
+      JSON.stringify({ result: "PASS", task_id: "S01-001" }),
+      makeSprintCloseOutJson({ close_out_phase_completed: "pr_confirmed" }),
+      makeContext()
+    );
+
+    const phaseWriteCall = mocks.writeFile.mock.calls.find((c: unknown[]) =>
+      String(c[0]).includes("phase_history") && String(c[0]).includes("phase_plan_ph_001.md")
+    );
+    expect(phaseWriteCall).toBeDefined();
+    expect(String(phaseWriteCall![0])).toContain("PH-001");
+
+    const phaseUnlinkCall = mocks.unlink.mock.calls.find((c: unknown[]) =>
+      String(c[0]).includes("phase_plan_ph_001.md")
+    );
+    expect(phaseUnlinkCall).toBeDefined();
+  });
+
+  it("does NOT archive sprint plan when close_out_phase_completed is absent (task_close state)", async () => {
+    const planner = new PlannerScript();
+    await (planner as never).runSprintCloseOut(
+      "pipe-1",
+      [],
+      JSON.stringify({ result: "PASS", task_id: "S01-001" }),
+      makeSprintCloseOutJson(), // no close_out_phase_completed field
+      makeContext()
+    );
+
+    const sprintArchiveWrite = mocks.writeFile.mock.calls.find((c: unknown[]) =>
+      String(c[0]).includes("task_history") && String(c[0]).includes("sprint_plan")
+    );
+    expect(sprintArchiveWrite).toBeUndefined();
+    expect(mocks.unlink).not.toHaveBeenCalled();
+  });
+
+  it("sprint archive is non-fatal: runSprintCloseOut completes even if readdir throws", async () => {
+    mocks.readdir.mockRejectedValue(new Error("permission denied"));
+
+    const planner = new PlannerScript();
+    const result = await (planner as never).runSprintCloseOut(
+      "pipe-1",
+      [],
+      JSON.stringify({ result: "PASS", task_id: "S01-001" }),
+      makeSprintCloseOutJson({ close_out_phase_completed: "pr_confirmed" }),
+      makeContext()
+    );
+
+    expect((result as { closeout: { closeout_mode: string } }).closeout.closeout_mode).toBe("sprint");
   });
 });
