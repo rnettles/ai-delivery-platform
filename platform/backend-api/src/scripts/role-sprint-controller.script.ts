@@ -1244,6 +1244,11 @@ ${fastTrackSection}
     let sprintBranch: string | undefined;
     if (project) {
       sprintBranch = buildTaskFeatureBranch(activeTaskPackage.firstTask.task_id);
+      await projectGitService.ensureReady(project);
+      // Guarantee the feature branch exists on the remote before handing off to the
+      // implementer. The branch may be local-only (remote deleted after PR merge without
+      // a proper closeout) or absent entirely (fresh reuse after a failed first run).
+      await projectGitService.ensureBranchOnRemote(project, sprintBranch);
       await pipelineService.setSprintBranch(pipelineId, sprintBranch);
     }
 

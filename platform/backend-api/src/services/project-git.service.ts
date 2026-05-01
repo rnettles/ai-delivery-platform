@@ -126,6 +126,63 @@ class ProjectGitService {
   }
 
   /**
+   * Ensure a branch exists on the remote, handling three cases:
+   *  1. Branch already on remote: fetch and check it out locally (idempotent).
+   *  2. Branch exists only locally (e.g. remote was deleted after PR merge):
+   *     push the local branch to re-establish it on the remote.
+   *  3. Branch absent everywhere: create from current default-branch HEAD and push.
+   *
+   * Uses `git ls-remote` to query the actual remote rather than the local cached
+   * refs — stale `refs/remotes/origin/<branch>` entries can persist after a remote
+   * branch is deleted if the last `git fetch` used a narrow refspec or lacked --prune.
+   *
+   * Called by the sprint-controller reuse path (publishExistingTaskPackage) so the
+   * implementer can always find the feature branch via `git fetch origin <branch>`.
+   * Caller must have called ensureReady() first so the clone is on the default branch.
+   */
+  async ensureBranchOnRemote(project: Project, branchName: string): Promise<void> {
+    return this.withLock(project.project_id, () => {
+      logger.info("git: ensuring branch on remote", { project: project.name, branch: branchName });
+
+      // Query the actual remote — do not rely on cached refs/remotes/origin/* which can
+      // be stale when the remote branch was deleted without a prune.
+      const remoteHasRef = this.branchExistsOnActualRemote(project.clone_path, branchName);
+
+      if (remoteHasRef) {
+        // Case 1: branch is on the actual remote — fetch then check it out locally.
+        this.git(project.clone_path, ["fetch", "origin", branchName]);
+        if (this.branchExistsLocal(project.clone_path, branchName)) {
+          this.deleteLocalBranch(project.clone_path, branchName);
+        }
+        this.git(project.clone_path, ["checkout", "--track", `origin/${branchName}`]);
+        return;
+      }
+
+      if (this.branchExistsLocal(project.clone_path, branchName)) {
+        // Case 2: branch exists locally only (remote was deleted, e.g. after a PR merge
+        // that was not followed by a proper closeout).  Push the local branch to restore
+        // the remote ref so the implementer can fetch it.
+        logger.warn("git: branch is local-only; pushing to remote to re-establish remote ref", {
+          project: project.name,
+          branch: branchName,
+        });
+        this.git(project.clone_path, ["checkout", branchName]);
+        this.git(project.clone_path, ["push", "--set-upstream", "origin", branchName]);
+        return;
+      }
+
+      // Case 3: branch does not exist anywhere — create from current HEAD (default branch
+      // after ensureReady) and push so the implementer has a clean starting point.
+      logger.warn("git: branch absent locally and remotely; creating from default branch", {
+        project: project.name,
+        branch: branchName,
+      });
+      this.git(project.clone_path, ["checkout", "-b", branchName]);
+      this.git(project.clone_path, ["push", "--set-upstream", "origin", branchName]);
+    });
+  }
+
+  /**
    * Stage all changes and commit. Returns the new HEAD commit SHA.
    */
   async commitAll(project: Project, branchName: string, message: string): Promise<string> {
@@ -422,6 +479,20 @@ class ProjectGitService {
     try {
       this.git(clonePath, ["show-ref", "--verify", `refs/remotes/origin/${branchName}`]);
       return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Query the actual remote (via `git ls-remote`) rather than the local cached
+   * refs. Used where stale refs/remotes/origin/<branch> could give a false positive
+   * (e.g. when the remote branch was deleted without a subsequent --prune fetch).
+   */
+  private branchExistsOnActualRemote(clonePath: string, branchName: string): boolean {
+    try {
+      const output = this.git(clonePath, ["ls-remote", "--heads", "origin", branchName]);
+      return output.trim().length > 0;
     } catch {
       return false;
     }

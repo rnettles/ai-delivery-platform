@@ -426,8 +426,10 @@ export async function skipPipeline(req: Request, res: Response, next: NextFuncti
 }
 
 // ─── INTERNAL: execute the current pipeline step via the execution service ──
+// Exported so the PR-merge poller can trigger Phase 2 (pr_confirmed) automatically
+// in full-sprint mode without re-entering through an HTTP route.
 
-async function executeCurrentStep(
+export async function executeCurrentStep(
   pipelineId: string,
   role: PipelineRole,
   input: Record<string, unknown>,
@@ -467,6 +469,12 @@ async function executeCurrentStep(
     // Pass execution_mode from pipeline metadata to script input
     if (currentRun.metadata?.execution_mode) {
       enrichedInput.execution_mode = currentRun.metadata.execution_mode;
+    }
+
+    // Inject close-out phase token stored in metadata by completeStep (SC Phase 1).
+    // Allows the poller to trigger Phase 2 (pr_confirmed) without knowing the phase name directly.
+    if (currentRun.metadata?.pending_close_out_phase) {
+      enrichedInput.close_out_phase = currentRun.metadata.pending_close_out_phase;
     }
 
     // Build a notify function that fires progress messages to Slack — best-effort, never throws.

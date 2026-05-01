@@ -1,3 +1,4 @@
+import { executeCurrentStep } from "../controllers/pipeline.controller";
 import { githubApiService } from "./github-api.service";
 import { logger } from "./logger.service";
 import { pipelineService } from "./pipeline.service";
@@ -61,12 +62,21 @@ class PrMergePollerService {
         });
 
         if (pr.merged) {
-          await pipelineService.markPrMerged(run.pipeline_id);
+          const updatedRun = await pipelineService.markPrMerged(run.pipeline_id);
           logger.info("PR merge detected via poll", {
             pipeline_id: run.pipeline_id,
             pr_number: run.pr_number,
             pr_url: pr.html_url,
           });
+          // full-sprint: auto-trigger Phase 2 (pr_confirmed) — pipeline returned to running.
+          if (updatedRun.status === "running" && updatedRun.current_step !== "complete") {
+            executeCurrentStep(updatedRun.pipeline_id, updatedRun.current_step as import("../domain/pipeline.types").PipelineRole, {}, undefined).catch((err) => {
+              logger.error("Failed to trigger sprint-controller Phase 2 after PR merge", {
+                pipeline_id: updatedRun.pipeline_id,
+                error: String(err),
+              });
+            });
+          }
           continue;
         }
 

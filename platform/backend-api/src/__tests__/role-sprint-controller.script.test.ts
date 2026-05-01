@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => {
   const getById = vi.fn();
   const getByName = vi.fn();
   const ensureReady = vi.fn();
+  const ensureBranchOnRemote = vi.fn();
   const createBranch = vi.fn();
   const checkoutBranch = vi.fn();
   const setPrDetails = vi.fn();
@@ -36,6 +37,7 @@ const mocks = vi.hoisted(() => {
     getById,
     getByName,
     ensureReady,
+    ensureBranchOnRemote,
     createBranch,
     checkoutBranch,
     setPrDetails,
@@ -99,6 +101,7 @@ vi.mock("../services/project.service", () => ({
 vi.mock("../services/project-git.service", () => ({
   projectGitService: {
     ensureReady: mocks.ensureReady,
+    ensureBranchOnRemote: mocks.ensureBranchOnRemote,
     createBranch: mocks.createBranch,
     checkoutBranch: mocks.checkoutBranch,
     commitAll: mocks.commitAll,
@@ -304,6 +307,8 @@ Implement brand tokens.
     });
     mocks.get.mockResolvedValue({ project_id: "proj-1" });
     mocks.getById.mockResolvedValue({ project_id: "proj-1", clone_path: "C:/repo" });
+    mocks.ensureReady.mockResolvedValue(undefined);
+    mocks.ensureBranchOnRemote.mockResolvedValue(undefined);
     mocks.writeFile.mockResolvedValue(undefined);
     mocks.mkdir.mockResolvedValue(undefined);
     mocks.commitAll.mockResolvedValue(undefined);
@@ -319,6 +324,7 @@ Implement brand tokens.
     expect(mocks.forRole).not.toHaveBeenCalled();
     expect(mocks.createBranch).not.toHaveBeenCalled();
     expect(mocks.createPullRequestWithRecovery).not.toHaveBeenCalled();
+    expect(mocks.ensureBranchOnRemote).toHaveBeenCalledWith(expect.objectContaining({ project_id: "proj-1" }), "feature/S01-001");
     expect(mocks.setSprintBranch).toHaveBeenCalledWith("pipe-1", "feature/S01-001");
     expect(mocks.write).toHaveBeenCalledTimes(3);
     expect(context.notify).toHaveBeenCalledWith(
@@ -1160,6 +1166,8 @@ describe("Phase 9 — Verification and Regression Coverage", () => {
     });
     mocks.get.mockResolvedValue({ project_id: "proj-1" });
     mocks.getById.mockResolvedValue({ project_id: "proj-1", clone_path: "C:/repo" });
+    mocks.ensureReady.mockResolvedValue(undefined);
+    mocks.ensureBranchOnRemote.mockResolvedValue(undefined);
 
     const script = new SprintControllerScript();
     const context = makeContext();

@@ -951,21 +951,33 @@ export class PipelineService {
       return this.save(run, { current_step: "sprint-controller", status: "running", steps });
     }
 
-    // Sprint Controller task close-out: verifier already passed -> hand off to Planner.
-    // Detected by presence of a completed verifier step in the history.
+    // Sprint Controller close-out phase routing.
+    // Phase 1 (task_close): one completed SC step → await PR merge before Phase 2.
+    // Phase 2 (pr_confirmed): two completed SC steps → hand off to Planner for sprint archiving.
     if (role === "sprint-controller") {
       const verifierPassed = steps.some((s) => s.role === "verifier" && s.status === "complete");
       if (verifierPassed) {
-        logger.info("Sprint Controller task close-out complete: routing to planner sprint close-out", {
+        const completedScCount = steps.filter((s) => s.role === "sprint-controller" && s.status === "complete").length;
+        if (completedScCount === 1) {
+          // Phase 1 done — store pending phase token and await PR merge.
+          logger.info("Sprint Controller Phase 1 (task_close) complete: awaiting PR merge for Phase 2 (pr_confirmed)", {
+            pipeline_id: run.pipeline_id,
+          });
+          const metadata = { ...run.metadata, pending_close_out_phase: "pr_confirmed" } as typeof run.metadata;
+          return this.save(run, { current_step: "complete", status: "awaiting_pr_review", steps, metadata });
+        }
+        // Phase 2 (pr_confirmed) done — route to Planner for sprint archiving.
+        logger.info("Sprint Controller Phase 2 (pr_confirmed) complete: routing to planner for sprint archiving", {
           pipeline_id: run.pipeline_id,
         });
+        const metadata = { ...run.metadata, pending_close_out_phase: undefined } as typeof run.metadata;
         steps.push(this.newRunningStep("planner", now));
-        return this.save(run, { current_step: "planner", status: "running", steps });
+        return this.save(run, { current_step: "planner", status: "running", steps, metadata });
       }
     }
 
-    // Planner sprint close-out: verifier and sprint-controller have already completed.
-    // Planner finalizes sprint closure (PR handoff), then pipeline awaits PR review.
+    // Planner sprint close-out: verifier and sprint-controller (Phase 2) have already completed.
+    // PR is already merged at this point — mark the sprint cycle complete.
     if (role === "planner") {
       const verifierPassed = steps.some((s) => s.role === "verifier" && s.status === "complete");
       const sprintControllerClosedTask = steps.some(
@@ -975,10 +987,10 @@ export class PipelineService {
           s.artifact_paths.some((p) => p.includes("sprint_closeout.json"))
       );
       if (verifierPassed && sprintControllerClosedTask) {
-        logger.info("Planner sprint close-out: transitioning to awaiting_pr_review", {
+        logger.info("Planner sprint close-out: sprint cycle complete", {
           pipeline_id: run.pipeline_id,
         });
-        return this.saveAndMaybeCleanup(run, { current_step: "complete", status: "awaiting_pr_review", steps });
+        return this.saveAndMaybeCleanup(run, { current_step: "complete", status: "complete", steps });
       }
     }
 
@@ -1128,10 +1140,27 @@ export class PipelineService {
   /**
    * Mark the pipeline complete when the PR is merged.
    * Called by webhook handler or polling job.
+   *
+   * In full-sprint mode the pipeline resumes automatically: a new sprint-controller step is
+   * added for Phase 2 (pr_confirmed) and the run returns to `running` so the poller can
+   * trigger execution. In all other modes the pipeline is marked complete immediately.
    */
   async markPrMerged(pipelineId: string): Promise<PipelineRun> {
     const run = await this.get(pipelineId);
     this.assertStatus(run, ["awaiting_pr_review"]);
+
+    const executionMode = run.metadata.execution_mode as string | undefined;
+    if (executionMode === "full-sprint") {
+      const steps = [...run.steps];
+      const now = new Date().toISOString();
+      steps.push(this.newRunningStep("sprint-controller", now));
+      logger.info("Pipeline PR merged — resuming sprint-controller Phase 2 (pr_confirmed)", {
+        pipeline_id: pipelineId,
+        pr_number: run.pr_number,
+      });
+      return this.save(run, { current_step: "sprint-controller", status: "running", steps });
+    }
+
     logger.info("Pipeline PR merged — marking complete", { pipeline_id: pipelineId, pr_number: run.pr_number });
     return this.saveAndMaybeCleanup(run, { status: "complete" });
   }

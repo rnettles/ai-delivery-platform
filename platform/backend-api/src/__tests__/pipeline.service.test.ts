@@ -689,7 +689,21 @@ describe("PipelineService", () => {
 
   describe("artifact cleanup triggering", () => {
     it("triggers artifact cleanup when pipeline reaches status=complete", async () => {
-      const row = makeRow({ metadata: { source: "slack", execution_mode: "next" } });
+      // Planner sprint close-out path (full-sprint, verifier passed + SC wrote sprint_closeout.json).
+      // Gate is bypassed in full-sprint, and the Planner close-out condition fires → saveAndMaybeCleanup(complete).
+      const row = makeRow({
+        metadata: { source: "slack", execution_mode: "full-sprint" },
+        current_step: "planner",
+        status: "running",
+        steps: [
+          { role: "planner", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T00:00:00.000Z", completed_at: "2026-04-19T01:00:00.000Z" },
+          { role: "sprint-controller", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T01:00:00.000Z", completed_at: "2026-04-19T02:00:00.000Z" },
+          { role: "implementer", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T02:00:00.000Z", completed_at: "2026-04-19T03:00:00.000Z" },
+          { role: "verifier", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T03:00:00.000Z", completed_at: "2026-04-19T04:00:00.000Z" },
+          { role: "sprint-controller", status: "complete", gate_outcome: "auto", artifact_paths: ["runtime/artifacts/pipe-2026-04-19-test1234/sprint_closeout.json"], actor: "system", started_at: "2026-04-19T04:00:00.000Z", completed_at: "2026-04-19T05:00:00.000Z" },
+          { role: "planner", status: "running", gate_outcome: null, artifact_paths: [], actor: "system", started_at: "2026-04-19T05:00:00.000Z" },
+        ],
+      });
       mocks.selectWhere.mockResolvedValueOnce([row]);
       const savedRow = makeRow({ current_step: "complete", status: "complete" });
       mocks.updateReturning.mockResolvedValueOnce([savedRow]);
