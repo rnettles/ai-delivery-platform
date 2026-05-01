@@ -66,6 +66,7 @@ export function registerPipelineCommands(program: Command): void {
     .option("--slack-channel <id>", "Slack channel ID")
     .option("--actor <name>", "Actor name", "operator")
     .option("--body-json <json>", "Raw JSON body (overrides other options)")
+    .option("--dry-run-directive <json>", "Per-pipeline dry-run scenario override (JSON for { steps: [...] }). Server must be running in DRY_RUN mode.")
     .option("--json", "Output raw JSON")
     .option("--no-set-active", "Do not update active pipeline_id after create")
     .action(async (opts) => {
@@ -85,6 +86,14 @@ export function registerPipelineCommands(program: Command): void {
 
         const metadata: Record<string, unknown> = { source: "api" };
         if (channelId) metadata.slack_channel = channelId;
+        if (opts.dryRunDirective) {
+          try {
+            metadata.dry_run_directives = JSON.parse(String(opts.dryRunDirective));
+          } catch (err) {
+            console.error(`Invalid --dry-run-directive JSON: ${String(err)}`);
+            process.exit(1);
+          }
+        }
 
         const req: CreatePipelineRequest = {
           entry_point: opts.entryPoint,

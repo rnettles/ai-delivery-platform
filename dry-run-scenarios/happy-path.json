@@ -1,0 +1,6 @@
+{
+  "name": "happy-path",
+  "description": "All roles PASS. Full sprint completes through to awaiting_pr_review.",
+  "default_outcome": "pass",
+  "steps": []
+}

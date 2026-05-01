@@ -2,7 +2,7 @@
 ## AI Delivery Platform — Local Development and Debug Guide
 
 **Audience:** Developers running and debugging the execution service outside containers  
-**Last updated:** 2026-04-22 (REST Client + API surface + project create syntax)  
+**Last updated:** 2026-04-30 (dry-run mode, execution modes, error surfacing)  
 **See also:** [governance-operator-runbook.md](governance-operator-runbook.md) | [user-flow-runbook.md](user-flow-runbook.md)
 
 ---
@@ -11,12 +11,13 @@
 
 This runbook describes how to run the AI Delivery Platform locally without Docker for day-to-day debugging and observation.
 
-Two local modes are supported:
+Three local modes are supported:
 
 | Mode | What runs locally | Best for |
 |---|---|---|
 | **Backend-only** | Execution service + Postgres | API development, role script debugging, execution record inspection |
 | **Full local orchestration** | Backend + local n8n, optional Slack | End-to-end pipeline flow testing without Azure |
+| **Dry-run** | Backend + Postgres, no LLM calls | Workflow validation, CI smoke testing, operator-in-loop testing |
 
 The repository already supports local execution through `npm run dev`, dotenv loading, and explicit local-dev defaults built into the config. n8n callbacks and git sync are gracefully skipped when their respective env vars are absent.
 
@@ -39,14 +40,14 @@ Local dev flow (backend-only):
 
 ## What Is Required vs Optional
 
-| Component | Backend-only | Full local orchestration | Notes |
-|---|---|---|---|
-| Node.js 20+ | Yes | Yes | Backend runtime |
-| Local Postgres 15+ | Yes | Yes | Execution records and pipeline state |
-| LLM provider credentials | No (test script only) | Yes (for role execution) | Planner, Sprint Controller, Implementer, Verifier all call LLM |
-| Local n8n | No | Yes | Pipeline notifications and Slack adapter workflows |
-| Slack app + tunnel | No | Optional | Required only for slash command / button flows |
-| Git PAT + repo URL | No | Optional | Service no-ops on missing repo vars |
+| Component | Backend-only | Full local orchestration | Dry-run | Notes |
+|---|---|---|---|---|
+| Node.js 20+ | Yes | Yes | Yes | Backend runtime |
+| Local Postgres 15+ | Yes | Yes | Yes | Execution records and pipeline state |
+| LLM provider credentials | No (test script only) | Yes (for role execution) | **No** | Dry-run replaces LLM with deterministic fixtures |
+| Local n8n | No | Yes | No | Pipeline notifications and Slack adapter workflows |
+| Slack app + tunnel | No | Optional | No | Required only for slash command / button flows |
+| Git PAT + repo URL | No | Optional | Yes | Dry-run commits synthetic artifacts to a sandbox repo |
 
 ---
 
@@ -103,6 +104,14 @@ GIT_PAT=
 
 # Leave empty for local no-auth mode — middleware passes through when API_KEY is unset
 API_KEY=
+
+# --- Dry-run mode (optional) ---
+# Set DRY_RUN=1 to replace all LLM calls with deterministic fixtures
+DRY_RUN=
+# Path to scenario file (relative to platform/backend-api/ or absolute)
+DRY_RUN_SCENARIO_PATH=
+# Optional allowlist of project names permitted in dry-run mode (comma-separated)
+DRY_RUN_REPO_ALLOWLIST=
 ```
 
 LLM provider — add at least one if you intend to run role scripts (Planner, Sprint Controller, Implementer, Verifier):
@@ -161,10 +170,29 @@ npm run dev
 
 This starts `tsx watch src/server.ts` — the server restarts automatically on file changes.
 
-**Expected startup output:**
+**To start in dry-run mode (no LLM calls):**
+
+```powershell
+.\start-local-server.dryrun.ps1
+```
+
+This is the convenience wrapper that sets `DRY_RUN=1` and loads the happy-path scenario. See [Section 6 — Dry-Run Mode](#6-dry-run-mode) for full details.
+
+**Expected startup output (normal):**
 
 ```
 Execution service started { port: 3000, environment: "development" }
+```
+
+**Expected startup output (dry-run):**
+
+```
+╔══════════════════════════════════════════════════════╗
+║           DRY-RUN MODE ACTIVE                        ║
+║  No LLM API calls will be made.                      ║
+║  Scenario: happy-path                                ║
+╚══════════════════════════════════════════════════════╝
+Execution service started { port: 3000, environment: "development", dryRun: true }
 ```
 
 ---
@@ -231,9 +259,116 @@ Returns `202 Accepted` with a `pipeline_id`. Role execution is asynchronous — 
 Invoke-RestMethod http://localhost:3000/pipeline/<pipeline_id> | ConvertTo-Json -Depth 10
 ```
 
-### 5.6 Using the TypeScript CLI (`adp`)
+---
 
-The repository includes a TypeScript CLI at `platform/cli/` as a convenience wrapper over the REST API. It manages an active context file (`.adp-cli.state.json`) so you don't have to copy-paste IDs between commands.
+## 6. Dry-Run Mode
+
+Dry-run mode replaces all LLM calls with deterministic fixtures so the full pipeline state machine can be exercised without API credentials. Git, GitHub, Slack, and Postgres remain live.
+
+### 6.1 Prerequisites
+
+- A sandbox project registered in the platform (e.g. `adp-dryrun`)
+- The project repo cloned under `runtime/git-clones/<name>/`
+- At least one FRD with `Status: Approved` in `docs/functional_requirements/`
+- A Slack channel ID assigned to the project
+
+### 6.2 Start in dry-run mode
+
+```powershell
+.\start-local-server.dryrun.ps1
+```
+
+This sets `DRY_RUN=1` and loads `dry-run-scenarios/happy-path.json` by default. On startup the server logs a prominent banner and validates the scenario file.
+
+To use a different scenario:
+
+```powershell
+$env:DRY_RUN_SCENARIO_PATH = "dry-run-scenarios\verifier-fail-then-pass.json"
+.\start-local-server.dryrun.ps1
+```
+
+### 6.3 Verify dry-run is active
+
+```powershell
+Invoke-RestMethod http://localhost:3000/health/dry-run | ConvertTo-Json -Depth 5
+```
+
+Expected response includes `"dry_run": true` and the active scenario name.
+
+### 6.4 Execution modes
+
+Choose the mode based on what you want to test:
+
+| Mode | Planner gate | Role chaining | Use case |
+|---|---|---|---|
+| `full-sprint` | **Bypassed** — pipeline runs autonomously | Full chain end-to-end | Prove the happy path with no human stops |
+| `next-flow` | `awaiting_approval` — operator reviews phase plan | Full chain after approval | **Operator-in-loop** — validate the approval gate |
+| `next` | `awaiting_approval` — operator approves each step | Entry role only, then stop | Step-by-step debugging of individual roles |
+
+#### Run a fully autonomous dry-run (no operator stops)
+
+```powershell
+.\api-cli.ps1 pipeline-create -EntryPoint planner -ExecutionMode full-sprint `
+  -Description "dry-run smoke" -ChannelId <your-channel-id>
+```
+
+The pipeline runs planner → sprint-controller → implementer → verifier → sprint close-out → `awaiting_pr_review` without any human intervention.
+
+#### Test the operator-in-loop gate
+
+```powershell
+.\api-cli.ps1 pipeline-create -EntryPoint planner -ExecutionMode next-flow `
+  -Description "dry-run gate test" -ChannelId <your-channel-id>
+```
+
+Pipeline pauses at `awaiting_approval` after the planner commits the phase plan. Review the plan in the sandbox repo, then advance:
+
+```powershell
+.\api-cli.ps1 pipeline-approve -PipelineId <pipeline-id>
+```
+
+### 6.5 Inject failures with scenarios
+
+Scenario files in `dry-run-scenarios/` control when roles fail:
+
+| Scenario file | Behaviour |
+|---|---|
+| `happy-path.json` | All roles PASS — validates the success path |
+| `verifier-fail-then-pass.json` | Verifier FAILs once, then PASSes on retry — validates implementer retry routing |
+| `verifier-fail-limit.json` | Verifier FAILs 3× — validates `paused_takeover` escalation |
+
+Switch scenarios by setting `DRY_RUN_SCENARIO_PATH` before starting the server, or by overriding per-pipeline:
+
+```powershell
+.\api-cli.ps1 pipeline-create -EntryPoint planner -ExecutionMode full-sprint `
+  -Description "fail scenario" -ChannelId <id> `
+  -DryRunDirective '{"match":{"role":"verifier","occurrence":1},"outcome":"fail","reason":"Injected failure"}'
+```
+
+### 6.6 Check pipeline status and failure detail
+
+```powershell
+.\api-cli.ps1 pipeline -PipelineId <pipeline-id>
+```
+
+Failed steps now include `error_message` in the step record so the reason is visible without inspecting server logs.
+
+### 6.7 Clean up between runs
+
+If the planner wrote a phase plan artifact in a previous run that is still in `staged_phases/`, it will block the next planner run (open phase guard). Remove it:
+
+```powershell
+cd runtime/git-clones/<project-name>
+git rm project_work/ai_project_tasks/staged_phases/phase_plan_*.md
+git commit -m "chore: remove stale phase plan for retry"
+git push
+```
+
+### 5.6 Using the PowerShell CLI (`api-cli.ps1`)
+
+The repository includes a PowerShell CLI wrapper at the repo root (`api-cli.ps1`) as a convenience wrapper over the REST API. It manages an active context file so you don't have to copy-paste IDs between commands.
+
+The repository also includes a TypeScript CLI at `platform/cli/` as a convenience wrapper over the REST API. It manages an active context file (`.adp-cli.state.json`) so you don't have to copy-paste IDs between commands.
 
 #### Setup
 
@@ -266,18 +401,18 @@ To override the saved `pipeline_id` for a single command, pass `--pipeline-id <i
 
 ---
 
-## 6. REST Client Quick Reference
+## 7. REST Client Quick Reference
 
 The repository includes a VS Code [REST Client](https://marketplace.visualstudio.com/items?itemName=humao.rest-client) collection under `platform/backend-api/requests/`. This is the recommended approach for interactive API testing — requests are version-controlled and serve as living documentation.
 
-### 6.1 Setup
+### 7.1 Setup
 
 1. Install the **REST Client** extension (`humao.rest-client`) in VS Code.
 2. Open `.vscode/settings.json` and set `rest-client.environmentVariables` values for `local` and `dev`.
 3. Open any `.http` file. Use `Ctrl+Shift+P` → **Rest Client: Switch Environment** to choose `local` or `dev`.
 4. Click **Send Request** above any request block.
 
-### 6.2 Environment configuration files
+### 7.2 Environment configuration files
 
 | File | Committed | Purpose |
 |---|---|---|
@@ -286,9 +421,9 @@ The repository includes a VS Code [REST Client](https://marketplace.visualstudio
 
 After creating a pipeline, copy the returned `pipeline_id` into `.vscode/settings.json` → `rest-client.environmentVariables.<env>.pipelineId` so downstream requests (approve, cancel, status, handoff) pick it up automatically.
 
-> **Using the TypeScript CLI?** Skip this step — `adp pipeline-create` automatically saves the new `pipeline_id` to `.adp-cli.state.json`. See [Section 5.6](#56-using-the-typescript-cli-adp).
+> **Using the TypeScript CLI?** Skip this step — `adp pipeline-create` automatically saves the new `pipeline_id` to `.adp-cli.state.json`. See [Section 5.6](#56-using-the-powershell-cli-api-clips1).
 
-### 6.3 Request file inventory
+### 7.3 Request file inventory
 
 | File | Endpoints covered |
 |---|---|
@@ -297,15 +432,16 @@ After creating a pipeline, copy the returned `pipeline_id` into `.vscode/setting
 | `03-coordination.http` | Create, get, patch, query, archive coordination entries |
 | `04-projects.http` | Register project, assign Slack channel |
 
-### 6.4 Switching between local and dev
+### 7.4 Switching between local and dev
 
 The `local` environment targets `http://localhost:3000` with no API key (pass-through mode). The `dev` environment targets the Azure Container App URL with the full API key. Switch environments without changing any request files.
 
-### 6.5 API Surface (current endpoints)
+### 7.5 API Surface (current endpoints)
 
 | Area | Method | Path |
 |---|---|---|
 | Health | GET | `/health` |
+| Dry-run health | GET | `/health/dry-run` |
 | Script catalog | GET | `/scripts` |
 | Execute script/role | POST | `/execute` |
 | Execution query | GET | `/executions` |
@@ -332,7 +468,7 @@ The `local` environment targets `http://localhost:3000` with no API key (pass-th
 | Coordination query | POST | `/coordination/query` |
 | Coordination archive | DELETE | `/coordination/:coordinationId` |
 
-### 6.6 Create Project Syntax
+### 7.6 Create Project Syntax
 
 `POST /projects`
 
@@ -379,7 +515,7 @@ Common errors:
 - `400 PROJECT_REPO_URL_REQUIRED`
 - `409 PROJECT_ALREADY_EXISTS`
 
-### 6.7 Project Read Endpoints
+### 7.7 Project Read Endpoints
 
 List all projects:
 
@@ -421,7 +557,7 @@ Invoke-RestMethod -Method GET http://localhost:3000/projects/<project_id> |
 
 ---
 
-## 7. API Key Behavior in Local Dev
+## 8. API Key Behavior in Local Dev
 
 | `API_KEY` set? | Behavior |
 |---|---|
@@ -440,7 +576,7 @@ When using the REST Client, the API key is read from `.vscode/settings.json` aut
 
 ---
 
-## 8. Optional: Full Local Orchestration with n8n
+## 9. Optional: Full Local Orchestration with n8n
 
 If you want pipeline notifications and want to test the orchestration layer locally:
 
@@ -479,7 +615,7 @@ n8n reads `EXECUTION_API_BASE_URL` and `EXECUTION_API_KEY` via `$env` expression
 
 ---
 
-## 9. Optional: Slack End-to-End
+## 10. Optional: Slack End-to-End
 
 For slash commands and interactive buttons pointing at local n8n:
 
@@ -490,7 +626,7 @@ For slash commands and interactive buttons pointing at local n8n:
 
 ---
 
-## 10. Debugging Reference
+## 11. Debugging Reference
 
 ### Service starts but requests fail with 401 or 403
 
@@ -522,9 +658,9 @@ Confirm `GOVERNANCE_PATH=../governance` (relative to `platform/backend-api/`). V
 
 ---
 
-## 11. Local Profile Reference
+## 12. Local Profile Reference
 
-### 11.1 Profile A — Fast backend debug
+### 12.1 Profile A — Fast backend debug
 
 Use when developing API logic, role scripts, or execution pipeline behavior.
 
@@ -541,7 +677,7 @@ Test with `test.echo` script. No LLM, no n8n, no Slack needed.
 
 ---
 
-### 11.2 Profile B — Role execution debug
+### 12.2 Profile B — Role execution debug
 
 Use when testing Planner, Sprint Controller, Implementer, or Verifier role behavior end-to-end.
 
@@ -561,7 +697,7 @@ AZURE_OPENAI_DEPLOYMENT=gpt-4.1
 
 ---
 
-### 11.3 Profile C — Full local orchestration
+### 12.3 Profile C — Full local orchestration
 
 Use when testing pipeline notifications, n8n workflow logic, or Slack integration without Azure.
 
@@ -580,4 +716,24 @@ AZURE_OPENAI_API_KEY=<key>
 AZURE_OPENAI_DEPLOYMENT=gpt-4.1
 ```
 
-Start n8n separately with `EXECUTION_API_BASE_URL=http://localhost:3000`.
+### 12.4 Profile D — Dry-run (no LLM)
+
+Use when validating the pipeline state machine, testing operator gates, or running CI smoke tests without LLM credentials.
+
+```dotenv
+NODE_ENV=development
+DATABASE_URL=postgresql://user:password@localhost:5432/ai_orchestrator_dev_state
+GOVERNANCE_PATH=../governance
+ARTIFACT_BASE_PATH=../../runtime/artifacts
+GIT_CLONE_PATH=../../runtime/git-clones
+GITHUB_TOKEN=<pat>
+DRY_RUN=1
+DRY_RUN_SCENARIO_PATH=../../dry-run-scenarios/happy-path.json
+# DRY_RUN_REPO_ALLOWLIST=adp-dryrun  # optional: restrict to sandbox repo
+```
+
+Or use the convenience script:
+
+```powershell
+.\start-local-server.dryrun.ps1
+```

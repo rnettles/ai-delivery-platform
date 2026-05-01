@@ -54,4 +54,10 @@ export const config = {
   githubApiBaseUrl: process.env.GITHUB_API_BASE_URL ?? "https://api.github.com",
   // GitHub Models (LLM via Copilot subscription) — uses GIT_PAT by default
   llmGitHubModelsApiKey: process.env.LLM_GITHUB_MODELS_API_KEY ?? process.env.GIT_PAT ?? "",
+  // Dry-run mode (workflow validation) — when enabled, all LLM calls are routed
+  // to MockLlmProvider; real git/GitHub/Slack/DB/artifact-FS remain live.
+  // Path is resolved relative to backend-api process cwd.
+  dryRun: ["1", "true"].includes((process.env.DRY_RUN ?? "").trim().toLowerCase()),
+  dryRunScenarioPath: process.env.DRY_RUN_SCENARIO_PATH ?? "",
+  dryRunRepoAllowlist: process.env.DRY_RUN_REPO_ALLOWLIST ?? "",
 };

@@ -2,7 +2,7 @@
 ## AI Delivery Platform — Human Operator Guide
 
 **Audience:** Human operators running the AI delivery pipeline (developers, tech leads)  
-**Last updated:** 2026-04-20  
+**Last updated:** 2026-04-30 (execution modes, dry-run, mode-aware gates)  
 **Authority:** ADR-003 (Hard Stop A), ADR-008 (Human-AI Authority Boundary), ADR-031 (Three-Layer Governance)
 
 ---
@@ -94,6 +94,22 @@ controls all approval decisions.
 │  • Human deploys to production                                          │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## Pipeline Execution Modes
+
+The platform supports three execution modes that control how the pipeline chains roles and when it pauses for operator approval.
+
+| Mode | Planner gate | Role chaining | When to use |
+|---|---|---|---|
+| `next` | `awaiting_approval` after planner | Entry role only — stops after one role | Step-by-step debugging; invoke one role at a time |
+| `next-flow` | `awaiting_approval` after planner | Full chain after each gate approval | **Normal supervised workflow** — operator reviews phase plan, then releases to full execution |
+| `full-sprint` | **Bypassed** — no gate fires | Full chain end-to-end without stops | Dry-run / CI validation; use only with sandbox projects |
+
+> **Gate mechanics (`next-flow`):** After the planner commits the phase plan, the pipeline pauses at `awaiting_approval`. Run `pipeline-approve <id>` (or click ✅ in Slack) to release execution to sprint-controller → implementer → verifier.
+>
+> **`full-sprint` is autonomous** — the planner gate does not fire. Only use `full-sprint` in dry-run mode or with a sandbox project where autonomous commits are safe.
 
 ---
 

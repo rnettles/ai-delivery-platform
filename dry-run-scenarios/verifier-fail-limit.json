@@ -1,0 +1,10 @@
+{
+  "name": "verifier-fail-limit",
+  "description": "Verifier FAILs every time. Pipeline halts in paused_takeover when implementer_attempts reaches MAX_IMPLEMENTER_ATTEMPTS (3).",
+  "default_outcome": "pass",
+  "steps": [
+    { "match": { "role": "verifier", "occurrence": 1 }, "outcome": "fail", "reason": "Synthetic FAIL #1." },
+    { "match": { "role": "verifier", "occurrence": 2 }, "outcome": "fail", "reason": "Synthetic FAIL #2." },
+    { "match": { "role": "verifier", "occurrence": 3 }, "outcome": "fail", "reason": "Synthetic FAIL #3 — limit hit." }
+  ]
+}

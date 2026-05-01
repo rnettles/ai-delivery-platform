@@ -4,6 +4,7 @@ import { logger } from "../logger.service";
 import { AnthropicProvider } from "./anthropic.provider";
 import { GitHubModelsProvider } from "./github-models.provider";
 import { LlmProvider } from "./llm-provider.interface";
+import { MockLlmProvider } from "./mock-llm.provider";
 import { OpenAiCompatProvider } from "./openai-compat.provider";
 
 type ProviderName = "openai-compat" | "anthropic" | "claude-code" | "github-models";
@@ -33,6 +34,15 @@ class LlmFactory {
    * temperature baked in via the role config — callers may override via options.
    */
   async forRole(role: string): Promise<LlmProvider> {
+    if (config.dryRun) {
+      const cacheKey = `mock:${role}`;
+      const cached = this.cache.get(cacheKey);
+      if (cached) return cached;
+      const mock = new MockLlmProvider(role);
+      this.cache.set(cacheKey, mock);
+      logger.info("LLM factory: DRY_RUN active — returning MockLlmProvider", { role });
+      return mock;
+    }
     const roleConfig = await this.resolveRoleConfig(role);
     return this.instantiate(roleConfig);
   }

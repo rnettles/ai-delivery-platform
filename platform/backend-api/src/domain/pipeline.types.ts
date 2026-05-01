@@ -7,9 +7,11 @@ export type PipelineRole =
 /**
  * Controls how far downstream a pipeline run propagates after the entry role completes.
  *
- * - "next"        — run only the entry role, then stop.
- * - "next-flow"   — chain into role-specific downstream (varies by entry_point).
- * - "full-sprint" — sprint-controller iterates all pending sprint tasks end-to-end.
+ * - "next"        — run only the entry role, then stop. Human gates active (planner → awaiting_approval).
+ * - "next-flow"   — chain into role-specific downstream. Human gates active (planner → awaiting_approval,
+ *                   then operator approves before sprint-controller proceeds).
+ * - "full-sprint" — fully autonomous end-to-end. All human gates bypassed; pipeline runs to
+ *                   awaiting_pr_review without operator intervention.
  */
 export type PipelineMode = "next" | "next-flow" | "full-sprint";
 
@@ -45,6 +47,7 @@ export interface PipelineStepRecord {
   started_at: string;
   completed_at?: string;
   justification?: string;
+  error_message?: string;
 }
 
 export interface PipelineSlackMetadata {

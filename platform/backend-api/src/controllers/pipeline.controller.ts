@@ -534,7 +534,8 @@ async function executeCurrentStep(
       result.execution_id,
       artifactPaths,
       !result.ok,
-      verificationPassed
+      verificationPassed,
+      !result.ok && result.errors?.length ? result.errors[0].message : undefined
     );
 
     // Skip notification on terminal complete — pipeline is done, no actionable gate event.
@@ -571,7 +572,7 @@ async function executeCurrentStep(
 
     // Attempt to mark step as failed in the pipeline
     try {
-      const run = await pipelineService.completeStep(pipelineId, role, "failed", [], true);
+      const run = await pipelineService.completeStep(pipelineId, role, "failed", [], true, undefined, errorMessage);
       await pipelineNotifierService.notify({
         pipeline_id: pipelineId,
         step: run.current_step,

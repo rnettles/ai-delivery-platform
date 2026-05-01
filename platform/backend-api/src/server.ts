@@ -7,6 +7,39 @@ import { pipelineNotifierService } from "./services/pipeline-notifier.service";
 import { prMergePollerService } from "./services/pr-merge-poller.service";
 import { projectService } from "./services/project.service";
 import { artifactService } from "./services/artifact.service";
+import { dryRunScenarioService } from "./services/llm/dry-run-scenario.service";
+
+if (config.dryRun) {
+  dryRunScenarioService.load(config.dryRunScenarioPath || undefined);
+  const snap = dryRunScenarioService.snapshot();
+  logger.warn("┌─────────────────────────────────────────────────────────────┐");
+  logger.warn("│ DRY-RUN MODE ACTIVE — all LLM calls routed to MockProvider │");
+  logger.warn("│ Real git, GitHub, Slack, DB, and artifact-FS remain LIVE.  │");
+  logger.warn("└─────────────────────────────────────────────────────────────┘");
+  logger.warn("Dry-run scenario", { name: snap.name, default_outcome: snap.default_outcome });
+
+  // Sandbox repo guard: block boot when GIT_REPO_URL doesn't match the allowlist
+  // regex. Skip when no allowlist is configured (operator opt-in).
+  if (config.dryRunRepoAllowlist && config.gitRepoUrl) {
+    try {
+      const re = new RegExp(config.dryRunRepoAllowlist);
+      if (!re.test(config.gitRepoUrl)) {
+        logger.error("Dry-run repo allowlist rejected GIT_REPO_URL — refusing to start", {
+          git_repo_url: config.gitRepoUrl,
+          allowlist: config.dryRunRepoAllowlist,
+        });
+        process.exit(1);
+      }
+    } catch (err) {
+      logger.error("Dry-run repo allowlist regex invalid — refusing to start", {
+        allowlist: config.dryRunRepoAllowlist,
+        error: String(err),
+      });
+      process.exit(1);
+    }
+  }
+}
+
 
 app.listen(config.port, () => {
   logger.info("Execution service started", {

@@ -1,0 +1,12 @@
+{
+  "name": "verifier-fail-then-pass",
+  "description": "First verifier run FAILs (forces implementer retry). Second verifier run PASSes — pipeline succeeds.",
+  "default_outcome": "pass",
+  "steps": [
+    {
+      "match": { "role": "verifier", "occurrence": 1 },
+      "outcome": "fail",
+      "reason": "Synthetic lint failure (dry-run scenario)."
+    }
+  ]
+}

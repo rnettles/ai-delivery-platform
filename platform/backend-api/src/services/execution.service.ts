@@ -5,6 +5,8 @@ import { logger } from "./logger.service";
 import { HttpError } from "../utils/http-error";
 import { gitSyncService } from "./git-sync.service";
 import { scriptRunnerService } from "./script-runner.service";
+import { config } from "../config";
+import { dryRunScenarioService } from "./llm/dry-run-scenario.service";
 
 export class ExecutionService {
 	async execute(
@@ -17,6 +19,15 @@ export class ExecutionService {
 		const startedAt = Date.now();
 		const gitSync = gitSyncService.getContext();
 		let resolvedTarget = payload.target;
+
+		// Dry-run: register per-pipeline directives (if any) so the MockLlmProvider
+		// can pick them up via dry-run-scenario.service while this pipeline runs.
+		// Pipeline id == correlation_id by convention across the platform.
+		if (config.dryRun) {
+			const directives = (payload.metadata ?? {})["dry_run_directives"];
+			const pipelineId = payload.correlation_id;
+			if (directives && pipelineId) dryRunScenarioService.registerPipelineDirectives(pipelineId, directives);
+		}
 
 		try {
 			const runResult = await scriptRunnerService.run(payload, {

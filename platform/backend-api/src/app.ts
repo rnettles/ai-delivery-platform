@@ -1,5 +1,6 @@
 import cors from "cors";
 import express from "express";
+import { config } from "./config";
 import executionRoutes from "./routes/execution.routes";
 import coordinationRoutes from "./routes/coordination.routes";
 import gitSyncRoutes from "./routes/git-sync.routes";
@@ -8,6 +9,7 @@ import projectRoutes from "./routes/project.routes";
 import { requestIdMiddleware } from "./middleware/request-id.middleware";
 import { errorMiddleware } from "./middleware/error.middleware";
 import { apiKeyMiddleware } from "./middleware/api-key.middleware";
+import { dryRunScenarioService } from "./services/llm/dry-run-scenario.service";
 
 export const app = express();
 
@@ -17,6 +19,13 @@ app.use(requestIdMiddleware);
 
 app.get("/health", (_req, res) => {
 	res.status(200).json({ status: "ok" });
+});
+
+app.get("/health/dry-run", (_req, res) => {
+	res.status(200).json({
+		dry_run: config.dryRun,
+		scenario: config.dryRun ? dryRunScenarioService.snapshot() : null,
+	});
 });
 
 app.use(apiKeyMiddleware);

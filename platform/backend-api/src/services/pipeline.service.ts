@@ -198,8 +198,10 @@ const ROLE_SEQUENCE: PipelineRole[] = [
   "verifier",
 ];
 
-// Roles that require a human gate before advancing (ADR-030: gates removed for autonomous sprint)
-const GATED_ROLES = new Set<PipelineRole>([]);
+// Roles that require a human gate before advancing.
+// Gates are bypassed in full-sprint mode (fully autonomous).
+// In next / next-flow modes the operator reviews the artifact before the pipeline advances.
+const GATED_ROLES = new Set<PipelineRole>(["planner"]);
 
 // Maximum number of Implementer attempts (initial + retries) before escalation (ADR-030)
 const MAX_IMPLEMENTER_ATTEMPTS = 3;
@@ -755,7 +757,8 @@ export class PipelineService {
     executionId: string,
     artifactPaths: string[],
     failed: boolean,
-    verificationPassed?: boolean
+    verificationPassed?: boolean,
+    errorMessage?: string
   ): Promise<PipelineRun> {
     const run = await this.get(pipelineId);
 
@@ -777,6 +780,7 @@ export class PipelineService {
         execution_id: executionId,
         artifact_paths: artifactPaths,
         completed_at: now,
+        ...(errorMessage ? { error_message: errorMessage } : {}),
       };
 
       return this.save(run, {
@@ -786,8 +790,10 @@ export class PipelineService {
       });
     }
 
-    // Determine if a gate is required
-    const gateRequired = GATED_ROLES.has(role);
+    // Determine if a gate is required.
+    // In full-sprint mode all gates are bypassed so the pipeline runs autonomously end-to-end.
+    const executionMode = run.metadata.execution_mode as string | undefined;
+    const gateRequired = GATED_ROLES.has(role) && executionMode !== "full-sprint";
 
     steps[stepIdx] = {
       ...steps[stepIdx],
@@ -801,6 +807,11 @@ export class PipelineService {
     const nextStep = nextRoleAfter(role);
 
     if (gateRequired) {
+      logger.info("Pipeline paused for operator approval", {
+        pipeline_id: run.pipeline_id,
+        role,
+        execution_mode: executionMode,
+      });
       return this.save(run, {
         current_step: role,
         status: "awaiting_approval",
@@ -812,7 +823,6 @@ export class PipelineService {
     // Stop immediately after the entry role completes — do not advance downstream.
     // Non-verifier roles stop unconditionally. Verifier is handled by PASS/FAIL blocks below,
     // which pause at paused_takeover for operator pipeline-handoff in next mode.
-    const executionMode = run.metadata.execution_mode as string | undefined;
     if (executionMode === "next" && role === run.entry_point && role !== "verifier") {
       logger.info("Pipeline stopping after entry role (mode=next); PR merge gate deferred until sprint close-out", {
         pipeline_id: run.pipeline_id,
