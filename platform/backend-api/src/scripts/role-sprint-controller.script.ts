@@ -613,7 +613,12 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
         const activeDir = path.join(repoBase, "project_work", "ai_project_tasks", "active");
         const archiveSprintId = sprintId || "unknown";
         const archiveTaskId = taskIdForCloseout || "unknown";
-        // Resolve phase_id from current_task.json before the active slot is cleared.
+        // Ensure the clone is clean and on the sprint branch BEFORE reading active/ or writing archive files,
+        // so ensureReady's cleanWorkingTree (git clean -fd) cannot wipe the new files, and
+        // current_task.json is readable from the sprint branch where it was committed.
+        await projectGitService.ensureReady(project);
+        await projectGitService.checkoutBranch(project, run.sprint_branch);
+        // Resolve phase_id from current_task.json (now on the sprint branch where the file exists).
         let archivePhaseId = "MISC";
         try {
           const ct = JSON.parse(await fs.readFile(path.join(activeDir, "current_task.json"), "utf-8"));
@@ -623,10 +628,6 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
           repoBase, "project_work",
           "history", archivePhaseId, archiveSprintId, archiveTaskId
         );
-        // Ensure the clone is clean and on the sprint branch BEFORE writing archive files,
-        // so ensureReady's cleanWorkingTree (git clean -fd) cannot wipe the new files.
-        await projectGitService.ensureReady(project);
-        await projectGitService.checkoutBranch(project, run.sprint_branch);
         await fs.mkdir(taskHistoryDir, { recursive: true });
         for (const filename of ["AI_IMPLEMENTATION_BRIEF.md", "current_task.json", "test_results.json", "verification_result.json"]) {
           try {
