@@ -380,7 +380,9 @@ class GithubApiService {
       per_page: "20",
     });
 
-    const payload = await this.request<Array<{ number: number; url: string; html_url: string; state: string; merged?: boolean }>>(
+    // The list endpoint returns `merged_at` (timestamp or null) not `merged` (boolean).
+    // A PR with a non-null merged_at was merged; one with null was closed/rejected.
+    const payload = await this.request<Array<{ number: number; url: string; html_url: string; state: string; merged_at?: string | null }>>(
       opts.repoUrl,
       `/pulls?${params.toString()}`,
       "GET",
@@ -388,8 +390,8 @@ class GithubApiService {
       { base: opts.base, head: opts.head }
     );
 
-    const merged = payload.find((pr) => pr.merged === true);
-    return merged ? this.mapPullRequest(merged) : null;
+    const merged = payload.find((pr) => pr.merged_at != null);
+    return merged ? this.mapPullRequest({ ...merged, merged: true }) : null;
   }
 
   async findOpenPullRequestByTitle(opts: Omit<GithubPullRequestLookupOptions, "head">): Promise<GithubPullRequest | null> {
