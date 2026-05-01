@@ -8,6 +8,7 @@ vi.mock("../config", () => ({
   config: {
     n8nCallbackUrl: "https://n8n.example.com",
     n8nWebhookPath: "/webhook/pipeline-notify",
+    slackBotToken: "",
   },
 }));
 
@@ -33,8 +34,9 @@ describe("PipelineNotifierService", () => {
     service = new PipelineNotifierService();
     mockFetch = vi.fn();
     vi.stubGlobal("fetch", mockFetch);
-    (config as { n8nCallbackUrl: string; n8nWebhookPath: string }).n8nCallbackUrl = "https://n8n.example.com";
-    (config as { n8nCallbackUrl: string; n8nWebhookPath: string }).n8nWebhookPath = "/webhook/pipeline-notify";
+    (config as { n8nCallbackUrl: string; n8nWebhookPath: string; slackBotToken: string }).n8nCallbackUrl = "https://n8n.example.com";
+    (config as { n8nCallbackUrl: string; n8nWebhookPath: string; slackBotToken: string }).n8nWebhookPath = "/webhook/pipeline-notify";
+    (config as { n8nCallbackUrl: string; n8nWebhookPath: string; slackBotToken: string }).slackBotToken = "";
   });
 
   afterEach(() => {
@@ -76,7 +78,7 @@ describe("PipelineNotifierService", () => {
     await service.notify({ ...baseNotification, step: "verifier", agent_caller: "Verifier" });
 
     expect(logger.info).toHaveBeenCalledWith(
-      "Pipeline notification sent",
+      "Pipeline notification sent via n8n",
       expect.objectContaining({
         pipeline_id: "pipe-2026-04-19-test1234",
         step: "verifier",
@@ -109,12 +111,17 @@ describe("PipelineNotifierService", () => {
     await expect(service.notify(baseNotification)).resolves.toBeUndefined();
   });
 
-  it("skips the call when N8N_CALLBACK_URL is not configured", async () => {
-    (config as { n8nCallbackUrl: string; n8nWebhookPath: string }).n8nCallbackUrl = "";
+  it("skips the call when no transport is configured", async () => {
+    (config as { n8nCallbackUrl: string; slackBotToken: string }).n8nCallbackUrl = "";
+    (config as { n8nCallbackUrl: string; slackBotToken: string }).slackBotToken = "";
 
     await service.notify(baseNotification);
 
     expect(mockFetch).not.toHaveBeenCalled();
+    expect(logger.info).toHaveBeenCalledWith(
+      "No notification transport configured — skipping notification",
+      expect.objectContaining({ pipeline_id: "pipe-2026-04-19-test1234" })
+    );
   });
 
   it("supports webhook-test path override", async () => {

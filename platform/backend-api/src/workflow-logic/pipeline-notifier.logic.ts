@@ -1,9 +1,12 @@
 /**
- * Canonical source for the "Build Slack Message" Code node in platform/workflow/pipeline-notifier.json.
+ * Canonical source for building Slack notification messages.
  *
- * n8n Code nodes cannot import external files, so this file is the tested reference
- * implementation. When changing the workflow Code node, update this file too and
- * vice-versa — the test suite covers this logic.
+ * Originally the reference implementation for the "Build Slack Message" Code node in
+ * platform/workflow/pipeline-notifier.json. With ADR-034, the Execution Service
+ * handles Slack directly — this logic is imported by pipeline-notifier.service.ts.
+ *
+ * The n8n workflow file is retained as a historical artefact but no longer
+ * drives production behaviour.
  */
 
 export interface PipelineNotification {

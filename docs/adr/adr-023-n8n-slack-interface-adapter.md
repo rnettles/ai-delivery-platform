@@ -1,7 +1,7 @@
 # ADR-023: n8n as Slack Interface Adapter
 
 ## Status
-Accepted
+Superseded by ADR-034 (Native Slack Integration)
 
 ## Date
 2026-04-19

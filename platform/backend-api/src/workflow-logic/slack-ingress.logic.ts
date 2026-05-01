@@ -1,9 +1,12 @@
 /**
- * Canonical source for the "Guard & Parse" Code node in platform/workflow/slack-ingress.json.
+ * Canonical source for Slack slash command parsing.
  *
- * n8n Code nodes cannot import external files, so this file is the tested reference
- * implementation. When changing the workflow Code node, update this file too and
- * vice-versa — the test suite covers this logic.
+ * Originally the reference implementation for the "Guard & Parse" Code node in
+ * platform/workflow/slack-ingress.json. With ADR-034, the Execution Service
+ * handles Slack directly — this logic is imported by slack.controller.ts.
+ *
+ * The n8n workflow file is retained as a historical artefact but no longer
+ * drives production behaviour.
  */
 
 /**
