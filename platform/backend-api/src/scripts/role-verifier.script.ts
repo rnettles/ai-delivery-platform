@@ -821,8 +821,8 @@ Be precise and evidence-based. Reference specific artifact content in evidence f
     // JSON task flags
     const jsonMatch = /"task_id"\s*:\s*"([^"]+)"/.exec(briefContent);
     if (jsonMatch) return jsonMatch[1];
-    // Markdown task flags
-    const mdMatch = /\*\*task_id:\*\*\s*(\S+)/.exec(briefContent);
+    // Markdown task flags — accept both `**task_id:**` and `**Task ID:**` formats
+    const mdMatch = /\*\*[Tt]ask[\s_][Ii][Dd]:\*\*\s*(\S+)/i.exec(briefContent);
     if (mdMatch) return mdMatch[1].trim();
     return undefined;
   }
