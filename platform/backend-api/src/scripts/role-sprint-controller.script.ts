@@ -605,9 +605,11 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
           ? project.clone_path
           : path.join(process.cwd(), project.clone_path);
         const activeDir = path.join(repoBase, "project_work", "ai_project_tasks", "active");
+        const archiveSprintId = sprintId || "unknown";
+        const archiveTaskId = taskIdForCloseout || "unknown";
         const taskHistoryDir = path.join(
           repoBase, "project_work", "ai_project_tasks",
-          "history", "task_history", sprintId, taskIdForCloseout
+          "history", "task_history", archiveSprintId, archiveTaskId
         );
         await fs.mkdir(taskHistoryDir, { recursive: true });
         for (const filename of ["AI_IMPLEMENTATION_BRIEF.md", "current_task.json"]) {
@@ -622,10 +624,10 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
         await projectGitService.ensureReady(project);
         await projectGitService.commitAll(
           project, run.sprint_branch,
-          `chore(${sprintId}): archive task ${taskIdForCloseout} to history`
+          `chore(${archiveSprintId}): archive task ${archiveTaskId} to history`
         );
         await projectGitService.push(project, run.sprint_branch);
-        context.notify(`📦 Task ${taskIdForCloseout} archived to \`history/task_history/${sprintId}/${taskIdForCloseout}/\` and active/ cleared`);
+        context.notify(`📦 Task ${archiveTaskId} archived to \`history/task_history/${archiveSprintId}/${archiveTaskId}/\` and active/ cleared`);
       } catch (err) {
         context.log("Sprint Controller: task archive failed (non-fatal)", { error: String(err) });
       }
