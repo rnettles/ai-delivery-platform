@@ -1,0 +1,27 @@
+ Volume in drive C is Local Disk
+ Volume Serial Number is 9E09-4859
+
+ Directory of C:\dev\code\ai-delivery-platform
+
+05/01/2026  03:38 PM    <DIR>          .
+04/30/2026  08:44 PM    <DIR>          ..
+04/30/2026  09:30 PM                83 .api-cli.state.json
+04/26/2026  06:35 AM    <DIR>          .devcontainer
+05/01/2026  03:33 PM    <DIR>          .github
+04/25/2026  09:02 PM               426 .gitignore
+04/22/2026  10:13 PM    <DIR>          .vscode
+05/01/2026  06:51 AM               141 ai-delivery-platform.code-workspace
+04/28/2026  08:06 AM               191 api-cli.bat
+05/01/2026  02:48 PM            52,762 api-cli.ps1
+04/22/2026  05:56 AM               157 build-push-docker.bat
+04/27/2026  09:18 PM    <DIR>          docs
+04/30/2026  04:31 PM    <DIR>          dry-run-scenarios
+04/23/2026  07:55 AM    <DIR>          platform
+05/01/2026  03:38 PM                 0 project-structure.txt
+04/21/2026  11:13 AM    <DIR>          rules-enforcement-audit
+04/22/2026  10:53 PM    <DIR>          runtime
+04/30/2026  08:26 PM             1,613 start-local-server.dryrun.ps1
+04/23/2026  06:59 AM               538 start-local-server.ps1
+04/19/2026  10:37 AM               179 trigger.bat
+              10 File(s)         56,090 bytes
+              10 Dir(s)   7,157,714,944 bytes free
