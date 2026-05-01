@@ -636,7 +636,15 @@ ${designArtifacts}
         base: project.default_branch,
       });
 
-    const remediated = existingBranchPr || existingTitlePr
+    const mergedBranchPr = existingBranchPr || existingTitlePr
+      ? null
+      : await githubApiService.findMergedPullRequestByHead({
+        repoUrl: project.repo_url,
+        head: sprintBranch,
+        base: project.default_branch,
+      });
+
+    const remediated = existingBranchPr || existingTitlePr || mergedBranchPr
       ? null
       : await prRemediationService.createPullRequestWithRecovery(project, {
         title,
@@ -645,13 +653,16 @@ ${designArtifacts}
         base: project.default_branch,
       });
 
-    const pr = existingBranchPr ?? existingTitlePr ?? remediated!.pr;
+    const pr = existingBranchPr ?? existingTitlePr ?? mergedBranchPr ?? remediated!.pr;
 
     const reusedExistingPr = Boolean(existingBranchPr ?? existingTitlePr);
+    const reusedMergedPr = Boolean(mergedBranchPr);
 
     await pipelineService.setPrDetails(pipelineId, pr.number, pr.html_url, sprintBranch);
     if (reusedExistingPr) {
       context.notify(`ℹ️ Reusing existing open PR #${pr.number}: <${pr.html_url}|View Pull Request>`);
+    } else if (reusedMergedPr) {
+      context.notify(`ℹ️ Sprint branch already merged — reusing merged PR #${pr.number}: <${pr.html_url}|View Pull Request>`);
     } else {
       if (remediated?.remediation_performed) {
         context.notify("🛠️ PR create hit a 404 and was auto-remediated (reconcile + push + retry). ");

@@ -367,6 +367,31 @@ class GithubApiService {
     return payload.length > 0 ? this.mapPullRequest(payload[0]) : null;
   }
 
+  async findMergedPullRequestByHead(opts: Omit<GithubPullRequestLookupOptions, "title">): Promise<GithubPullRequest | null> {
+    const { owner } = parseRepoUrl(opts.repoUrl);
+    if (!opts.head) {
+      return null;
+    }
+
+    const params = new URLSearchParams({
+      state: "closed",
+      head: `${owner}:${opts.head}`,
+      ...(opts.base ? { base: opts.base } : {}),
+      per_page: "20",
+    });
+
+    const payload = await this.request<Array<{ number: number; url: string; html_url: string; state: string; merged?: boolean }>>(
+      opts.repoUrl,
+      `/pulls?${params.toString()}`,
+      "GET",
+      undefined,
+      { base: opts.base, head: opts.head }
+    );
+
+    const merged = payload.find((pr) => pr.merged === true);
+    return merged ? this.mapPullRequest(merged) : null;
+  }
+
   async findOpenPullRequestByTitle(opts: Omit<GithubPullRequestLookupOptions, "head">): Promise<GithubPullRequest | null> {
     if (!opts.title) {
       return null;
