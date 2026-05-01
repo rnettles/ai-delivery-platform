@@ -60,4 +60,9 @@ export const config = {
   dryRun: ["1", "true"].includes((process.env.DRY_RUN ?? "").trim().toLowerCase()),
   dryRunScenarioPath: process.env.DRY_RUN_SCENARIO_PATH ?? "",
   dryRunRepoAllowlist: process.env.DRY_RUN_REPO_ALLOWLIST ?? "",
+  // Native Slack integration (ADR-034) — replaces n8n as the Slack adapter
+  // SLACK_BOT_TOKEN: Bot token (xoxb-...) for posting messages to Slack
+  // SLACK_SIGNING_SECRET: Used to verify inbound webhook signatures from Slack
+  slackBotToken: process.env.SLACK_BOT_TOKEN ?? "",
+  slackSigningSecret: process.env.SLACK_SIGNING_SECRET ?? "",
 };

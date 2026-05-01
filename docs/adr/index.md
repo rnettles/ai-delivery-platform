@@ -27,7 +27,7 @@ This directory contains all architectural decisions for the system.
 - ADR-020: Schema Contract Lifecycle Management
 - ADR-021: Conversational Interface and Command Model
 - ADR-022: Multi-Agent Pipeline Execution Model
-- ADR-023: n8n as Slack Interface Adapter
+- ADR-023: n8n as Slack Interface Adapter *(superseded by ADR-034)*
 - ADR-024: Pipeline Human Override and Takeover Model
 - ADR-025: Two-Tier Governance Composition Model
 - ADR-026: Platform-Owned AI Governance Content
@@ -38,3 +38,4 @@ This directory contains all architectural decisions for the system.
 - ADR-031: Three-Layer Governance Authority and Code-Level Invariant Enforcement
 - ADR-032: Planner Next-Mode Auto-Advance After Closeout
 - ADR-033: Deterministic Artifact Contracts and Script-Side Housekeeping
+- ADR-034: Native Slack Integration (Deprecation of n8n as Slack Adapter)
