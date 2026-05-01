@@ -1709,7 +1709,7 @@ switch ($commandName) {
       $resetDirs = @(
         "project_work/ai_project_tasks/staged_phases",
         "project_work/ai_project_tasks/active",
-        "project_work/ai_project_tasks/history"
+        "project_work/history"
       )
 
       $anyRemoved = $false
