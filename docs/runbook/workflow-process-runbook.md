@@ -150,7 +150,8 @@ AI reads approved FRDs and produces a Draft phase plan. Review the plan and clic
 Sprint Controller → Implementer → Verifier run automatically. Approve each gate as prompted.
 
 ### Step 6 — Review and merge PR
-When Verifier posts PASS, review the PR in your Git host and merge.
+When the Sprint Controller posts the PR link in Slack, the pipeline enters `awaiting_pr_review`.
+See [PR Review & Approval](#pr-review--approval) below for a full checklist and step-by-step guide.
 
 ---
 
@@ -268,6 +269,74 @@ scanned by the gate service (`FR_ROOTS` = `docs/functional_requirements`, `docs/
 - [ ] No ADR conflicts remain unresolved in `required_design_artifacts`
 - [ ] TDNs listed as Required are acknowledged (will be drafted before Sprint 1)
 - [ ] Phase scope is appropriate (not over-scoped or under-scoped)
+
+---
+
+## PR Review & Approval
+
+When the Sprint Controller close-out phase finishes, it opens a GitHub Pull Request on the sprint
+feature branch and transitions the pipeline to `awaiting_pr_review`. Slack posts a 🔎 notification
+with the PR link. **Merging the PR is the approval signal** — no separate platform action is needed.
+
+### How the pipeline detects the merge
+
+The Execution Service polls GitHub every 60 seconds for all runs in `awaiting_pr_review`. When the
+PR is detected as merged, the pipeline advances to `complete` automatically.
+
+### Step-by-Step PR Review
+
+1. **Open the PR** using the link posted in Slack or by navigating to the repository's pull requests.
+
+2. **Read the PR body.** The Sprint Controller populates it with:
+   - Sprint ID and task ID(s)
+   - Branch name
+   - Verifier summary (PASS confirmation and test output summary)
+
+3. **Review the diff.** Use the **Files changed** tab in GitHub to inspect every file changed by the
+   Implementer. Pay attention to:
+   - Files that were not declared in the implementation brief (scope drift)
+   - Logic that cannot be traced to an acceptance criterion
+   - Hardcoded secrets or environment-specific values left in code
+   - Tests that were modified to pass rather than logic that was fixed
+
+4. **Check CI status.** Ensure all required status checks (lint, build, test) are green before
+   merging. The Verifier ran these checks before the PR was opened, but CI on the PR also runs
+   them independently.
+
+5. **Approve or request changes.**
+   - **Approve:** Click **Merge pull request**. The platform detects the merge within 60 seconds
+     and closes the pipeline run.
+   - **Request changes:** Add review comments on the PR. The pipeline stays in `awaiting_pr_review`
+     until the PR is merged. Use `/takeover <pipeline-id>` in Slack to take ownership, push
+     corrections to the sprint branch, and merge when satisfied.
+   - **Reject:** Close the PR without merging. Create a new intake item (INT-*) to plan corrective
+     work. The pipeline run will remain in `awaiting_pr_review` indefinitely until the project is
+     archived or manually cancelled.
+
+### PR Review Checklist
+
+> A pre-populated version of this checklist is in `.github/PULL_REQUEST_TEMPLATE.md`.
+
+#### Scope and Traceability
+- [ ] PR title and body reference the correct Sprint ID and Task ID(s)
+- [ ] All changed files fall within the declared task scope (no unexpected files)
+- [ ] Each change traces to an acceptance criterion in `AI_IMPLEMENTATION_BRIEF.md`
+
+#### Code Quality
+- [ ] Code is readable and follows existing conventions in the codebase
+- [ ] No hardcoded secrets, credentials, or environment-specific values
+- [ ] No debugging artifacts left in (e.g., `console.log`, commented-out blocks, `TODO: remove`)
+- [ ] Complexity is appropriate for the task
+
+#### Test Coverage
+- [ ] New or changed behaviour has corresponding tests
+- [ ] Verifier PASS is confirmed (shown in PR body — "Verifier summary")
+- [ ] No existing tests were deleted or disabled without explanation
+
+#### Governance
+- [ ] Changes do not alter an Accepted ADR without a superseding ADR in place
+- [ ] Changes do not modify human-gated approval logic or status fields
+- [ ] No AI-authored artifact has its status promoted beyond `Draft` / `Proposed`
 
 ---
 

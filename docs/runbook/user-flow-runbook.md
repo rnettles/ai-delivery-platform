@@ -202,6 +202,33 @@ You can also omit the ID:
 
 When omitted, the platform returns the latest pipeline for your Slack channel. This is useful when a `next` mode run completes quickly and is no longer in an active state.
 
+### Flow 8 — Reviewing and approving a sprint PR
+
+When the Sprint Controller close-out phase finishes, Slack posts a 🔎 notification:
+
+```
+🔎 Sprint PR opened — waiting for review/merge
+PR #42: feature/task-auth-001-sprint-s01 → main
+https://github.com/org/repo/pull/42
+```
+
+There are no platform buttons at this stage. Review and merge the PR directly in GitHub.
+
+**Step 1 — Open the PR** using the link in Slack.
+
+**Step 2 — Read the PR body.** The Sprint Controller populates it with the Sprint ID, Task ID(s),
+branch name, and the Verifier summary (PASS confirmation).
+
+**Step 3 — Review the diff** in the **Files changed** tab. Check that all changed files were
+declared in the implementation brief (no scope drift), no hardcoded secrets were added, and test
+coverage exists for new behaviour.
+
+**Step 4 — Merge.** Click **Merge pull request**. The platform detects the merge within 60 seconds
+and advances the pipeline to `complete`.
+
+For a full checklist and guidance on requesting changes or escalating, see
+[workflow-process-runbook.md — PR Review & Approval](workflow-process-runbook.md#pr-review--approval).
+
 ---
 
 ## Notification Reference
