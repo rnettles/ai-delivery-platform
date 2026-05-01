@@ -53,6 +53,9 @@ param(
   [string]$DefaultBranch = "main",
   [string]$ChannelId = "",
 
+  # Dry-run reset
+  [string]$RepoName = "",
+
   [switch]$Raw,
   [Alias("h", "?")]
   [switch]$Help
@@ -136,6 +139,7 @@ Other commands:
   coord-query
   coord-archive
   request
+  dryrun-reset
 
 Quick examples:
   ./api-cli.ps1 health
@@ -246,6 +250,14 @@ Details by command:
   request:
     Require: -Method, -Path
     Optional: -BodyJson
+
+  dryrun-reset:
+    Remove all pipeline-generated artifacts from a dry-run sandbox repo and push
+    a clean reset commit so the next run starts from a known good state.
+    Require: -RepoName (e.g. adp-dryrun)
+    Optional: -BaseClonePath (default: runtime/git-clones relative to repo root)
+    Clears: staged_phases/, active/, history/ — preserves .gitkeep placeholders and docs/
+    Example: ./api-cli.ps1 dryrun-reset -RepoName adp-dryrun
 "@
 }
 
@@ -1669,6 +1681,73 @@ switch ($commandName) {
   "coord-archive" {
     Require-Value -Value $CoordinationId -Name "CoordinationId"
     Invoke-Adp -HttpMethod "DELETE" -RelativePath "/coordination/$CoordinationId"
+    break
+  }
+
+  "dryrun-reset" {
+    Require-Value -Value $RepoName -Name "RepoName"
+
+    $repoRoot = $PSScriptRoot
+    $cloneBase = Join-Path $repoRoot "runtime\git-clones"
+    $repoPath = Join-Path $cloneBase $RepoName
+
+    if (-not (Test-Path (Join-Path $repoPath ".git"))) {
+      throw "No git repo found at '$repoPath'. Check -RepoName and ensure the repo is cloned under runtime/git-clones/."
+    }
+
+    Write-Host "Resetting dry-run sandbox repo: $RepoName" -ForegroundColor Cyan
+    Write-Host "  Path: $repoPath"
+
+    Push-Location $repoPath
+    try {
+      # Dirs that accumulate pipeline artifacts between runs
+      $resetDirs = @(
+        "project_work/ai_project_tasks/staged_phases",
+        "project_work/ai_project_tasks/active",
+        "project_work/ai_project_tasks/history"
+      )
+
+      $anyRemoved = $false
+
+      foreach ($dir in $resetDirs) {
+        $dirPath = Join-Path $repoPath $dir
+        if (-not (Test-Path $dirPath)) { continue }
+
+        # Find non-.gitkeep files tracked by git in this dir
+        $tracked = git ls-files $dir 2>&1 | Where-Object { $_ -notmatch '\.gitkeep$' }
+        if ($tracked) {
+          Write-Host "  Removing from $dir`: $($tracked.Count) file(s)" -ForegroundColor Yellow
+          foreach ($f in $tracked) {
+            git rm -f $f | Out-Null
+          }
+          $anyRemoved = $true
+        } else {
+          Write-Host "  $dir - already clean"
+        }
+
+        # Restore .gitkeep if missing
+        $gitkeep = Join-Path $dirPath ".gitkeep"
+        if (-not (Test-Path $gitkeep)) {
+          New-Item -ItemType File -Force -Path $gitkeep | Out-Null
+          git add $gitkeep | Out-Null
+          $anyRemoved = $true
+        }
+      }
+
+      if ($anyRemoved) {
+        git commit -m "chore(dryrun-reset): restore sandbox to known-good baseline"
+        git push
+        Write-Host ""
+        Write-Host "Reset complete. Sandbox is ready for the next dry run." -ForegroundColor Green
+      } else {
+        Write-Host ""
+        Write-Host "Nothing to reset — sandbox is already clean." -ForegroundColor Green
+      }
+    } finally {
+      Pop-Location
+    }
+
+    Write-Result -Result @{ ok = $true; repo = $RepoName; path = $repoPath }
     break
   }
 
