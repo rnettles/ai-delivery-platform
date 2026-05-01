@@ -392,6 +392,7 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
     const canonicalBriefPath = path.join("project_work", "ai_project_tasks", "active", "AI_IMPLEMENTATION_BRIEF.md");
     const currentTask = {
       task_id: stagedSprint.firstTask.task_id,
+      phase_id: stagedSprint.sprintPlan.phase_id,
       title: stagedSprint.firstTask.title,
       description: stagedSprint.firstTask.description,
       assigned_to: "implementer",
