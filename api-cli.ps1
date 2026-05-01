@@ -1700,6 +1700,11 @@ switch ($commandName) {
 
     Push-Location $repoPath
     try {
+      # Always operate on main so cleanup commits land on the canonical baseline
+      git fetch origin | Out-Null
+      git checkout main | Out-Null
+      git reset --hard origin/main | Out-Null
+
       # Dirs that accumulate pipeline artifacts between runs
       $resetDirs = @(
         "project_work/ai_project_tasks/staged_phases",
@@ -1742,6 +1747,25 @@ switch ($commandName) {
       } else {
         Write-Host ""
         Write-Host "Nothing to reset — sandbox is already clean." -ForegroundColor Green
+      }
+
+      # Delete stale feature/* branches so the next run creates them fresh from main
+      $remoteBranches = @(git branch -r 2>&1 | Where-Object { $_ -match 'origin/feature/' } |
+        ForEach-Object { $_.Trim() -replace '^origin/', '' })
+      if ($remoteBranches.Count -gt 0) {
+        Write-Host ""
+        Write-Host "  Deleting $($remoteBranches.Count) stale remote feature branch(es):" -ForegroundColor Yellow
+        foreach ($b in $remoteBranches) {
+          Write-Host "    - $b"
+          git push origin --delete $b 2>&1 | Out-Null
+        }
+        # Clean up local tracking refs
+        git fetch --prune | Out-Null
+        foreach ($b in $remoteBranches) {
+          git branch -D $b 2>&1 | Out-Null
+        }
+      } else {
+        Write-Host "  No stale feature branches to delete."
       }
     } finally {
       Pop-Location
