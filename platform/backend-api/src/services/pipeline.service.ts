@@ -952,12 +952,17 @@ export class PipelineService {
     }
 
     // Sprint Controller close-out phase routing.
-    // Phase 1 (task_close): one completed SC step → await PR merge before Phase 2.
-    // Phase 2 (pr_confirmed): two completed SC steps → hand off to Planner for sprint archiving.
+    // Phase 1 (task_close): one completed SC step after the verifier → await PR merge before Phase 2.
+    // Phase 2 (pr_confirmed): two completed SC steps after the verifier → hand off to Planner for sprint archiving.
+    // NOTE: SC also runs before the verifier (setup). Counting only post-verifier SC steps avoids
+    // treating the setup step as Phase 1, which caused the PR gate to be skipped entirely.
     if (role === "sprint-controller") {
       const verifierPassed = steps.some((s) => s.role === "verifier" && s.status === "complete");
       if (verifierPassed) {
-        const completedScCount = steps.filter((s) => s.role === "sprint-controller" && s.status === "complete").length;
+        const verifierStepIdx = steps.findLastIndex((s) => s.role === "verifier" && s.status === "complete");
+        const completedScCount = steps
+          .slice(verifierStepIdx + 1)
+          .filter((s) => s.role === "sprint-controller" && s.status === "complete").length;
         if (completedScCount === 1) {
           // Phase 1 done — store pending phase token and await PR merge.
           logger.info("Sprint Controller Phase 1 (task_close) complete: awaiting PR merge for Phase 2 (pr_confirmed)", {
