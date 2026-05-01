@@ -612,7 +612,7 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
           "history", "task_history", archiveSprintId, archiveTaskId
         );
         await fs.mkdir(taskHistoryDir, { recursive: true });
-        for (const filename of ["AI_IMPLEMENTATION_BRIEF.md", "current_task.json"]) {
+        for (const filename of ["AI_IMPLEMENTATION_BRIEF.md", "current_task.json", "test_results.json", "verification_result.json"]) {
           try {
             const content = await fs.readFile(path.join(activeDir, filename), "utf-8");
             await fs.writeFile(path.join(taskHistoryDir, filename), content, "utf-8");
@@ -620,6 +620,14 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
           } catch {
             // file may not exist or already archived — non-fatal
           }
+        }
+        try {
+          const activeEntries = await fs.readdir(activeDir);
+          for (const entry of activeEntries.filter(e => /^sprint_plan_.*\.md$/i.test(e))) {
+            await fs.unlink(path.join(activeDir, entry));
+          }
+        } catch {
+          // non-fatal
         }
         await projectGitService.ensureReady(project);
         await projectGitService.commitAll(
