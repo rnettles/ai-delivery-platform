@@ -6,6 +6,7 @@ import coordinationRoutes from "./routes/coordination.routes";
 import gitSyncRoutes from "./routes/git-sync.routes";
 import pipelineRoutes from "./routes/pipeline.routes";
 import projectRoutes from "./routes/project.routes";
+import slackRoutes from "./routes/slack.routes";
 import { requestIdMiddleware } from "./middleware/request-id.middleware";
 import { errorMiddleware } from "./middleware/error.middleware";
 import { apiKeyMiddleware } from "./middleware/api-key.middleware";
@@ -14,7 +15,6 @@ import { dryRunScenarioService } from "./services/llm/dry-run-scenario.service";
 export const app = express();
 
 app.use(cors());
-app.use(express.json({ limit: "1mb" }));
 app.use(requestIdMiddleware);
 
 app.get("/health", (_req, res) => {
@@ -28,7 +28,12 @@ app.get("/health/dry-run", (_req, res) => {
 	});
 });
 
+// Slack routes use their own body parsers (express.raw) for HMAC signature verification
+// and must be registered before apiKeyMiddleware (Slack uses signing secret auth, not API key)
+app.use(slackRoutes);
+
 app.use(apiKeyMiddleware);
+app.use(express.json({ limit: "1mb" }));
 
 app.use(executionRoutes);
 app.use(coordinationRoutes);
