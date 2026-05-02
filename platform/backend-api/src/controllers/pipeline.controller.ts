@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from "express";
-import * as fs from "fs";
 import * as path from "path";
 import { pipelineService } from "../services/pipeline.service";
+import { artifactService } from "../services/artifact.service";
 import { adminOpsService } from "../services/admin-ops.service";
 import { pipelineNotifierService } from "../services/pipeline-notifier.service";
 import { executionService } from "../services/execution.service";
@@ -599,21 +599,22 @@ export async function getPipelineArtifact(req: Request, res: Response, next: Nex
       throw new HttpError(400, "ARTIFACT_PATH_REQUIRED", "Query param 'path' is required");
     }
 
-    // Accept either a bare filename or a full relative path; always resolve to
-    // <artifactBasePath>/<pipelineId>/<filename> (ArtifactService layout).
+    // Normalise to bare filename so the UI only needs to send the name, not the full path.
     const filename = path.basename(artifactParam);
-    const base = path.resolve(config.artifactBasePath);
-    const resolved = path.join(base, pipelineId, filename);
-    if (!resolved.startsWith(base + path.sep) && resolved !== base) {
-      throw new HttpError(400, "INVALID_ARTIFACT_PATH", "Artifact path must be within the artifact base directory");
-    }
 
-    if (!fs.existsSync(resolved)) {
+    // Find the canonical stored path from the pipeline's own step records.
+    // This is the authoritative source and avoids reconstructing a path that
+    // may differ from what ArtifactService wrote (e.g. ../../runtime/artifacts/…).
+    const run = await pipelineService.get(pipelineId);
+    const allArtifactPaths: string[] = run.steps.flatMap((s) => s.artifact_paths ?? []);
+    const storedPath = allArtifactPaths.find((p) => path.basename(p) === filename);
+
+    if (!storedPath) {
       throw new HttpError(404, "ARTIFACT_NOT_FOUND", `Artifact not found: ${filename}`);
     }
 
-    const content = fs.readFileSync(resolved, "utf-8");
-    const ext = path.extname(resolved).toLowerCase();
+    const content = await artifactService.read(storedPath);
+    const ext = path.extname(storedPath).toLowerCase();
 
     if (ext === ".json") {
       res.status(200).json(JSON.parse(content));
