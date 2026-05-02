@@ -41,8 +41,31 @@ export function ActionBar({ pipeline }: ActionBarProps) {
     setSkipJustification("");
   }
 
+  // When awaiting approval, surface which step's gate is pending so the user
+  // knows exactly what Approve will trigger.
+  const approvalContext =
+    pipeline.status === "awaiting_approval" && pipeline.current_step !== "complete"
+      ? pipeline.current_step
+      : null;
+
+  const ROLE_LABEL: Record<string, string> = {
+    planner: "Planner",
+    "sprint-controller": "Sprint Controller",
+    implementer: "Implementer",
+    verifier: "Verifier",
+  };
+
   return (
     <div className="border-b border-gray-200 bg-gray-50 px-6 py-3">
+      {approvalContext && (
+        <div className="mb-2 flex items-center gap-2 text-xs text-yellow-700">
+          <span className="inline-block h-2 w-2 rounded-full bg-yellow-400 animate-pulse" />
+          <span>
+            <span className="font-semibold">{ROLE_LABEL[approvalContext] ?? approvalContext}</span>
+            {" "} gate is complete and awaiting approval before the pipeline continues.
+          </span>
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-3">
         {actions.map((action) => (
           <button

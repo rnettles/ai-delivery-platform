@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useStagedPhases } from "@/hooks/useStagedPhases";
 import { useStagedSprints } from "@/hooks/useStagedSprints";
 import { useStagedTasks } from "@/hooks/useStagedTasks";
@@ -73,9 +73,6 @@ function TaskRow({ task }: { task: StagedTaskRecord }) {
 }
 
 export function StagedWorkPanel({ pipelineId }: StagedWorkPanelProps) {
-  const [open, setOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<Tab>("phases");
-
   const phasesQuery = useStagedPhases(pipelineId);
   const sprintsQuery = useStagedSprints(pipelineId);
   const tasksQuery = useStagedTasks(pipelineId);
@@ -84,6 +81,28 @@ export function StagedWorkPanel({ pipelineId }: StagedWorkPanelProps) {
   const sprintCount = sprintsQuery.data?.sprints.length ?? 0;
   const taskCount = tasksQuery.data?.tasks.length ?? 0;
   const totalCount = phaseCount + sprintCount + taskCount;
+
+  // Auto-open on mount; start open so the panel is immediately visible.
+  const [open, setOpen] = useState(true);
+  const [activeTab, setActiveTab] = useState<Tab>("phases");
+  const [tabAutoSelected, setTabAutoSelected] = useState(false);
+
+  // Once all queries finish loading, pick the best default tab (tasks > sprints > phases).
+  // Only fires once so subsequent user tab clicks are not overridden.
+  useEffect(() => {
+    if (tabAutoSelected) return;
+    if (phasesQuery.isLoading || sprintsQuery.isLoading || tasksQuery.isLoading) return;
+    const best: Tab = taskCount > 0 ? "tasks" : sprintCount > 0 ? "sprints" : "phases";
+    setActiveTab(best);
+    setTabAutoSelected(true);
+  }, [
+    tabAutoSelected,
+    phasesQuery.isLoading,
+    sprintsQuery.isLoading,
+    tasksQuery.isLoading,
+    taskCount,
+    sprintCount,
+  ]);
 
   const tabs: { id: Tab; label: string; count: number }[] = [
     { id: "phases", label: "Phases", count: phaseCount },

@@ -24,6 +24,19 @@ const OUTCOME_STYLE: Record<NonNullable<GateOutcome>, { label: string; classes: 
 };
 
 export function GateCard({ record }: GateCardProps) {
+  // Step completed but gate not yet resolved — awaiting operator approval.
+  if (!record.gate_outcome && record.status === "complete") {
+    return (
+      <div className="mt-3 rounded border border-yellow-300 bg-yellow-50 px-3 py-2 text-xs">
+        <div className="flex items-center gap-2 text-yellow-800">
+          <span className="font-semibold">Gate:</span>
+          <span>Awaiting approval</span>
+          <span className="inline-block h-2 w-2 rounded-full bg-yellow-400 animate-pulse" />
+        </div>
+      </div>
+    );
+  }
+
   if (!record.gate_outcome) return null;
 
   const style = OUTCOME_STYLE[record.gate_outcome];

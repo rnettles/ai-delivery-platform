@@ -1608,6 +1608,37 @@ export class PipelineService {
       }
     }
 
+    // Fall back to the git clone when artifact files are unavailable
+    // (e.g. artifacts were cleaned up after pipeline completion).
+    if (phases.length === 0 && run.project_id) {
+      const project = run.project_id ? await projectService.getById(run.project_id) : null;
+      if (project) {
+        const files = [
+          ...(await this.listRepoMarkdownFiles(project.clone_path, "project_work/ai_project_tasks/staged_phases", /^phase_plan_.*\.md$/i)),
+          ...(await this.listRepoMarkdownFiles(project.clone_path, "project_work/ai_project_tasks/active", /^phase_plan_.*\.md$/i)),
+        ].slice(0, safeLimit);
+        for (const absPath of files) {
+          if (phases.length >= safeLimit) break;
+          try {
+            const markdown = await fs.readFile(absPath, "utf-8");
+            const relPath = this.toRelPath(absPath);
+            const parsed = this.parsePhasePlan(markdown, relPath);
+            const stat = await fs.stat(absPath);
+            phases.push({
+              phase_id: parsed.phase_id,
+              name: parsed.name,
+              status: parsed.status,
+              artifact_path: relPath,
+              sourced_from: "planner",
+              completed_at: new Date(stat.mtimeMs).toISOString(),
+            });
+          } catch {
+            // Skip unreadable files.
+          }
+        }
+      }
+    }
+
     return {
       pipeline_id: run.pipeline_id,
       refreshed_at,
@@ -1643,6 +1674,38 @@ export class PipelineService {
         });
       } catch {
         // Skip unreadable artifacts and continue with remaining entries.
+      }
+    }
+
+    // Fall back to the git clone when artifact files are unavailable
+    // (e.g. artifacts were cleaned up after pipeline completion).
+    if (sprints.length === 0 && run.project_id) {
+      const project = run.project_id ? await projectService.getById(run.project_id) : null;
+      if (project) {
+        const files = [
+          ...(await this.listRepoMarkdownFiles(project.clone_path, "project_work/ai_project_tasks/staged_sprints", /^sprint_plan_.*\.md$/i)),
+          ...(await this.listRepoMarkdownFiles(project.clone_path, "project_work/ai_project_tasks/active", /^sprint_plan_.*\.md$/i)),
+        ].slice(0, safeLimit);
+        for (const absPath of files) {
+          if (sprints.length >= safeLimit) break;
+          try {
+            const markdown = await fs.readFile(absPath, "utf-8");
+            const relPath = this.toRelPath(absPath);
+            const parsed = this.parseSprintPlan(markdown, relPath);
+            const stat = await fs.stat(absPath);
+            sprints.push({
+              sprint_id: parsed.sprint_id,
+              phase_id: parsed.phase_id,
+              name: parsed.name,
+              status: parsed.status,
+              sprint_plan_path: relPath,
+              sourced_from: "sprint-controller",
+              completed_at: new Date(stat.mtimeMs).toISOString(),
+            });
+          } catch {
+            // Skip unreadable files.
+          }
+        }
       }
     }
 
@@ -1690,6 +1753,44 @@ export class PipelineService {
         }
       } catch {
         // Skip unreadable artifacts and continue with remaining entries.
+      }
+    }
+
+    // Fall back to the git clone when artifact files are unavailable
+    // (e.g. artifacts were cleaned up after pipeline completion).
+    if (tasks.length === 0 && run.project_id) {
+      const project = run.project_id ? await projectService.getById(run.project_id) : null;
+      if (project) {
+        const sprintFiles = [
+          ...(await this.listRepoMarkdownFiles(project.clone_path, "project_work/ai_project_tasks/staged_sprints", /^sprint_plan_.*\.md$/i)),
+          ...(await this.listRepoMarkdownFiles(project.clone_path, "project_work/ai_project_tasks/active", /^sprint_plan_.*\.md$/i)),
+        ];
+        for (const absPath of sprintFiles) {
+          if (tasks.length >= safeLimit) break;
+          try {
+            const markdown = await fs.readFile(absPath, "utf-8");
+            const relPath = this.toRelPath(absPath);
+            const parsedSprint = this.parseSprintPlan(markdown, relPath);
+            const parsedTasks = this.parseSprintTasks(markdown);
+            const stat = await fs.stat(absPath);
+            const completedAt = new Date(stat.mtimeMs).toISOString();
+            for (const task of parsedTasks) {
+              if (tasks.length >= safeLimit) break;
+              tasks.push({
+                sprint_id: parsedSprint.sprint_id,
+                phase_id: parsedSprint.phase_id,
+                task_id: task.task_id,
+                label: task.label,
+                status: task.status,
+                sprint_plan_path: relPath,
+                sourced_from: "sprint-controller",
+                completed_at: completedAt,
+              });
+            }
+          } catch {
+            // Skip unreadable files.
+          }
+        }
       }
     }
 
