@@ -420,8 +420,7 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
 
     let handoff: HandoffContract | undefined;
     if (!passed) {
-      // Phase 8.2: pass canonical active brief path so evidence_refs meets PTH-005
-      handoff = this.buildFailHandoff(taskId, failedChecks, governanceResult.handoff, CANONICAL_ACTIVE_BRIEF_PATH);
+      handoff = this.buildFailHandoff(taskId, failedChecks, governanceResult.handoff, brief.path);
     }
 
     const verifiedAt = new Date().toISOString();
@@ -447,33 +446,12 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
 
     // Write human-readable markdown summary — Phase 7.3: derived from same verificationResult
     // object as JSON so both outputs are always consistent (no separate data source).
-    const artifactContent = this.formatMarkdown(verificationResult, handoff, CANONICAL_ACTIVE_BRIEF_PATH);
+    const artifactContent = this.formatMarkdown(verificationResult, handoff, brief.path);
     const artifactPath = await artifactService.write(
       pipelineId,
       "verification_result.md",
       artifactContent
     );
-
-    // Persist verification result to repo (PTH-002 active-slot lifecycle)
-    try {
-      if (project && run.sprint_branch) {
-        const activeDir = path.join("project_work", "ai_project_tasks", "active");
-        const absPath = path.join(repoPath, activeDir, "verification_result.json");
-        await fs.mkdir(path.dirname(absPath), { recursive: true });
-        await fs.writeFile(absPath, JSON.stringify(verificationResult, null, 2), "utf-8");
-        await projectGitService.commitAll(
-          project,
-          run.sprint_branch,
-          `verify(${taskId}): record ${verificationResult.result} result`
-        );
-        await projectGitService.push(project, run.sprint_branch);
-        context.notify(
-          `📊 Verification result committed and pushed from \`${activeDir}/\` on \`${run.sprint_branch}\``
-        );
-      }
-    } catch (err) {
-      context.log("Verifier: failed to persist result to repo (non-fatal)", { error: String(err) });
-    }
 
     context.log("Verifier complete", {
       task_id: taskId,
@@ -487,8 +465,8 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
       verification_result_path: verificationResultPath,
       artifact_path: artifactPath,
       handoff,
-      // Phase 8.2: canonical active brief path in output for downstream PTH-005 compliance
-      brief_path: CANONICAL_ACTIVE_BRIEF_PATH,
+      // ADR-035: brief_path is the pipeline-scoped artifact service path
+      brief_path: brief.path,
     } as VerifierOutput;
   }
 
@@ -500,6 +478,7 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
    * Checks for all 4 required inputs (REV-001) before verification starts.
    * Returns ok=true with resolved artifacts, or ok=false with list of missing inputs.
    * Never synthesises fallback values — callers must treat ok=false as a blocking gate.
+   * ADR-035: reads brief, task, and test_results exclusively from pipeline artifact service.
    */
   private async enforceRequiredInputs(
     previousArtifacts: string[],
@@ -507,33 +486,19 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
   ): Promise<RequiredInputsResult> {
     const missing: string[] = [];
 
-    // When the verifier is the pipeline entry point, previousArtifacts is [] and the
-    // artifact store has nothing. Fall back to the canonical active-slot paths in the
-    // git clone (written there by the implementer on the sprint branch).
-    const ACTIVE_SLOT = path.join("project_work", "ai_project_tasks", "active");
-    const repoFallback = async (filename: string): Promise<{ path: string; content: string } | null> => {
-      const absPath = path.join(repoPath, ACTIVE_SLOT, filename);
-      try {
-        const content = await fs.readFile(absPath, "utf-8");
-        return { path: absPath, content };
-      } catch {
-        return null;
-      }
-    };
-
     const brief = await artifactService.findFirst(
       previousArtifacts.filter((p) => p.includes("AI_IMPLEMENTATION_BRIEF"))
-    ) ?? await repoFallback("AI_IMPLEMENTATION_BRIEF.md");
+    );
     if (!brief) missing.push("AI_IMPLEMENTATION_BRIEF.md");
 
     const task = await artifactService.findFirst(
       previousArtifacts.filter((p) => p.includes("current_task"))
-    ) ?? await repoFallback("current_task.json");
+    );
     if (!task) missing.push("current_task.json");
 
     const testResults = await artifactService.findFirst(
       previousArtifacts.filter((p) => p.includes("test_results"))
-    ) ?? await repoFallback("test_results.json");
+    );
     if (!testResults) missing.push("test_results.json");
 
     // AI_RULES.md must exist on the project repo filesystem
@@ -608,27 +573,6 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
       "verification_result.md",
       this.formatMarkdown(verificationResult, handoff)
     );
-
-    // Persist to repo if possible (best-effort — repoPath already resolved)
-    try {
-      if (project && run.sprint_branch) {
-        const activeDir = path.join("project_work", "ai_project_tasks", "active");
-        const absPath = path.join(repoPath, activeDir, "verification_result.json");
-        await fs.mkdir(path.dirname(absPath), { recursive: true });
-        await fs.writeFile(absPath, JSON.stringify(verificationResult, null, 2), "utf-8");
-        await projectGitService.commitAll(
-          project as Parameters<typeof projectGitService.commitAll>[0],
-          run.sprint_branch,
-          `verify(${taskId}): FAIL — REV-001 input gate`
-        );
-        await projectGitService.push(
-          project as Parameters<typeof projectGitService.push>[0],
-          run.sprint_branch
-        );
-      }
-    } catch {
-      // non-fatal — primary artifact already written above
-    }
 
     return { task_id: taskId, passed: false, verification_result_path: verificationResultPath, artifact_path: artifactPath, handoff };
   }
@@ -1180,11 +1124,6 @@ ${handoffSection}
 // ─────────────────────────────────────────────────────────────────────────────
 // Module-level constants (REV-002 check catalogue)
 // ─────────────────────────────────────────────────────────────────────────────
-
-// Phase 8.2: PTH-005 — canonical active brief path for evidence_refs in FAIL handoffs
-const CANONICAL_ACTIVE_BRIEF_PATH = path.join(
-  "project_work", "ai_project_tasks", "active", "AI_IMPLEMENTATION_BRIEF.md"
-);
 
 const REV002_CHECK_NAMES: { name: string; category: "command" | "governance" | "filesystem" }[] = [
   { name: "task_id_alignment",                category: "filesystem" },  // 1

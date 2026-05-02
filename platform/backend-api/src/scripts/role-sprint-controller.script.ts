@@ -243,8 +243,8 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       `Using project: \`${designInputs.project_name}\``
     );
 
-    // If a task package is already open in active/, reuse it rather than creating a second one.
-    const activeTaskPackage = await this.loadOpenActiveTaskPackage(designInputs.clone_path);
+    // If a task package is already open in this pipeline's artifact namespace, reuse it.
+    const activeTaskPackage = await this.loadOpenActiveTaskPackage(pipelineId, previousArtifacts, designInputs.clone_path);
     if (activeTaskPackage) {
       context.notify(
         `♻️ Task ${activeTaskPackage.firstTask.task_id} in ${activeTaskPackage.sprintPlan.sprint_id} is still open. ` +
@@ -388,15 +388,14 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
     const briefPath = await artifactService.write(pipelineId, "AI_IMPLEMENTATION_BRIEF.md", briefContent);
 
     // Write current_task.json — required by Verifier and Fixer.
-    // Phase 9.1 (PTH-001): brief_path references the canonical active brief path.
-    const canonicalBriefPath = path.join("project_work", "ai_project_tasks", "active", "AI_IMPLEMENTATION_BRIEF.md");
+    // ADR-035: brief_path references the pipeline-scoped artifact service path.
     const currentTask = {
       task_id: stagedSprint.firstTask.task_id,
       title: stagedSprint.firstTask.title,
       description: stagedSprint.firstTask.description,
       assigned_to: "implementer",
       status: "pending",
-      brief_path: canonicalBriefPath,
+      brief_path: briefPath,
       artifacts: [],
     };
     const currentTaskPath = await artifactService.write(
@@ -428,19 +427,10 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       await pipelineService.setSprintBranch(pipelineId, sprintBranch);
       context.notify(`🌿 Branch \`${sprintBranch}\` created and ready`);
 
-      // Persist task package to active/ on the feature branch.
-      // Sprint plan stays in staged_sprints/ — only brief and current_task go in active/.
-      const activeDir = path.join("project_work", "ai_project_tasks", "active");
       const repoBase = path.isAbsolute(project.clone_path)
         ? project.clone_path
         : path.join(process.cwd(), project.clone_path);
-      await fs.mkdir(path.join(repoBase, activeDir), { recursive: true });
-      await fs.writeFile(path.join(repoBase, activeDir, "AI_IMPLEMENTATION_BRIEF.md"), briefContent, "utf-8");
-      await fs.writeFile(
-        path.join(repoBase, activeDir, "current_task.json"),
-        JSON.stringify(currentTask, null, 2),
-        "utf-8"
-      );
+
       // 6.1 (SCT sprint_state): Write sprint_state.json — documents active_task_id for downstream consumers.
       const sprintStateDir = path.join(repoBase, "project_work", "ai_state");
       await fs.mkdir(sprintStateDir, { recursive: true });
@@ -455,6 +445,23 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       );
       await fs.writeFile(path.join(sprintStateDir, "sprint_state.json"), sprintStateContent, "utf-8");
       sprintStatePath = await artifactService.write(pipelineId, "sprint_state.json", sprintStateContent);
+
+      // ADR-035: Write a pointer-only sprint_state.json to active/ for human legibility.
+      // This file is informational only — it is NOT read by any script as a source of task content.
+      const activeDir = path.join("project_work", "ai_project_tasks", "active");
+      await fs.mkdir(path.join(repoBase, activeDir), { recursive: true });
+      const activePointer = JSON.stringify(
+        {
+          pipeline_id: pipelineId,
+          sprint_id: stagedSprint.sprintPlan.sprint_id,
+          task_id: stagedSprint.firstTask.task_id,
+          artifact_path: `artifacts/${pipelineId}/`,
+          started_at: new Date().toISOString(),
+        },
+        null,
+        2
+      );
+      await fs.writeFile(path.join(repoBase, activeDir, "sprint_state.json"), activePointer, "utf-8");
 
       await projectGitService.commitAll(
         project,
@@ -473,7 +480,7 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
           "",
           `Task: **${stagedSprint.firstTask.task_id}** — ${stagedSprint.firstTask.title}`,
           "",
-          "Review the task package in project_work/ai_project_tasks/active/.",
+          `Artifacts: \`artifacts/${pipelineId}/\``,
         ].join("\n"),
         head: sprintBranch,
         base: project.default_branch,
@@ -1118,14 +1125,23 @@ ${fastTrackSection}
     return maxTaskNum + 1;
   }
 
-  private async loadOpenActiveTaskPackage(clonePath: string): Promise<ActiveTaskPackage | null> {
-    const activeDir = path.join(clonePath, "project_work", "ai_project_tasks", "active");
-    const briefPath = path.join(activeDir, "AI_IMPLEMENTATION_BRIEF.md");
-    const currentTaskPath = path.join(activeDir, "current_task.json");
+  private async loadOpenActiveTaskPackage(pipelineId: string, previousArtifacts: string[], clonePath: string): Promise<ActiveTaskPackage | null> {
+    // ADR-035: Read brief and current_task from the pipeline-scoped artifact service path,
+    // not from the shared active/ directory. This ensures each pipeline is isolated.
+    const briefResult = await artifactService.findFirst(
+      previousArtifacts.filter((p) => p.includes("AI_IMPLEMENTATION_BRIEF"))
+    );
+    const taskResult = await artifactService.findFirst(
+      previousArtifacts.filter((p) => p.includes("current_task"))
+    );
+
+    if (!briefResult || !taskResult) {
+      return null;
+    }
 
     try {
-      const briefContent = await fs.readFile(briefPath, "utf-8");
-      const currentTaskContent = await fs.readFile(currentTaskPath, "utf-8");
+      const briefContent = briefResult.content;
+      const currentTaskContent = taskResult.content;
       const currentTask = JSON.parse(currentTaskContent) as {
         task_id?: string;
         title?: string;

@@ -308,9 +308,42 @@ Implement brand tokens.
   });
 
   it("reuses the existing active task package without calling the LLM or creating a branch", async () => {
+    // ADR-035: brief and task must come from previous_artifacts (artifact service)
+    const briefContent = `# AI Implementation Brief
+
+**Task ID:** S01-001
+**Sprint:** S01
+**Phase:** PH-UI-001
+
+## Task Description
+Implement brand tokens.
+
+## Files Likely Affected
+- \`tailwind.config.js\`
+- \`src/styles/globals.css\`
+
+## Acceptance Criteria (Deliverables Checklist)
+- [ ] Add brand tokens
+
+## Task Flags
+- **fr_ids_in_scope:** ["FR-1.1"]
+- **architecture_contract_change:** false
+- **ui_evidence_required:** true
+- **incident_tier:** "none"
+`;
+    const taskContent = JSON.stringify({ task_id: "S01-001", title: "Extend Tailwind CSS theme with brand tokens", description: "Implement brand tokens.", status: "pending" });
+
+    mocks.findFirst.mockImplementation(async (paths: string[]) => {
+      if (paths.some((p) => p.includes("AI_IMPLEMENTATION_BRIEF")))
+        return { path: "artifacts/AI_IMPLEMENTATION_BRIEF.md", content: briefContent };
+      if (paths.some((p) => p.includes("current_task")))
+        return { path: "artifacts/current_task.json", content: taskContent };
+      return null;
+    });
+
     const script = new SprintControllerScript();
     const context = makeContext();
-    const output = await script.run({ pipeline_id: "pipe-1", previous_artifacts: [] }, context);
+    const output = await script.run({ pipeline_id: "pipe-1", previous_artifacts: ["artifacts/AI_IMPLEMENTATION_BRIEF.md", "artifacts/current_task.json"] }, context);
 
     expect(mocks.forRole).not.toHaveBeenCalled();
     expect(mocks.createBranch).not.toHaveBeenCalled();
@@ -1141,13 +1174,21 @@ describe("Phase 9 — Verification and Regression Coverage", () => {
 
   it("9.1 ready_for_verification status is treated as open and blocks fresh staging (reuses package)", async () => {
     // Arrange: active task has status=ready_for_verification (awaiting verifier) — must block
-    mocks.findFirst.mockResolvedValue(null); // no verification_result.json
+    // ADR-035: brief and task must come from previous_artifacts
+    const briefContent = `# AI Implementation Brief\n**Task ID:** S01-001\n**Sprint:** S01\n**Phase:** PH-001\n## Task Description\nDo it.\n## Files Likely Affected\n- \`f.ts\`\n## Acceptance Criteria (Deliverables Checklist)\n- [ ] done\n## Task Flags\n- **fr_ids_in_scope:** []\n- **architecture_contract_change:** false\n- **ui_evidence_required:** false\n- **incident_tier:** "none"`;
+    const taskContent = JSON.stringify({ task_id: "S01-001", status: "ready_for_verification" });
+
+    mocks.findFirst.mockImplementation(async (paths: string[]) => {
+      if (paths.some((p) => p.includes("AI_IMPLEMENTATION_BRIEF")))
+        return { path: "artifacts/AI_IMPLEMENTATION_BRIEF.md", content: briefContent };
+      if (paths.some((p) => p.includes("current_task")))
+        return { path: "artifacts/current_task.json", content: taskContent };
+      return null;
+    });
     mocks.requireRelevantDesignInputs.mockResolvedValue({ sample_files: [], project_name: "demo", clone_path: "C:/repo" });
     mocks.readdir.mockResolvedValue([{ isFile: () => true, name: "sprint_plan_s01.md" }]);
     mocks.readFile.mockImplementation(async (filePath: string) => {
       if (String(filePath).endsWith("sprint_plan_s01.md")) return "# Sprint Plan: S01\n**Phase:** PH-001\n**Name:** In progress\n**Status:** staged\n## Goals\n- g\n## Tasks\n- S01-001";
-      if (String(filePath).endsWith("AI_IMPLEMENTATION_BRIEF.md")) return `# AI Implementation Brief\n**Task ID:** S01-001\n**Sprint:** S01\n**Phase:** PH-001\n## Task Description\nDo it.\n## Files Likely Affected\n- \`f.ts\`\n## Acceptance Criteria (Deliverables Checklist)\n- [ ] done\n## Task Flags\n- **fr_ids_in_scope:** []\n- **architecture_contract_change:** false\n- **ui_evidence_required:** false\n- **incident_tier:** "none"`;
-      if (String(filePath).endsWith("current_task.json")) return JSON.stringify({ task_id: "S01-001", status: "ready_for_verification" });
       throw new Error("ENOENT");
     });
     mocks.get.mockResolvedValue({ project_id: "proj-1" });
@@ -1155,7 +1196,7 @@ describe("Phase 9 — Verification and Regression Coverage", () => {
 
     const script = new SprintControllerScript();
     const context = makeContext();
-    const out = await script.run({ pipeline_id: "pipe-1", previous_artifacts: [] }, context) as Record<string, unknown>;
+    const out = await script.run({ pipeline_id: "pipe-1", previous_artifacts: ["artifacts/AI_IMPLEMENTATION_BRIEF.md", "artifacts/current_task.json"] }, context) as Record<string, unknown>;
 
     // Must reuse existing package (mode=setup due to active task) and NOT call LLM
     expect(mocks.forRole).not.toHaveBeenCalled();
@@ -1166,7 +1207,7 @@ describe("Phase 9 — Verification and Regression Coverage", () => {
 
   // ── 9.1 Canonical brief_path invariant (PTH-001) ─────────────────────────
 
-  it("9.1 current_task.json contains brief_path referencing canonical active brief path", async () => {
+  it("9.1 current_task.json contains brief_path referencing artifact service path (ADR-035)", async () => {
     wireFreshSetup();
 
     const script = new SprintControllerScript();
@@ -1177,24 +1218,24 @@ describe("Phase 9 — Verification and Regression Coverage", () => {
     const written = JSON.parse(writeCall![2] as string);
     expect(written.brief_path).toBeDefined();
     expect(written.brief_path).toContain("AI_IMPLEMENTATION_BRIEF.md");
-    expect(written.brief_path).toContain("active");
-    // Must NOT be task-suffixed
+    // ADR-035: brief_path now points to artifact service path, not active/ directory
     expect(written.brief_path).not.toMatch(/AI_IMPLEMENTATION_BRIEF_S\d/);
   });
 
-  it("9.1 brief_path in current_task.json is also persisted to repo via writeFile", async () => {
+  it("9.1 ADR-035: brief_path in current_task.json uses artifact service path (not repo writeFile)", async () => {
     wireFreshSetup();
 
     const script = new SprintControllerScript();
     await script.run({ pipeline_id: "pipe-1", previous_artifacts: [] }, makeContext());
 
-    const repoWriteCall = mocks.writeFile.mock.calls.find((c: unknown[]) =>
-      String(c[0]).endsWith("current_task.json")
-    );
-    expect(repoWriteCall).toBeDefined();
-    const repoWritten = JSON.parse(repoWriteCall![1] as string);
-    expect(repoWritten.brief_path).toBeDefined();
-    expect(repoWritten.brief_path).toContain("AI_IMPLEMENTATION_BRIEF.md");
+    // ADR-035: current_task.json is written via artifact service, not via fs.writeFile to active/
+    const artifactWriteCall = mocks.write.mock.calls.find((c: unknown[]) => c[1] === "current_task.json");
+    expect(artifactWriteCall).toBeDefined();
+    const written = JSON.parse(artifactWriteCall![2] as string);
+    expect(written.brief_path).toBeDefined();
+    expect(written.brief_path).toContain("AI_IMPLEMENTATION_BRIEF.md");
+    // Must NOT reference the old active/ directory
+    expect(written.brief_path).not.toContain("ai_project_tasks/active");
   });
 
   // ── 9.2 Full 3-phase close-out integration (STOP boundaries) ─────────────
@@ -1279,17 +1320,25 @@ describe("Phase 9 — Verification and Regression Coverage", () => {
     ).rejects.toThrow("implementation_summary");
   });
 
-  it("9.3 active-slot sprint_state.json is (re)initialized on every fresh staging run", async () => {
+  it("9.3 sprint_state.json is (re)initialized on every fresh staging run (ADR-035: two writes)", async () => {
     wireFreshSetup();
 
     const script = new SprintControllerScript();
     await script.run({ pipeline_id: "pipe-1", previous_artifacts: [] }, makeContext());
 
     const stateWrites = mocks.writeFile.mock.calls.filter((c: unknown[]) => String(c[0]).endsWith("sprint_state.json"));
-    expect(stateWrites.length).toBeGreaterThanOrEqual(1);
-    const last = JSON.parse(stateWrites[stateWrites.length - 1][1] as string);
-    expect(last.active_task_id).toBeDefined();
-    expect(last.completed_tasks).toEqual([]);
+    // ADR-035: two sprint_state.json writes: ai_state/ (full state) and active/ (human-legible pointer)
+    expect(stateWrites.length).toBeGreaterThanOrEqual(2);
+
+    // First write is the full state file (ai_state/sprint_state.json)
+    const fullState = JSON.parse(stateWrites[0][1] as string);
+    expect(fullState.active_task_id).toBeDefined();
+    expect(fullState.completed_tasks).toEqual([]);
+
+    // Last write is the pointer (active/sprint_state.json)
+    const pointer = JSON.parse(stateWrites[stateWrites.length - 1][1] as string);
+    expect(pointer.task_id).toBeDefined();
+    expect(pointer.pipeline_id).toBeDefined();
   });
 
   it("9.3 Phase 3 gate rejects stage_next when Phase 2 has not been confirmed (task_close state)", async () => {
