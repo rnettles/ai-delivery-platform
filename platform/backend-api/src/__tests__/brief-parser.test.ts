@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseBrief, parseTaskFlags } from "../utils/brief-parser";
+import { parseBrief, parseTaskFlags, parseExecutionContract } from "../utils/brief-parser";
 
 describe("parseBrief (ADR-033 Phase 1)", () => {
   it("returns empty defaults for an empty document", () => {
@@ -91,5 +91,36 @@ describe("parseTaskFlags (ADR-033 Phase 1)", () => {
     expect(flags.task_id).toBe("TASK-001");
     expect(flags.fr_ids_in_scope).toEqual(["FR-12", "FR-13"]);
     expect(flags.ui_evidence_required).toBe(true);
+  });
+});
+
+describe("parseExecutionContract (Phase 3)", () => {
+  it("returns null when the section is absent", () => {
+    expect(parseExecutionContract("# Brief\n\n## Task Description\nfoo")).toBeNull();
+  });
+
+  it("returns null when the JSON block is malformed", () => {
+    const md = "## Execution Contract\n\n```json\n{not valid json\n```\n";
+    expect(parseExecutionContract(md)).toBeNull();
+  });
+
+  it("extracts a valid contract from a fenced json block", () => {
+    const contract = {
+      contract_version: 1,
+      task_id: "S01-001",
+      sprint_id: "S01",
+      scope: { allowed_paths: ["src/**"], allowed_paths_extra: [], forbidden_actions: ["add_new_routes"] },
+      dependencies: { allowed: [], install_command: "npm install" },
+      commands: { lint: "npm run lint", typecheck: "npm run typecheck", test: "npm run test" },
+      determinism: { idempotent_runtime: "n/a", no_randomness: true, no_external_calls: true },
+      success_criteria: { all_tests_pass: true, lint_pass: true, typecheck_pass: true, no_regressions: true },
+      evidence_required: true,
+      verification_inputs: ["x.json"],
+    };
+    const md = `# Brief\n\n## Execution Contract\n\n\`\`\`json\n${JSON.stringify(contract, null, 2)}\n\`\`\`\n\n## Task Description\nfoo`;
+    const parsed = parseExecutionContract(md);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.task_id).toBe("S01-001");
+    expect(parsed?.scope.forbidden_actions).toContain("add_new_routes");
   });
 });

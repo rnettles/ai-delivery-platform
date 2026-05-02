@@ -12,6 +12,8 @@ import { githubApiService } from "../services/github-api.service";
 import { designInputGateService } from "../services/design-input-gate.service";
 import { HttpError } from "../utils/http-error";
 import { buildProjectPreamble } from "../utils/prompt-preamble";
+import type { RichSprintLlmResponse, TaskSpecification } from "../domain/sprint-plan.types";
+import type { ExecutionContract } from "../domain/execution-contract.types";
 
 export interface SprintControllerInput {
   previous_artifacts?: string[];
@@ -328,26 +330,41 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
     }
 
     // LLM call for task_flags only — Sprint Controller owns gate artifacts (not sprint plan creation).
-    const userContent = [
-      `Sprint plan:\n\n${stagedSprint.sprintPlanContent}`,
-      phasePlanArtifact ? `\nPhase plan:\n\n${phasePlanArtifact.content}` : "",
-      `\nGenerate task flags for task ${stagedSprint.firstTask.task_id}.`,
-    ].join("");
-
-    const _preambleRun = await pipelineService.get(pipelineId);
-    const _preambleProject = _preambleRun.project_id ? await projectService.getById(_preambleRun.project_id) : null;
-    const systemPrompt = buildProjectPreamble(_preambleProject) + await governanceService.getComposedPrompt("sprint-controller");
-    const provider = await llmFactory.forRole("sprint-controller");
-    const llm = await provider.chatJson<TaskFlagsLlmResponse>(
-      [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userContent },
-      ],
-      { meta: { role: "sprint-controller", pipeline_id: pipelineId, call_type: "task-flags" } }
+    // Phase 3 (deterministic staging): if the staged plan is rich and includes a task_specifications
+    // entry for the staged task, skip the LLM call and use those flags + execution_contract directly.
+    const richSpec: TaskSpecification | undefined = stagedSprint.rich?.task_specifications.find(
+      (s) => s.task_id === stagedSprint.firstTask.task_id
     );
 
-    // Phase 5.1 (TFC-001): Validate required task flags before brief emission.
-    validateRequiredTaskFlags(llm.task_flags);
+    let taskFlagsValue: TaskFlags;
+    if (richSpec) {
+      taskFlagsValue = richSpec.task_flags;
+      context.log("Sprint Controller: deterministic staging path (rich plan, no LLM task_flags call)", {
+        task_id: stagedSprint.firstTask.task_id,
+      });
+    } else {
+      const userContent = [
+        `Sprint plan:\n\n${stagedSprint.sprintPlanContent}`,
+        phasePlanArtifact ? `\nPhase plan:\n\n${phasePlanArtifact.content}` : "",
+        `\nGenerate task flags for task ${stagedSprint.firstTask.task_id}.`,
+      ].join("");
+
+      const _preambleRun = await pipelineService.get(pipelineId);
+      const _preambleProject = _preambleRun.project_id ? await projectService.getById(_preambleRun.project_id) : null;
+      const systemPrompt = buildProjectPreamble(_preambleProject) + await governanceService.getComposedPrompt("sprint-controller");
+      const provider = await llmFactory.forRole("sprint-controller");
+      const llm = await provider.chatJson<TaskFlagsLlmResponse>(
+        [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userContent },
+        ],
+        { meta: { role: "sprint-controller", pipeline_id: pipelineId, call_type: "task-flags" } }
+      );
+
+      // Phase 5.1 (TFC-001): Validate required task flags before brief emission.
+      validateRequiredTaskFlags(llm.task_flags);
+      taskFlagsValue = llm.task_flags;
+    }
 
     // Phase 5.3 (SCT-005, GTR-003, RUL-008): Parse execution mode and enforce fast-track prerequisites.
     const isFastTrack = stagedSprint.sprintPlan.execution_mode === "fast-track";
@@ -356,7 +373,7 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
     }
 
     // UX gate: user_flow.md must be Approved before staging any user-facing sprint (AI_RULES.md UX Artifact Rules)
-    if (llm.task_flags?.ui_evidence_required === true) {
+    if (taskFlagsValue?.ui_evidence_required === true) {
       const uxFlowPath = path.join(
         designInputs.clone_path,
         "project_work", "ai_project_tasks", "active", "ux", "user_flow.md"
@@ -387,7 +404,17 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
 
     // Write AI_IMPLEMENTATION_BRIEF.md — the Implementer's source of truth.
     // Phase 5.4 (SCT-005): isFastTrack controls Fast Track Controls block injection.
-    const briefContent = this.formatBrief(stagedSprint.firstTask, llm.task_flags, stagedSprint.sprintPlan, isFastTrack);
+    // Phase 3 (deterministic staging): when richSpec is present, brief gains Section 0
+    // (Execution Contract JSON) plus filtered Data Contracts / Invariants / Test Matrix.
+    const briefContent = this.formatBrief(
+      stagedSprint.firstTask,
+      taskFlagsValue,
+      stagedSprint.sprintPlan,
+      isFastTrack,
+      richSpec && stagedSprint.rich
+        ? { spec: richSpec, plan: stagedSprint.rich }
+        : undefined
+    );
     const briefPath = await artifactService.write(pipelineId, "AI_IMPLEMENTATION_BRIEF.md", briefContent);
 
     // Write current_task.json — required by Verifier and Fixer.
@@ -513,7 +540,7 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       brief_path: briefPath,
       current_task_path: currentTaskPath,
       sprint_state_path: sprintStatePath,
-      task_flags: llm.task_flags,
+      task_flags: taskFlagsValue,
       first_task: stagedSprint.firstTask,
       sprint_branch: sprintBranch,
       pr_number: prNumber,
@@ -874,10 +901,23 @@ ${firstTask.acceptance_criteria.map((c) => `- ${c}`).join("\n")}
 `;
   }
 
-  private formatBrief(task: SprintTask, flags: TaskFlags, sprint: SprintPlan, isFastTrack: boolean): string {
+  private formatBrief(
+    task: SprintTask,
+    flags: TaskFlags,
+    sprint: SprintPlan,
+    isFastTrack: boolean,
+    rich?: { spec: TaskSpecification; plan: RichSprintLlmResponse }
+  ): string {
     const flagLines = Object.entries(flags)
       .map(([k, v]) => `- **${k}:** ${JSON.stringify(v)}`)
       .join("\n");
+
+    // Phase 3 (deterministic staging): when a rich plan + spec is provided, prepend
+    // Section 0 (Execution Contract — non-negotiable) and append filtered detail sections.
+    const executionContractSection = rich
+      ? this.formatExecutionContractSection(rich.spec.execution_contract)
+      : "";
+    const richDetailSections = rich ? this.formatRichDetailSections(rich.spec, rich.plan) : "";
 
     // Phase 5.4 (SCT-005): Inject Fast Track Controls block when execution mode is fast-track.
     const fastTrackSection = isFastTrack
@@ -900,7 +940,7 @@ ${firstTask.acceptance_criteria.map((c) => `- ${c}`).join("\n")}
 **Task ID:** ${task.task_id}
 **Sprint:** ${sprint.sprint_id}
 **Phase:** ${sprint.phase_id}
-
+${executionContractSection}
 ## Task Description
 ${task.description}
 
@@ -919,12 +959,88 @@ ${fastTrackSection}
 - Add tests for all new behaviour
 - Do not refactor unrelated code
 - Do not implement future sprint tasks
-
+${richDetailSections}
 ## Required Reads Before Coding
 - \`ai_dev_stack/ai_guidance/AI_RULES.md\`
 - \`ai_dev_stack/ai_guidance/AI_RUNTIME_POLICY.md\`
 - \`ai_dev_stack/ai_guidance/AI_RUNTIME_GATES.md\`
 `;
+  }
+
+  /**
+   * Phase 3 (deterministic staging): emits the binding **Execution Contract** section as
+   * a fenced ```json block. Implementer and Verifier extract this with
+   * `parseExecutionContract` from `utils/brief-parser`.
+   */
+  private formatExecutionContractSection(contract: ExecutionContract): string {
+    return `
+## Execution Contract
+
+> **Binding.** This contract is the source of truth for scope, dependencies, commands,
+> determinism, and success criteria for this task. The Implementer's tool layer enforces
+> it; the Verifier checks against it. Do NOT exceed scope or alter forbidden actions.
+
+\`\`\`json
+${JSON.stringify(contract, null, 2)}
+\`\`\`
+`;
+  }
+
+  /**
+   * Phase 3 (deterministic staging): emits filtered Data Contracts, Invariants, Test Matrix,
+   * and Dependencies Closed sections — scoped to references declared on the task spec.
+   */
+  private formatRichDetailSections(spec: TaskSpecification, plan: RichSprintLlmResponse): string {
+    const out: string[] = [];
+
+    const refContracts = plan.sprint_plan.data_contracts.filter((c) => spec.contract_refs.includes(c.name));
+    if (refContracts.length > 0) {
+      out.push("## Data Contracts");
+      out.push("");
+      for (const c of refContracts) {
+        out.push(`### ${c.name} (${c.kind})`);
+        out.push("");
+        out.push("```json");
+        out.push(JSON.stringify(c.json_schema, null, 2));
+        out.push("```");
+        out.push("");
+      }
+    }
+
+    const refInvariants = plan.sprint_plan.invariants.filter((i) => spec.invariant_refs.includes(i.id));
+    if (refInvariants.length > 0) {
+      out.push("## Invariants");
+      out.push("");
+      out.push("| ID | Statement | Testable via |");
+      out.push("|---|---|---|");
+      for (const i of refInvariants) {
+        out.push(`| ${i.id} | ${i.statement.replace(/\|/g, "\\|")} | ${i.testable_via.replace(/\|/g, "\\|")} |`);
+      }
+      out.push("");
+    }
+
+    const refTests = plan.sprint_plan.test_matrix.filter((t) => t.task_id === spec.task_id || spec.test_refs.includes(t.task_id));
+    if (refTests.length > 0) {
+      out.push("## Test Matrix");
+      out.push("");
+      out.push("| Task | Normal | Edge | Failure | Idempotency |");
+      out.push("|---|---|---|---|---|");
+      for (const t of refTests) {
+        out.push(
+          `| ${t.task_id} | ${(t.normal ?? []).join("; ") || "—"} | ${(t.edge ?? []).join("; ") || "—"} | ${(t.failure ?? []).join("; ") || "—"} | ${(t.idempotency ?? []).join("; ") || "—"} |`
+        );
+      }
+      out.push("");
+    }
+
+    if (spec.depends_on.length > 0) {
+      out.push("## Dependencies Closed");
+      out.push("");
+      out.push(`This task depends on (must be complete): ${spec.depends_on.map((d) => `\`${d}\``).join(", ")}`);
+      out.push("");
+    }
+
+    return out.length === 0 ? "" : "\n" + out.join("\n");
   }
 
   /**
@@ -994,6 +1110,7 @@ ${fastTrackSection}
     firstTask: SprintTask;
     sprintPlanContent: string;
     sprintPlanName: string;
+    rich: RichSprintLlmResponse | null;
   } | null> {
     const stagedSprintsDir = path.join(clonePath, "project_work", "ai_project_tasks", "staged_sprints");
     try {
@@ -1009,13 +1126,69 @@ ${fastTrackSection}
       const content = await fs.readFile(selectedPath, "utf-8");
       const filename = selectedEntry.name;
       const sprintPlan = this.parseActiveSprintPlan(content, filename, "");
-      const firstTask = this.parseFirstTaskFromSprintPlan(content);
+
+      // Phase 3: Load rich JSON sidecar if Planner wrote one (rich path).
+      const jsonSidecarPath = selectedPath.replace(/\.md$/i, ".json");
+      let rich: RichSprintLlmResponse | null = null;
+      try {
+        const rawJson = await fs.readFile(jsonSidecarPath, "utf-8");
+        const parsed = JSON.parse(rawJson) as RichSprintLlmResponse;
+        if (parsed && typeof parsed === "object" && parsed.plan_version === 1) {
+          rich = parsed;
+        }
+      } catch {
+        // No sidecar → fall through to legacy markdown parsing.
+      }
+
+      let firstTask: SprintTask | null;
+      if (rich) {
+        // Pick the next task: first_task_id, or the first task in tasks[] whose dependencies are satisfied
+        // (Phase 3 deterministic staging — completed_tasks integration is handled at higher levels).
+        const nextTaskId = this.pickNextTaskId(rich, []);
+        const spec = rich.task_specifications.find((s) => s.task_id === nextTaskId);
+        if (spec) {
+          firstTask = this.specToSprintTask(spec);
+        } else {
+          firstTask = this.parseFirstTaskFromSprintPlan(content);
+        }
+      } else {
+        firstTask = this.parseFirstTaskFromSprintPlan(content);
+      }
       if (!firstTask) return null;
 
-      return { sprintPlan, firstTask, sprintPlanContent: content, sprintPlanName: filename };
+      return { sprintPlan, firstTask, sprintPlanContent: content, sprintPlanName: filename, rich };
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Phase 3 (deterministic staging): selects the next task to stage from a rich plan.
+   * Strategy: pick the first task in `sprint_plan.tasks` whose `dependency_graph` entry is
+   * fully satisfied by `completedTaskIds`. If none qualifies (or graph is empty), fall back
+   * to `first_task_id`.
+   */
+  private pickNextTaskId(rich: RichSprintLlmResponse, completedTaskIds: string[]): string {
+    const completed = new Set(completedTaskIds);
+    for (const id of rich.sprint_plan.tasks) {
+      if (completed.has(id)) continue;
+      const deps = rich.sprint_plan.dependency_graph[id] ?? [];
+      if (deps.every((d) => completed.has(d))) return id;
+    }
+    return rich.first_task_id;
+  }
+
+  /** Adapt a rich TaskSpecification into the legacy SprintTask shape consumed by downstream code. */
+  private specToSprintTask(spec: TaskSpecification): SprintTask {
+    return {
+      task_id: spec.task_id,
+      title: spec.title,
+      description: spec.description,
+      acceptance_criteria: spec.acceptance_criteria,
+      estimated_effort: spec.estimated_effort,
+      files_likely_affected: spec.files_likely_affected,
+      status: "pending",
+    };
   }
 
   /**

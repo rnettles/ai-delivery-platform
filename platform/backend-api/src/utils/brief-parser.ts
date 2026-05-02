@@ -13,7 +13,10 @@
  *   - `## Design References` — bullet list of repo-relative file paths
  *   - `## Canonical Values` — verbatim text block
  *   - `## Deliverables Checklist` — checklist of file paths
+ *   - `## Execution Contract` — Phase 3 (rich plan): fenced ```json block; binding
  */
+
+import type { ExecutionContract } from "../domain/execution-contract.types";
 
 export interface TaskFlags {
   task_id?: string;
@@ -175,4 +178,27 @@ export function parseBrief(content: string): ParsedBrief {
     deliverables,
     taskFlags: parseTaskFlags(content),
   };
+}
+
+/**
+ * Phase 3 (deterministic staging): extract the Execution Contract block from a brief.
+ *
+ * Looks for a `## Execution Contract` heading followed by a fenced ```json block and
+ * returns the parsed contract. Returns `null` when the section is absent or the block
+ * is malformed (legacy briefs without an execution_contract continue to work).
+ *
+ * Note: this only parses; structural validation should use
+ * `sprintPlanValidatorService.validateExecutionContractValue()` from the validator service.
+ */
+export function parseExecutionContract(content: string): ExecutionContract | null {
+  const headingMatch = /^##\s+Execution Contract\s*$/im.exec(content);
+  if (!headingMatch) return null;
+  const after = content.slice(headingMatch.index + headingMatch[0].length);
+  const fenceMatch = /```json\s*\n([\s\S]*?)\n```/i.exec(after);
+  if (!fenceMatch) return null;
+  try {
+    return JSON.parse(fenceMatch[1]) as ExecutionContract;
+  } catch {
+    return null;
+  }
 }

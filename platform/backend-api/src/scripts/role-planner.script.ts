@@ -465,7 +465,7 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
 
     context.notify("📋 Staging Sprint 1 plan from phase plan...");
 
-    const { content: sprintPlanContent, sprint_id: sprintIdRaw } = await this.generateSprintPlanContent(
+    const { content: sprintPlanContent, sprint_id: sprintIdRaw, rich } = await this.generateSprintPlanContent(
       pipelineId,
       phasePlanContent,
       description,
@@ -474,10 +474,18 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
     );
 
     const sprintPlanFilename = `sprint_plan_${sprintIdRaw.toLowerCase()}.md`;
+    const sprintPlanJsonFilename = `sprint_plan_${sprintIdRaw.toLowerCase()}.json`;
     const repoRelPath = path.join("project_work", "ai_project_tasks", "staged_sprints", sprintPlanFilename);
 
     await fs.mkdir(stagedSprintsDir, { recursive: true });
     await fs.writeFile(path.join(stagedSprintsDir, sprintPlanFilename), sprintPlanContent, "utf-8");
+    if (rich) {
+      await fs.writeFile(
+        path.join(stagedSprintsDir, sprintPlanJsonFilename),
+        JSON.stringify(rich, null, 2),
+        "utf-8"
+      );
+    }
     await projectGitService.ensureReady(project);
     await projectGitService.commitAll(project, project.default_branch, `plan: stage ${sprintIdRaw} sprint plan`);
     await projectGitService.push(project, project.default_branch);
@@ -1071,7 +1079,7 @@ ${designArtifacts}
     const _preambleRun = await pipelineService.get(pipelineId);
     const _preambleProject = _preambleRun.project_id ? await projectService.getById(_preambleRun.project_id) : null;
 
-    const { content: sprintPlanContent, sprint_id: sprintIdRaw, phase_id: phaseIdRaw } =
+    const { content: sprintPlanContent, sprint_id: sprintIdRaw, phase_id: phaseIdRaw, rich } =
       await this.generateSprintPlanContent(
         pipelineId,
         phasePlanContent,
@@ -1096,10 +1104,18 @@ ${designArtifacts}
         ? project.clone_path
         : path.join(process.cwd(), project.clone_path);
       const sprintPlanFilename = `sprint_plan_${sprintIdRaw.toLowerCase()}.md`;
+      const sprintPlanJsonFilename = `sprint_plan_${sprintIdRaw.toLowerCase()}.json`;
       const stagedSprintsDir = path.join(repoBase, "project_work", "ai_project_tasks", "staged_sprints");
       const repoRelPath = path.join("project_work", "ai_project_tasks", "staged_sprints", sprintPlanFilename);
       await fs.mkdir(stagedSprintsDir, { recursive: true });
       await fs.writeFile(path.join(stagedSprintsDir, sprintPlanFilename), sprintPlanContent, "utf-8");
+      if (rich) {
+        await fs.writeFile(
+          path.join(stagedSprintsDir, sprintPlanJsonFilename),
+          JSON.stringify(rich, null, 2),
+          "utf-8"
+        );
+      }
       await projectGitService.ensureReady(project);
       await projectGitService.commitAll(project, project.default_branch, `plan: stage ${sprintIdRaw} sprint plan`);
       await projectGitService.push(project, project.default_branch);
