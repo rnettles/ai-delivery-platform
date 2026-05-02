@@ -11,6 +11,7 @@ import { prRemediationService } from "../services/pr-remediation.service";
 import { githubApiService } from "../services/github-api.service";
 import { designInputGateService } from "../services/design-input-gate.service";
 import { HttpError } from "../utils/http-error";
+import { buildProjectPreamble } from "../utils/prompt-preamble";
 
 export interface SprintControllerInput {
   previous_artifacts?: string[];
@@ -333,7 +334,9 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       `\nGenerate task flags for task ${stagedSprint.firstTask.task_id}.`,
     ].join("");
 
-    const systemPrompt = await governanceService.getComposedPrompt("sprint-controller");
+    const _preambleRun = await pipelineService.get(pipelineId);
+    const _preambleProject = _preambleRun.project_id ? await projectService.getById(_preambleRun.project_id) : null;
+    const systemPrompt = buildProjectPreamble(_preambleProject) + await governanceService.getComposedPrompt("sprint-controller");
     const provider = await llmFactory.forRole("sprint-controller");
     const llm = await provider.chatJson<TaskFlagsLlmResponse>(
       [

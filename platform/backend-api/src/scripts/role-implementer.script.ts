@@ -10,6 +10,7 @@ import { designInputGateService } from "../services/design-input-gate.service";
 import { ToolDefinition, ToolCall } from "../services/llm/llm-provider.interface";
 import { HttpError } from "../utils/http-error";
 import { parseBrief } from "../utils/brief-parser";
+import { buildProjectPreamble } from "../utils/prompt-preamble";
 import { config } from "../config";
 import fs from "fs/promises";
 import path from "path";
@@ -434,7 +435,7 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
         ? `${contextParts.join("\n\n---\n\n")}${repoNote}`
         : `No implementation brief found.${repoNote}`;
 
-    const systemPrompt = await governanceService.getComposedPrompt("implementer");
+    const systemPrompt = buildProjectPreamble(project) + await governanceService.getComposedPrompt("implementer");
     const provider = await llmFactory.forRole("implementer");
 
     // ─── Tool execution state ────────────────────────────────────────────────

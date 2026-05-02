@@ -11,6 +11,7 @@ import { githubApiService } from "../services/github-api.service";
 import { prRemediationService } from "../services/pr-remediation.service";
 import { designInputGateService, EntryMode, DesignInputGateResult } from "../services/design-input-gate.service";
 import { HttpError } from "../utils/http-error";
+import { buildProjectPreamble } from "../utils/prompt-preamble";
 
 export interface PlannerInput {
   description: string;
@@ -299,7 +300,9 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
       (typed.project_context ? `## Additional Project Context\n\n${typed.project_context}\n\n` : "") +
       `## Planning Request\n\n${description}`;
 
-    const systemPrompt = await governanceService.getComposedPrompt("planner");
+    const _preambleRun = await pipelineService.get(pipelineId);
+    const _preambleProject = _preambleRun.project_id ? await projectService.getById(_preambleRun.project_id) : null;
+    const systemPrompt = buildProjectPreamble(_preambleProject) + await governanceService.getComposedPrompt("planner");
     const provider = await llmFactory.forRole("planner");
     const plan = await provider.chatJson<PlannerPhasePlan>([
       { role: "system", content: systemPrompt },
@@ -467,7 +470,7 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
       `Produce a sprint plan for Sprint 1 including the first task detail. ` +
       (description ? `Additional context: ${description}` : "");
 
-    const systemPrompt = await governanceService.getComposedPrompt("sprint-controller");
+    const systemPrompt = buildProjectPreamble(project) + await governanceService.getComposedPrompt("sprint-controller");
     const provider = await llmFactory.forRole("sprint-controller");
     const llm = await provider.chatJson<SprintLlmResponse>(
       [
@@ -1082,7 +1085,9 @@ ${designArtifacts}
       `Produce a sprint plan for Sprint 1 only. Do not generate task briefs or current_task artifacts. ` +
       (description ? `Additional context: ${description}` : "");
 
-    const systemPrompt = await governanceService.getComposedPrompt("sprint-controller");
+    const _preambleRun = await pipelineService.get(pipelineId);
+    const _preambleProject = _preambleRun.project_id ? await projectService.getById(_preambleRun.project_id) : null;
+    const systemPrompt = buildProjectPreamble(_preambleProject) + await governanceService.getComposedPrompt("sprint-controller");
     const provider = await llmFactory.forRole("sprint-controller");
 
     interface SprintLlmResponse {
