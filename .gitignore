@@ -18,3 +18,11 @@ platform/backend-api/docker/.cache
 
 runtime
 platform/.adp-cli.state.json
+
+# Next.js build artifacts
+platform/frontend/.next/
+platform/frontend/out/
+platform/frontend/.vercel/
+platform/frontend/.env*.local
+platform/frontend/next-env.d.ts
+platform/frontend/tsconfig.tsbuildinfo
