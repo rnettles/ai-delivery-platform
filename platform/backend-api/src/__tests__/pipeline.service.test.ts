@@ -748,6 +748,25 @@ describe("PipelineService", () => {
       expect(run.status).toBe("running");
     });
 
+    it("sprint-controller close-out with verifier passed transitions to awaiting_pr_review", async () => {
+      const awaitingRow = makeRow({
+        current_step: "sprint-controller",
+        status: "awaiting_approval",
+        steps: [
+          { role: "verifier", status: "complete", gate_outcome: "auto", artifact_paths: [], actor: "system", started_at: "2026-04-19T00:00:00.000Z", completed_at: "2026-04-19T01:00:00.000Z" },
+          { role: "sprint-controller", status: "running", gate_outcome: null, artifact_paths: [], actor: "system", started_at: "2026-04-19T01:00:00.000Z" },
+        ],
+      });
+      mocks.selectWhere.mockResolvedValueOnce([awaitingRow]);
+      const savedRow = makeRow({ current_step: "complete", status: "awaiting_pr_review" });
+      mocks.updateReturning.mockResolvedValueOnce([savedRow]);
+
+      const run = await service.approve("pipe-2026-04-19-test1234", "user-1");
+
+      expect(run.current_step).toBe("complete");
+      expect(run.status).toBe("awaiting_pr_review");
+    });
+
     it("throws 409 if pipeline is not awaiting_approval", async () => {
       mocks.selectWhere.mockResolvedValueOnce([makeRow({ status: "running" })]);
 

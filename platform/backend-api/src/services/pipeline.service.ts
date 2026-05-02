@@ -1014,6 +1014,17 @@ export class PipelineService {
 
     steps[stepIdx] = { ...steps[stepIdx], gate_outcome: "approved", actor };
 
+    // Sprint Controller task close-out: if verifier already passed, transition to
+    // awaiting_pr_review instead of following NEXT_ROLE (which maps sprint-controller→implementer).
+    // Mirrors the same check in advanceStep() to handle the operator-approval path consistently.
+    if (run.current_step === "sprint-controller") {
+      const verifierPassed = steps.some((s) => s.role === "verifier" && s.status === "complete");
+      if (verifierPassed) {
+        steps[stepIdx] = { ...steps[stepIdx], gate_outcome: "awaiting_pr_review" };
+        return this.saveAndMaybeCleanup(run, { current_step: "complete", status: "awaiting_pr_review", steps });
+      }
+    }
+
     const next = nextRoleAfter(run.current_step as PipelineRole);
 
     if (next === "complete") {
