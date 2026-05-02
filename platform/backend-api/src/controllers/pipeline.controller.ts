@@ -593,11 +593,16 @@ async function executeCurrentStep(
 export async function getPipelineArtifact(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const pipelineId = String(req.params.pipelineId);
-    const artifactPath = String(req.query.path ?? "");
+    const artifactParam = String(req.query.path ?? "");
 
-    if (!artifactPath) {
+    if (!artifactParam) {
       throw new HttpError(400, "ARTIFACT_PATH_REQUIRED", "Query param 'path' is required");
     }
+
+    // Accept either a bare filename or a full relative path.
+    // Resolve to <artifactBasePath>/artifacts/<pipelineId>/<filename>.
+    const filename = path.basename(artifactParam);
+    const artifactPath = path.join("artifacts", pipelineId, filename);
 
     // Resolve and validate the path stays within the artifact base directory
     const base = path.resolve(config.artifactBasePath);
@@ -606,14 +611,8 @@ export async function getPipelineArtifact(req: Request, res: Response, next: Nex
       throw new HttpError(400, "INVALID_ARTIFACT_PATH", "Artifact path must be within the artifact base directory");
     }
 
-    // Verify the artifact belongs to this pipeline
-    const pipelinePrefix = path.join("artifacts", pipelineId);
-    if (!artifactPath.startsWith(pipelinePrefix)) {
-      throw new HttpError(403, "ARTIFACT_PIPELINE_MISMATCH", "Artifact does not belong to the specified pipeline");
-    }
-
     if (!fs.existsSync(resolved)) {
-      throw new HttpError(404, "ARTIFACT_NOT_FOUND", `Artifact not found: ${artifactPath}`);
+      throw new HttpError(404, "ARTIFACT_NOT_FOUND", `Artifact not found: ${filename}`);
     }
 
     const content = fs.readFileSync(resolved, "utf-8");
