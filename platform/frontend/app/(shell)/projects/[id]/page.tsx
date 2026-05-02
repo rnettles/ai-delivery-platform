@@ -4,6 +4,17 @@ import { useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 import { useProject } from "@/hooks/useProject";
+import { useProjectPipelines } from "@/hooks/useProjectPipelines";
+import { OpenPipelineCard } from "@/components/pipeline/OpenPipelineCard";
+import { LiveBadge } from "@/components/LiveBadge";
+import type { PipelineStatus } from "@/types";
+
+const OPEN_STATUSES: PipelineStatus[] = [
+  "running",
+  "awaiting_approval",
+  "awaiting_pr_review",
+  "paused_takeover",
+];
 
 type EntryPoint = "planner" | "sprint-controller" | "implementer" | "verifier";
 type ExecutionMode = "next" | "next-flow" | "full-sprint";
@@ -19,6 +30,8 @@ export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const { data: project, isLoading, isError } = useProject(id);
+  const { data: pipelines, isLive } = useProjectPipelines(id);
+  const openPipelines = (pipelines ?? []).filter((p) => OPEN_STATUSES.includes(p.status));
 
   const [form, setForm] = useState<CreatePipelineForm>({
     entry_point: "planner",
@@ -80,14 +93,43 @@ export default function ProjectDetailPage() {
   }
 
   return (
-    <div className="p-8 max-w-3xl">
+    <div className="p-8 max-w-4xl">
       {/* Header */}
       <div className="mb-6">
-        <Link href="/projects" className="text-sm text-gray-500 hover:text-gray-700">
-          ← Projects
-        </Link>
-        <h1 className="text-2xl font-semibold mt-1">{project.name}</h1>
+        <h1 className="text-2xl font-semibold">{project.name}</h1>
+        <p className="text-sm text-gray-500 mt-0.5">{project.repo_url}</p>
       </div>
+
+      {/* Open Pipelines */}
+      <section className="mb-8">
+        <div className="mb-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-600">
+              Open Pipelines
+            </h2>
+            {openPipelines.length > 0 && <LiveBadge active={isLive} />}
+          </div>
+          <Link
+            href={`/projects/${id}/pipelines`}
+            className="text-xs text-gray-400 hover:text-gray-700 underline-offset-2 hover:underline"
+          >
+            Inactive Pipelines →
+          </Link>
+        </div>
+
+        {openPipelines.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-6 py-8 text-center">
+            <p className="text-sm text-gray-400">No active pipelines right now.</p>
+            <p className="text-xs text-gray-400 mt-1">Create one below or view inactive history →</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {openPipelines.map((pipeline) => (
+              <OpenPipelineCard key={pipeline.pipeline_id} pipeline={pipeline} />
+            ))}
+          </div>
+        )}
+      </section>
 
       {/* Metadata */}
       <section className="mb-6 rounded-lg border border-gray-200 bg-white p-5">
@@ -112,16 +154,6 @@ export default function ProjectDetailPage() {
           <MetaRow label="Updated" value={new Date(project.updated_at).toLocaleString()} />
         </dl>
       </section>
-
-      {/* Navigation */}
-      <div className="mb-8">
-        <Link
-          href={`/projects/${id}/pipelines`}
-          className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-        >
-          View Pipelines →
-        </Link>
-      </div>
 
       {/* Create Pipeline Form */}
       <section className="rounded-lg border border-gray-200 bg-white p-5">

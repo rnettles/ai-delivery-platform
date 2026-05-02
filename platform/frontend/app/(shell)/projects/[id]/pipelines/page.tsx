@@ -52,15 +52,9 @@ function PipelineRow({ pipeline }: { pipeline: PipelineStatusChoice }) {
   );
 }
 
-const STATUS_ORDER: PipelineStatus[] = [
-  "running",
-  "awaiting_approval",
-  "awaiting_pr_review",
-  "paused_takeover",
-  "failed",
-  "complete",
-  "cancelled",
-];
+const INACTIVE_STATUSES: PipelineStatus[] = ["failed", "complete", "cancelled"];
+
+const STATUS_ORDER: PipelineStatus[] = ["failed", "complete", "cancelled"];
 
 const FILTER_LABEL: Record<PipelineStatus, string> = {
   running: "Running",
@@ -78,7 +72,8 @@ interface PageProps {
 
 export default function ProjectPipelinesPage({ params }: PageProps) {
   const { id } = use(params);
-  const { data: pipelines, isLoading, isError, isLive } = useProjectPipelines(id);
+  const { data: allPipelines, isLoading, isError, isLive } = useProjectPipelines(id);
+  const pipelines = (allPipelines ?? []).filter((p) => INACTIVE_STATUSES.includes(p.status));
   const [filterStatus, setFilterStatus] = useState<PipelineStatus | null>(null);
 
   if (isLoading) {
@@ -104,17 +99,17 @@ export default function ProjectPipelinesPage({ params }: PageProps) {
     );
   }
 
-  if (!pipelines || pipelines.length === 0) {
+  if (!allPipelines || pipelines.length === 0) {
     return (
       <div className="p-6">
         <div className="mb-4 flex items-center justify-between">
-          <h1 className="text-lg font-semibold text-gray-900">Pipelines</h1>
+          <h1 className="text-lg font-semibold text-gray-900">Inactive Pipelines</h1>
           <Link href={`/projects/${id}`} className="text-xs text-gray-400 hover:text-gray-600">
             ← Back to project
           </Link>
         </div>
         <div className="flex flex-col items-center justify-center py-16 text-center text-sm text-gray-400">
-          No pipelines found for this project.
+          No inactive pipelines yet.
         </div>
       </div>
     );
@@ -138,7 +133,7 @@ export default function ProjectPipelinesPage({ params }: PageProps) {
       <div className="mb-4 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <h1 className="text-lg font-semibold text-gray-900">
-            Pipelines
+            Inactive Pipelines
             <span className="ml-2 text-sm font-normal text-gray-400">
               ({visible.length}{filterStatus ? ` of ${pipelines.length}` : ""})
             </span>

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
+import { useProjects } from "@/hooks/useProjects";
 
 function usePrGateCount() {
   const [count, setCount] = useState(0);
@@ -27,9 +28,14 @@ function usePrGateCount() {
 export function Sidebar() {
   const pathname = usePathname();
   const prGateCount = usePrGateCount();
+  const { data: projects, isLoading: projectsLoading } = useProjects();
+  const [projectsOpen, setProjectsOpen] = useState(true);
 
-  const navItems = [
-    { label: "Projects", href: "/projects" },
+  // Derive the active project id from the current URL
+  const activeProjectMatch = pathname.match(/\/projects\/([^/]+)/);
+  const activeProjectId = activeProjectMatch?.[1] ?? null;
+
+  const bottomNavItems = [
     { label: "PR Gates", href: "/pr-gates", badge: prGateCount > 0 ? prGateCount : null },
     { label: "Logs", href: "/logs" },
   ];
@@ -41,8 +47,53 @@ export function Sidebar() {
           AI Delivery Platform
         </span>
       </div>
+
+      {/* Projects section */}
+      <div className="flex flex-col border-b border-gray-100">
+        <button
+          type="button"
+          onClick={() => setProjectsOpen((v) => !v)}
+          className="flex items-center justify-between px-4 py-2.5 text-xs font-semibold uppercase tracking-widest text-gray-500 hover:text-gray-800 transition-colors"
+        >
+          Projects
+          <span className="text-gray-400">{projectsOpen ? "▲" : "▼"}</span>
+        </button>
+
+        {projectsOpen && (
+          <ul className="flex flex-col pb-2">
+            {projectsLoading && (
+              <li className="px-4 py-2">
+                <div className="h-3 w-28 rounded bg-gray-100 animate-pulse" />
+              </li>
+            )}
+            {!projectsLoading && (!projects || projects.length === 0) && (
+              <li className="px-4 py-2 text-xs text-gray-400">No projects found</li>
+            )}
+            {projects?.map((project) => {
+              const isActive = activeProjectId === project.project_id;
+              return (
+                <li key={project.project_id}>
+                  <Link
+                    href={`/projects/${project.project_id}`}
+                    className={`block truncate px-4 py-1.5 text-sm transition-colors ${
+                      isActive
+                        ? "bg-blue-50 text-blue-700 font-medium"
+                        : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                    }`}
+                    title={project.name}
+                  >
+                    {project.name}
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+
+      {/* Bottom nav */}
       <ul className="flex flex-col gap-1 p-2">
-        {navItems.map((item) => {
+        {bottomNavItems.map((item) => {
           const isActive = pathname.startsWith(item.href);
           return (
             <li key={item.href}>
