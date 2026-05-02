@@ -548,7 +548,7 @@ function PromptFieldsSection({ projectId, promptRole, promptContext }: { project
   }
 
   return (
-    <section className="mb-4 rounded-lg border border-gray-200 bg-white p-4">
+    <div className="border-t border-gray-100 pt-4">
       <div className="flex items-center justify-between mb-3">
         <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
           Agent Prompt Configuration
@@ -630,13 +630,13 @@ function PromptFieldsSection({ projectId, promptRole, promptContext }: { project
           </div>
         </div>
       )}
-    </section>
+    </div>
   );
 }
 
 // ─── Collapsible project metadata ─────────────────────────────────────────────
 
-function ProjectDetails({ project }: { project: { project_id: string; repo_url: string; default_branch: string; clone_path: string; prompt_role?: string | null; prompt_context?: string | null; channel_ids?: string[]; created_at: string; updated_at: string } }) {
+function ProjectDetails({ project, projectId }: { project: { project_id: string; repo_url: string; default_branch: string; clone_path: string; prompt_role?: string | null; prompt_context?: string | null; channel_ids?: string[]; created_at: string; updated_at: string }; projectId: string }) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -651,7 +651,7 @@ function ProjectDetails({ project }: { project: { project_id: string; repo_url: 
       </button>
       {open && (
         <div className="border-t border-gray-100 px-4 pb-4 pt-3">
-          <dl className="space-y-2">
+          <dl className="space-y-2 mb-5">
             <MetaRow label="Project ID" value={project.project_id} mono />
             <MetaRow label="Repo URL" value={project.repo_url} />
             <MetaRow label="Default Branch" value={project.default_branch} mono />
@@ -668,6 +668,7 @@ function ProjectDetails({ project }: { project: { project_id: string; repo_url: 
             <MetaRow label="Created" value={new Date(project.created_at).toLocaleString()} />
             <MetaRow label="Updated" value={new Date(project.updated_at).toLocaleString()} />
           </dl>
+          <PromptFieldsSection projectId={projectId} promptRole={project.prompt_role ?? null} promptContext={project.prompt_context ?? null} />
         </div>
       )}
     </section>
@@ -746,11 +747,8 @@ export default function ProjectDetailPage() {
         )
       )}
 
-      {/* Agent Prompt Configuration */}
-      <PromptFieldsSection projectId={id} promptRole={project.prompt_role ?? null} promptContext={project.prompt_context ?? null} />
-
-      {/* Collapsed project metadata */}
-      <ProjectDetails project={project} />
+      {/* Collapsed project metadata + agent prompt configuration */}
+      <ProjectDetails project={project} projectId={id} />
 
       {/* Footer */}
       <div className="mt-2">
