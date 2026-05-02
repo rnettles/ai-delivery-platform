@@ -41,6 +41,19 @@ app.get("/logs", (_req, res) => {
 	res.json(getLogs(limit));
 });
 
+app.get("/pr-gates", (_req, res) => {
+	const all = getLogs(500);
+	const gateEntries = all.filter((e) => e.message.includes("PR merge gate waiting"));
+	// Deduplicate by pipeline_id — keep the latest entry per pipeline
+	const byPipeline = new Map<string, typeof gateEntries[0]>();
+	for (const entry of gateEntries) {
+		const pid = String(entry.context.pipeline_id ?? "unknown");
+		byPipeline.set(pid, entry);
+	}
+	// Newest first
+	res.json(Array.from(byPipeline.values()).reverse());
+});
+
 app.use(apiKeyMiddleware);
 
 app.use(executionRoutes);

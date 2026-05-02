@@ -76,13 +76,15 @@ export default function LogsPage() {
   }, [entries, autoScroll]);
 
   const visible = filter === "all"
-    ? entries
-    : entries.filter((e) => e.level === filter);
+    ? entries.filter((e) => !e.message.includes("PR merge gate waiting"))
+    : entries.filter((e) => e.level === filter && !e.message.includes("PR merge gate waiting"));
+
+  const filteredEntries = entries.filter((e) => !e.message.includes("PR merge gate waiting"));
 
   const counts = {
-    error: entries.filter((e) => e.level === "error").length,
-    warn:  entries.filter((e) => e.level === "warn").length,
-    info:  entries.filter((e) => e.level === "info").length,
+    error: filteredEntries.filter((e) => e.level === "error").length,
+    warn:  filteredEntries.filter((e) => e.level === "warn").length,
+    info:  filteredEntries.filter((e) => e.level === "info").length,
   };
 
   return (
@@ -165,7 +167,7 @@ export default function LogsPage() {
       <div className="flex-1 overflow-auto font-mono text-xs bg-gray-50">
         {visible.length === 0 ? (
           <div className="flex items-center justify-center h-full text-gray-400 text-sm font-sans">
-            {entries.length === 0 ? "Waiting for log entries…" : "No entries match the selected filter."}
+            {filteredEntries.length === 0 ? "Waiting for log entries…" : "No entries match the selected filter."}
           </div>
         ) : (
           <table className="w-full border-collapse">
