@@ -1,4 +1,5 @@
 import type { PipelineAction, PipelineRun, PipelineStatusChoice } from "@/types";
+import type { ProjectWithChannels } from "@/types/project";
 
 const BACKEND_URL = process.env.BACKEND_URL;
 if (!BACKEND_URL) {
@@ -42,6 +43,18 @@ export async function fetchProjectPipelines(projectId: string): Promise<Pipeline
   const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/pipelines`);
   if (!res.ok) throw new Error("Failed to fetch pipelines");
   return res.json() as Promise<PipelineStatusChoice[]>;
+}
+
+export async function fetchProjects(): Promise<ProjectWithChannels[]> {
+  const res = await fetch("/api/projects");
+  if (!res.ok) throw new Error("Failed to fetch projects");
+  return res.json() as Promise<ProjectWithChannels[]>;
+}
+
+export async function fetchProject(projectId: string): Promise<ProjectWithChannels> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}`);
+  if (!res.ok) throw new Error(`Failed to fetch project ${projectId}`);
+  return res.json() as Promise<ProjectWithChannels>;
 }
 
 /** Maps a PipelineAction to the backend route suffix */

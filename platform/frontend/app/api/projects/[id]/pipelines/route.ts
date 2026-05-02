@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 const BACKEND = process.env.BACKEND_URL ?? "http://localhost:3001";
 
@@ -10,19 +10,23 @@ interface RouteContext {
   params: Promise<{ id: string }>;
 }
 
+/** Fetch the project and return its first channel_id, or null if none assigned. */
+async function resolveChannelId(projectId: string): Promise<{ channelId: string | null; status: number }> {
+  const projectRes = await fetch(`${BACKEND}/projects/${encodeURIComponent(projectId)}`, {
+    cache: "no-store",
+  });
+  if (!projectRes.ok) return { channelId: null, status: projectRes.status };
+  const project = (await projectRes.json()) as { channel_ids?: string[] };
+  return { channelId: project.channel_ids?.[0] ?? null, status: 200 };
+}
+
 export async function GET(_req: Request, { params }: RouteContext) {
   const { id } = await params;
 
-  // Step 1: fetch project to get channel_id
-  const projectRes = await fetch(`${BACKEND}/projects/${encodeURIComponent(id)}`, {
-    cache: "no-store",
-  });
-  if (!projectRes.ok) {
-    return NextResponse.json({ error: "Project not found" }, { status: projectRes.status });
+  const { channelId, status } = await resolveChannelId(id);
+  if (status !== 200) {
+    return NextResponse.json({ error: "Project not found" }, { status });
   }
-  const project = (await projectRes.json()) as { channels?: { channel_id: string }[] };
-
-  const channelId = project.channels?.[0]?.channel_id;
   if (!channelId) {
     return NextResponse.json([]);
   }
@@ -44,4 +48,45 @@ export async function GET(_req: Request, { params }: RouteContext) {
   const body = (await pipelinesRes.json()) as { runs?: unknown[] };
   // Backend returns { channel_id, runs[] } — unwrap to plain array
   return NextResponse.json(body.runs ?? []);
+}
+
+export async function POST(req: NextRequest, { params }: RouteContext) {
+  const { id } = await params;
+
+  const { channelId, status } = await resolveChannelId(id);
+  if (status !== 200) {
+    return NextResponse.json({ error: "Project not found" }, { status });
+  }
+  if (!channelId) {
+    return NextResponse.json({ error: "Project has no channel assigned" }, { status: 422 });
+  }
+
+  const body = (await req.json()) as {
+    entry_point?: string;
+    execution_mode?: string;
+    description?: string;
+    sprint_branch?: string;
+  };
+
+  const pipelineRes = await fetch(`${BACKEND}/pipeline`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      entry_point: body.entry_point ?? "planner",
+      execution_mode: body.execution_mode,
+      sprint_branch: body.sprint_branch || undefined,
+      input: { description: body.description ?? "" },
+      metadata: { source: "api", slack_channel: channelId },
+    }),
+  });
+
+  if (!pipelineRes.ok) {
+    const err = await pipelineRes.json().catch(() => ({})) as { error?: { message?: string } };
+    return NextResponse.json(
+      { error: err.error?.message ?? "Failed to create pipeline" },
+      { status: pipelineRes.status }
+    );
+  }
+
+  return NextResponse.json(await pipelineRes.json(), { status: 202 });
 }
