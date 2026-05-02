@@ -71,12 +71,13 @@ class PrMergePollerService {
         }
 
         if (pr.state !== "open") {
-          logger.warn("PR merge poll: PR is closed but not merged — pipeline is stuck at gate", {
+          logger.warn("PR merge poll: PR is closed but not merged — auto-failing pipeline", {
             pipeline_id: run.pipeline_id,
             pr_number: run.pr_number,
             pr_state: pr.state,
             sprint_branch: run.sprint_branch,
           });
+          await pipelineService.markPrClosed(run.pipeline_id);
           continue;
         }
 

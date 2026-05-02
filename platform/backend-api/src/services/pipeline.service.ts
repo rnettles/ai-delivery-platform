@@ -1136,6 +1136,17 @@ export class PipelineService {
     return this.saveAndMaybeCleanup(run, { status: "complete" });
   }
 
+  /**
+   * Mark the pipeline failed when the sprint PR is closed without being merged.
+   * Called by the PR merge poller when it detects pr.state === "closed" && !pr.merged.
+   */
+  async markPrClosed(pipelineId: string): Promise<PipelineRun> {
+    const run = await this.get(pipelineId);
+    this.assertStatus(run, ["awaiting_pr_review"]);
+    logger.info("Pipeline PR closed without merge — marking failed", { pipeline_id: pipelineId, pr_number: run.pr_number });
+    return this.save(run, { status: "failed" });
+  }
+
   async linkOperation(pipelineId: string, link: PipelineOperationLink): Promise<PipelineRun> {
     const run = await this.get(pipelineId);
     const metadata = (run.metadata ?? {}) as Record<string, unknown>;
