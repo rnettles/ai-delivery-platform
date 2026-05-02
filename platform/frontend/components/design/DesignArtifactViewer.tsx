@@ -23,6 +23,15 @@ function extOf(filePath: string): string {
   return (filePath.split(".").pop() ?? "").toLowerCase();
 }
 
+/** Escapes HTML entities to prevent XSS when inserting JSON content into innerHTML. */
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 function JsonHighlight({ content }: { content: string }) {
   let parsed: unknown;
   try {
@@ -35,12 +44,22 @@ function JsonHighlight({ content }: { content: string }) {
     );
   }
 
-  const highlighted = JSON.stringify(parsed, null, 2).replace(
-    /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
+  // Escape HTML entities in the JSON string before applying syntax-highlight spans,
+  // so that string values containing '<', '>', '"' or '&' cannot inject HTML/script.
+  const escaped = escapeHtml(JSON.stringify(parsed, null, 2));
+
+  // Regex groups:
+  //   1. Quoted strings: &quot;...&quot; where ... may contain unicode escapes or other chars
+  //      - If the match ends with ':', it is an object key (styled differently from a string value)
+  //   2. Boolean literals: true | false
+  //   3. Null literal: null
+  //   4. Numbers: optional leading minus, integer part, optional decimal, optional exponent
+  const highlighted = escaped.replace(
+    /(&quot;(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\&])*&quot;(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
     (match) => {
-      let cls = "text-blue-600";
-      if (/^"/.test(match)) {
-        cls = /:$/.test(match) ? "text-indigo-700 font-semibold" : "text-green-700";
+      let cls = "text-blue-600"; // number
+      if (match.startsWith("&quot;")) {
+        cls = match.endsWith(":") ? "text-indigo-700 font-semibold" : "text-green-700"; // key vs string
       } else if (/true|false/.test(match)) {
         cls = "text-orange-600";
       } else if (/null/.test(match)) {
@@ -53,7 +72,7 @@ function JsonHighlight({ content }: { content: string }) {
   return (
     <pre
       className="whitespace-pre-wrap break-words font-mono text-xs text-gray-800 leading-relaxed"
-      // Safe: content originates from the backend API response we own; only colour spans inserted
+      // Safe: content is HTML-escaped before span tags are inserted; no user-controlled HTML can execute.
       dangerouslySetInnerHTML={{ __html: highlighted }}
     />
   );

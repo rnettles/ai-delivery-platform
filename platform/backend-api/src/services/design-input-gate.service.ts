@@ -162,14 +162,21 @@ export class DesignInputGateService {
       ? project.clone_path
       : path.join(process.cwd(), project.clone_path);
 
-    // Normalise the requested path (strip leading slash, resolve traversal attempts)
-    const normalised = path.normalize(relFilePath).replace(/^(\.\.[/\\])+/, "");
-    const absFile = path.join(repoRoot, normalised);
+    // Normalize and resolve the requested path within repoRoot.
+    // path.normalize resolves internal '..' segments; path.join anchors to repoRoot.
+    const absFile = path.resolve(repoRoot, relFilePath);
 
-    // Security: ensure the resolved path stays within a known design root
+    // Defense in depth: verify the resolved absolute path is still inside repoRoot.
+    const relToRepo = path.relative(repoRoot, absFile);
+    if (relToRepo.startsWith("..") || path.isAbsolute(relToRepo)) {
+      throw new HttpError(403, "PATH_NOT_ALLOWED", "Requested path is outside permitted design roots");
+    }
+
+    // Security: ensure the resolved path falls within one of the known design roots.
+    // Use path.relative() for robust cross-platform comparison instead of startsWith().
     const withinDesignRoot = DESIGN_ROOTS.some((root) => {
-      const absRoot = path.join(repoRoot, root);
-      return absFile.startsWith(absRoot + path.sep) || absFile.startsWith(absRoot + "/");
+      const relToDesignRoot = path.relative(path.join(repoRoot, root), absFile);
+      return !relToDesignRoot.startsWith("..") && !path.isAbsolute(relToDesignRoot);
     });
     if (!withinDesignRoot) {
       throw new HttpError(403, "PATH_NOT_ALLOWED", "Requested path is outside permitted design roots");
@@ -179,7 +186,7 @@ export class DesignInputGateService {
     try {
       raw = await fs.readFile(absFile, "utf-8");
     } catch {
-      throw new HttpError(404, "ARTIFACT_NOT_FOUND", `Design artifact not found: ${relFilePath}`);
+      throw new HttpError(404, "ARTIFACT_NOT_FOUND", `Design artifact not found: ${path.basename(relFilePath)}`);
     }
 
     return {

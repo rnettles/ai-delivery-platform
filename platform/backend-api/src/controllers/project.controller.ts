@@ -1,4 +1,5 @@
 import { NextFunction, Request, Response } from "express";
+import path from "path";
 import { projectService } from "../services/project.service";
 import { designInputGateService } from "../services/design-input-gate.service";
 import { HttpError } from "../utils/http-error";
@@ -159,7 +160,13 @@ export async function getProjectDesignArtifactContent(req: Request, res: Respons
     const { content, ext } = await designInputGateService.readDesignArtifactContent(projectId, filePath);
 
     if (ext === "json") {
-      res.status(200).json(JSON.parse(content));
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(content);
+      } catch {
+        throw new HttpError(500, "ARTIFACT_PARSE_ERROR", `Artifact '${path.basename(filePath)}' is not valid JSON`);
+      }
+      res.status(200).json(parsed);
     } else {
       res.status(200).type("text/plain").send(content);
     }
