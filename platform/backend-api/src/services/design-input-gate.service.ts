@@ -162,9 +162,9 @@ export class DesignInputGateService {
       ? project.clone_path
       : path.join(process.cwd(), project.clone_path);
 
-    // Normalize and resolve the requested path within repoRoot.
-    // path.normalize resolves internal '..' segments; path.join anchors to repoRoot.
-    const absFile = path.resolve(repoRoot, relFilePath);
+    // Resolve the requested path within repoRoot.
+    // path.resolve normalizes '..' segments and anchors to repoRoot.
+    const absFile = path.resolve(repoRoot, path.normalize(relFilePath));
 
     // Defense in depth: verify the resolved absolute path is still inside repoRoot.
     const relToRepo = path.relative(repoRoot, absFile);

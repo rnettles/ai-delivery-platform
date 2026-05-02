@@ -164,7 +164,7 @@ export async function getProjectDesignArtifactContent(req: Request, res: Respons
       try {
         parsed = JSON.parse(content);
       } catch {
-        throw new HttpError(500, "ARTIFACT_PARSE_ERROR", `Artifact '${path.basename(filePath)}' is not valid JSON`);
+        throw new HttpError(422, "ARTIFACT_PARSE_ERROR", `Artifact '${path.basename(filePath)}' is not valid JSON`);
       }
       res.status(200).json(parsed);
     } else {

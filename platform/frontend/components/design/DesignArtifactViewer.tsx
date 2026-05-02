@@ -48,9 +48,13 @@ function JsonHighlight({ content }: { content: string }) {
   // so that string values containing '<', '>', '"' or '&' cannot inject HTML/script.
   const escaped = escapeHtml(JSON.stringify(parsed, null, 2));
 
-  // Regex groups:
-  //   1. Quoted strings: &quot;...&quot; where ... may contain unicode escapes or other chars
-  //      - If the match ends with ':', it is an object key (styled differently from a string value)
+  // Regex groups (applied to HTML-escaped JSON where `"` → `&quot;`):
+  //   1. Quoted strings: &quot;...&quot; where inner chars match:
+  //        \\u[a-zA-Z0-9]{4}  — unicode escape sequence
+  //        \\[^u]             — other backslash escape (e.g. \n, \t)
+  //        [^\\&]             — any char except `\` (to avoid consuming raw escapes)
+  //                             and `&` (to avoid consuming the `&quot;` delimiter)
+  //      If the match ends with ':', it's an object key (coloured differently)
   //   2. Boolean literals: true | false
   //   3. Null literal: null
   //   4. Numbers: optional leading minus, integer part, optional decimal, optional exponent
