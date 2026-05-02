@@ -37,7 +37,7 @@ export default function PipelineDetailPage({ params }: PageProps) {
   }
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex flex-col">
       <PipelineHeader pipeline={pipeline} />
       <ActionBar pipeline={pipeline} />
       <div className="flex flex-1 gap-6 p-6">
