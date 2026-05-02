@@ -80,6 +80,16 @@ export class LoggerService {
       console.error(JSON.stringify({ level: "error", message, ...context, timestamp: entry.timestamp }));
     }
   }
+
+  debug(message: string, context?: Record<string, unknown>): void {
+    const entry: LogEntry = { timestamp: new Date().toISOString(), level: "debug", message, context: context ?? {} };
+    pushToBuffer(entry);
+    if (PRETTY) {
+      process.stdout.write(formatPretty("debug", message, context) + "\n");
+    } else {
+      console.log(JSON.stringify({ level: "debug", message, ...context, timestamp: entry.timestamp }));
+    }
+  }
 }
 
 export const logger = new LoggerService();
