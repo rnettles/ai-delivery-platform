@@ -346,6 +346,7 @@ describe("Pipeline HTTP routes", () => {
 
     beforeEach(() => {
       vi.mocked(artifactService.read).mockReset();
+      vi.mocked(artifactService.read).mockRejectedValue(new Error("ENOENT"));
       vi.mocked(pipelineService.get).mockReset();
     });
 
@@ -371,6 +372,45 @@ describe("Pipeline HTTP routes", () => {
 
       expect(res.status).toBe(404);
       expect(res.body.error.code).toBe("ARTIFACT_NOT_FOUND");
+    });
+
+    it("returns 200 via pipeline-folder fallback when artifact is not listed in step paths", async () => {
+      vi.mocked(pipelineService.get).mockResolvedValueOnce(runWithArtifact as never);
+      vi.mocked(artifactService.read).mockImplementation(async (requestedPath: string) => {
+        if (/phase_plan_p01\.md$/i.test(requestedPath)) {
+          return "# Phase plan";
+        }
+        throw new Error("ENOENT");
+      });
+
+      const res = await request(app)
+        .get(`/pipeline/${PIPELINE_ID}/artifact`)
+        .query({ path: "phase_plan_p01.md" });
+
+      expect(res.status).toBe(200);
+      expect(res.text).toBe("# Phase plan");
+      expect(artifactService.read).toHaveBeenCalledWith(
+        expect.stringMatching(new RegExp(`runtime[\\\\/]artifacts[\\\\/]${PIPELINE_ID}[\\\\/]phase_plan_p01\\.md$`))
+      );
+    });
+
+    it("returns 200 when full project_work artifact path is provided", async () => {
+      const projectWorkPath = "project_work/ai_project_tasks/staged_sprints/sprint_plan_s01.md";
+      vi.mocked(pipelineService.get).mockResolvedValueOnce(runWithArtifact as never);
+      vi.mocked(artifactService.read).mockImplementation(async (requestedPath: string) => {
+        if (requestedPath === projectWorkPath) {
+          return "# Sprint plan";
+        }
+        throw new Error("ENOENT");
+      });
+
+      const res = await request(app)
+        .get(`/pipeline/${PIPELINE_ID}/artifact`)
+        .query({ path: projectWorkPath });
+
+      expect(res.status).toBe(200);
+      expect(res.text).toBe("# Sprint plan");
+      expect(artifactService.read).toHaveBeenCalledWith(projectWorkPath);
     });
 
     it("returns 400 when path query param is missing", async () => {

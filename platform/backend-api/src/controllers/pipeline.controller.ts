@@ -599,8 +599,8 @@ export async function getPipelineArtifact(req: Request, res: Response, next: Nex
       throw new HttpError(400, "ARTIFACT_PATH_REQUIRED", "Query param 'path' is required");
     }
 
-    // Normalise to bare filename so the UI only needs to send the name, not the full path.
-    const filename = path.basename(artifactParam);
+    const normalizedParam = artifactParam.replace(/\\/g, "/");
+    const filename = path.basename(normalizedParam);
 
     // Find the canonical stored path from the pipeline's own step records.
     // This is the authoritative source and avoids reconstructing a path that
@@ -608,13 +608,44 @@ export async function getPipelineArtifact(req: Request, res: Response, next: Nex
     const run = await pipelineService.get(pipelineId);
     const allArtifactPaths: string[] = run.steps.flatMap((s) => s.artifact_paths ?? []);
     const storedPath = allArtifactPaths.find((p) => path.basename(p) === filename);
+    const fallbackPath = path.join(config.artifactBasePath, pipelineId, filename).replace(/\\/g, "/");
 
-    if (!storedPath) {
+    const directPathAllowed =
+      normalizedParam.startsWith("../../runtime/artifacts/") ||
+      normalizedParam.startsWith("runtime/artifacts/") ||
+      normalizedParam.startsWith("project_work/");
+
+    const candidatePaths = [
+      ...(directPathAllowed ? [normalizedParam] : []),
+      ...(storedPath ? [storedPath] : []),
+      fallbackPath,
+    ];
+
+    const seen = new Set<string>();
+    const dedupedCandidates = candidatePaths.filter((candidate) => {
+      if (seen.has(candidate)) return false;
+      seen.add(candidate);
+      return true;
+    });
+
+    let resolvedPath: string | null = null;
+    let content: string | null = null;
+
+    for (const candidate of dedupedCandidates) {
+      try {
+        content = await artifactService.read(candidate);
+        resolvedPath = candidate;
+        break;
+      } catch {
+        // Try the next candidate path.
+      }
+    }
+
+    if (!content) {
       throw new HttpError(404, "ARTIFACT_NOT_FOUND", `Artifact not found: ${filename}`);
     }
 
-    const content = await artifactService.read(storedPath);
-    const ext = path.extname(storedPath).toLowerCase();
+    const ext = path.extname(resolvedPath ?? filename).toLowerCase();
 
     if (ext === ".json") {
       res.status(200).json(JSON.parse(content));

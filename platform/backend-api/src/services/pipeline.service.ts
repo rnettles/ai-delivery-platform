@@ -1939,7 +1939,12 @@ export class PipelineService {
   async reconcileOrphanedRuns(): Promise<void> {
     try {
       const rows = await db
-        .select({ pipeline_id: pipelineRuns.pipeline_id, current_step: pipelineRuns.current_step, steps: pipelineRuns.steps })
+        .select({
+          pipeline_id: pipelineRuns.pipeline_id,
+          current_step: pipelineRuns.current_step,
+          steps: pipelineRuns.steps,
+          metadata: pipelineRuns.metadata,
+        })
         .from(pipelineRuns)
         .where(eq(pipelineRuns.status, "running"));
 
@@ -1996,7 +2001,7 @@ export class PipelineService {
               status: "cancelled",
               gate_required: false,
               artifact_paths: [],
-              metadata: {},
+              metadata: (row.metadata as PipelineRun["metadata"]) ?? { source: "api" },
               agent_caller: "System",
               message: "Pipeline cancelled — server restarted while step was running",
             }).catch((err) => logger.error("Startup reconciliation: failed to send cancel notification", {
