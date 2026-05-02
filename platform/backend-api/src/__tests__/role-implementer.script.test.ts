@@ -277,24 +277,26 @@ describe("ImplementerScript post-commit PR flow", () => {
     expect(mocks.setPrDetails).not.toHaveBeenCalled();
   });
 
-  it("loads active repo task artifacts when pipeline artifacts are missing", async () => {
-    mocks.findFirst.mockResolvedValue(null);
+  it("ADR-035: sprint plan falls back to staged_sprints/ but brief/task must be in previous_artifacts", async () => {
+    // With ADR-035, brief and task MUST come from previous_artifacts (artifact service).
+    // Only sprint plan can still be loaded from staged_sprints/ in the repo.
+    mocks.findFirst.mockResolvedValue(null); // no artifacts in pipeline store
 
     const readdirMock = fs.readdir as unknown as ReturnType<typeof vi.fn>;
     readdirMock.mockResolvedValue([{ isFile: () => true, name: "sprint_plan_s01.md" }]);
 
     const readFileMock = fs.readFile as unknown as ReturnType<typeof vi.fn>;
     readFileMock.mockImplementation(async (filePath: string) => {
-      if (filePath.endsWith("AI_IMPLEMENTATION_BRIEF.md")) return "# Brief from active";
-      if (filePath.endsWith("current_task.json")) return JSON.stringify({ task_id: "S01-001", sprint_id: "SPR-1" });
-      if (filePath.endsWith("sprint_plan_s01.md")) return "# Sprint from active";
+      if (filePath.endsWith("sprint_plan_s01.md")) return "# Sprint from staged";
       throw new Error("not found");
     });
 
     const script = new ImplementerScript();
-    await script.run({ pipeline_id: "pipe-1", previous_artifacts: [] }, makeContext());
-
-    expect(mocks.forRole).toHaveBeenCalled();
+    // Sprint plan found from staged_sprints/, but brief and task not found → should fail
+    await expect(
+      script.run({ pipeline_id: "pipe-1", previous_artifacts: [] }, makeContext())
+    ).rejects.toThrow("Implementer requires an active task package");
+    expect(mocks.forRole).not.toHaveBeenCalled();
   });
 
   it("fails fast when no governed task package exists", async () => {
@@ -363,17 +365,16 @@ describe("ImplementerScript output contract", () => {
     void writeFileMock;
   });
 
-  it("writes test_results.json to repo canonical path (Phase 3.2)", async () => {
+  it("writes test_results.json via artifact service (ADR-035 Phase 3.2)", async () => {
     const script = new ImplementerScript();
     await script.run({ pipeline_id: "pipe-2", previous_artifacts: ["artifacts/AI_IMPLEMENTATION_BRIEF.md", "artifacts/current_task.json", "artifacts/sprint_plan_spr_2.md"] }, makeContext());
 
-    const writeFileMock = fs.writeFile as unknown as ReturnType<typeof vi.fn>;
-    // Verify fs.writeFile was called with the canonical repo path for test_results.json
-    const testResultsCall = (writeFileMock.mock.calls as Array<[string, string, string]>).find(
-      ([filePath]) => typeof filePath === "string" && filePath.endsWith("test_results.json")
+    // ADR-035: test_results.json is written via artifactService.write(), not fs.writeFile
+    const testResultsCall = mocks.write.mock.calls.find(
+      ([, name]: string[]) => typeof name === "string" && name === "test_results.json"
     );
     expect(testResultsCall).toBeDefined();
-    const payload = JSON.parse(testResultsCall![1]);
+    const payload = JSON.parse(testResultsCall![2] as string);
     expect(payload).toMatchObject({ task_id: "S02-001", sprint_id: "SPR-2" });
     expect(payload).toHaveProperty("executed_at");
     expect(payload).toHaveProperty("gate_results");
@@ -695,12 +696,12 @@ describe("ImplementerScript gate execution and role boundaries", () => {
     const script = new ImplementerScript();
     await script.run({ pipeline_id: "pipe-4", previous_artifacts: ["artifacts/AI_IMPLEMENTATION_BRIEF.md", "artifacts/current_task.json", "artifacts/sprint_plan_spr_4.md"] }, makeContext());
 
-    const writeFileMock = fs.writeFile as unknown as ReturnType<typeof vi.fn>;
-    const testResultsCall = (writeFileMock.mock.calls as Array<[string, string]>).find(
-      ([p]) => typeof p === "string" && p.endsWith("test_results.json")
+    // ADR-035: test_results.json is written via artifactService.write(), not fs.writeFile
+    const testResultsCall = mocks.write.mock.calls.find(
+      ([, name]: string[]) => typeof name === "string" && name === "test_results.json"
     );
     expect(testResultsCall).toBeDefined();
-    const payload = JSON.parse(testResultsCall![1]);
+    const payload = JSON.parse(testResultsCall![2] as string);
     expect(payload.gate_results).toHaveLength(1);
     expect(payload.gate_results[0]).toMatchObject({ command: "npm test", exit_code: 0 });
     expect(payload.summary).toBe("all_passed");
@@ -763,12 +764,12 @@ describe("ImplementerScript ADR-033 helpers (Phase 14)", () => {
     await script.run({ pipeline_id: "pipe-prog", previous_artifacts: ["artifacts/AI_IMPLEMENTATION_BRIEF.md", "artifacts/current_task.json", "artifacts/sprint_plan_spr_4.md"] }, makeContext());
 
     expect(toolResult).toMatch(/OK/i);
-    const writeFileMock = fs.writeFile as unknown as ReturnType<typeof vi.fn>;
-    const progressCall = (writeFileMock.mock.calls as Array<[string, string]>).find(
-      ([p]) => typeof p === "string" && p.endsWith("progress.json")
+    // ADR-035: progress.json is written via artifactService.write(), not fs.writeFile
+    const progressCall = mocks.write.mock.calls.find(
+      ([, name]: string[]) => typeof name === "string" && name === "progress.json"
     );
     expect(progressCall).toBeDefined();
-    const payload = JSON.parse(progressCall![1]);
+    const payload = JSON.parse(progressCall![2] as string);
     expect(payload).toMatchObject({
       current_focus: "Editing role-implementer.script.ts",
       planned_next_action: "Run tsc and re-verify",
@@ -790,12 +791,12 @@ describe("ImplementerScript ADR-033 helpers (Phase 14)", () => {
       script.run({ pipeline_id: "pipe-fb", previous_artifacts: ["artifacts/AI_IMPLEMENTATION_BRIEF.md", "artifacts/current_task.json", "artifacts/sprint_plan_spr_4.md"] }, makeContext())
     ).rejects.toMatchObject({ code: "MAX_ITERATIONS" });
 
-    const writeFileMock = fs.writeFile as unknown as ReturnType<typeof vi.fn>;
-    const progressCall = (writeFileMock.mock.calls as Array<[string, string]>).find(
-      ([p]) => typeof p === "string" && p.endsWith("progress.json")
+    // ADR-035: progress.json is written via artifactService.write(), not fs.writeFile
+    const progressCall = mocks.write.mock.calls.find(
+      ([, name]: string[]) => typeof name === "string" && name === "progress.json"
     );
     expect(progressCall).toBeDefined();
-    const payload = JSON.parse(progressCall![1]);
+    const payload = JSON.parse(progressCall![2] as string);
     expect(typeof payload.current_focus).toBe("string");
     expect(typeof payload.planned_next_action).toBe("string");
     expect(payload.recorded_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
@@ -878,12 +879,17 @@ describe("ImplementerScript ADR-033 helpers (Phase 14)", () => {
       required_corrections: ["Fix failing tsc error in foo.ts", "Add missing test for bar()"],
     });
 
-    const readFileMock = fs.readFile as unknown as ReturnType<typeof vi.fn>;
-    readFileMock.mockImplementation(async (filePath: string) => {
-      if (typeof filePath === "string" && filePath.endsWith("verification_result.json")) {
-        return verificationResult;
-      }
-      throw new Error("not found");
+    // ADR-035: corrections are read from previous_artifacts via artifact service, not from readFile
+    mocks.findFirst.mockImplementation(async (paths: string[]) => {
+      if (paths.some((p) => p.includes("AI_IMPLEMENTATION_BRIEF")))
+        return { path: "artifacts/brief.md", content: "# Brief\n\n## Task Flags\nfr_ids_in_scope: []\narchitecture_contract_change: false\nui_evidence_required: false\nincident_tier: none" };
+      if (paths.some((p) => p.includes("current_task")))
+        return { path: "artifacts/ct.json", content: JSON.stringify({ task_id: "S04-001", sprint_id: "SPR-4", status: "in_progress" }) };
+      if (paths.some((p) => p.includes("sprint_plan")))
+        return { path: "artifacts/sprint.md", content: "# Sprint" };
+      if (paths.some((p) => p.includes("verification_result")))
+        return { path: "artifacts/verification_result.json", content: verificationResult };
+      return null;
     });
 
     let captured: string | null = null;
@@ -897,7 +903,7 @@ describe("ImplementerScript ADR-033 helpers (Phase 14)", () => {
     });
 
     const script = new ImplementerScript();
-    await script.run({ pipeline_id: "pipe-corr", previous_artifacts: ["artifacts/AI_IMPLEMENTATION_BRIEF.md", "artifacts/current_task.json", "artifacts/sprint_plan_spr_4.md"] }, makeContext());
+    await script.run({ pipeline_id: "pipe-corr", previous_artifacts: ["artifacts/AI_IMPLEMENTATION_BRIEF.md", "artifacts/current_task.json", "artifacts/sprint_plan_spr_4.md", "artifacts/verification_result.json"] }, makeContext());
 
     expect(captured).toContain("Fix failing tsc error in foo.ts");
     expect(captured).toContain("Add missing test for bar()");
@@ -914,12 +920,17 @@ describe("ImplementerScript ADR-033 helpers (Phase 14)", () => {
       ],
     });
 
-    const readFileMock = fs.readFile as unknown as ReturnType<typeof vi.fn>;
-    readFileMock.mockImplementation(async (filePath: string) => {
-      if (typeof filePath === "string" && filePath.endsWith("test_results.json")) {
-        return priorTestResults;
-      }
-      throw new Error("not found");
+    // ADR-035: test_results are read from previous_artifacts via artifact service
+    mocks.findFirst.mockImplementation(async (paths: string[]) => {
+      if (paths.some((p) => p.includes("AI_IMPLEMENTATION_BRIEF")))
+        return { path: "artifacts/brief.md", content: "# Brief\n\n## Task Flags\nfr_ids_in_scope: []\narchitecture_contract_change: false\nui_evidence_required: false\nincident_tier: none" };
+      if (paths.some((p) => p.includes("current_task")))
+        return { path: "artifacts/ct.json", content: JSON.stringify({ task_id: "S04-001", sprint_id: "SPR-4", status: "in_progress" }) };
+      if (paths.some((p) => p.includes("sprint_plan")))
+        return { path: "artifacts/sprint.md", content: "# Sprint" };
+      if (paths.some((p) => p.includes("test_results")))
+        return { path: "artifacts/test_results.json", content: priorTestResults };
+      return null;
     });
 
     let actualNpmTestRan = false;
@@ -943,7 +954,7 @@ describe("ImplementerScript ADR-033 helpers (Phase 14)", () => {
     });
 
     const script = new ImplementerScript();
-    await script.run({ pipeline_id: "pipe-cache", previous_artifacts: ["artifacts/AI_IMPLEMENTATION_BRIEF.md", "artifacts/current_task.json", "artifacts/sprint_plan_spr_4.md"] }, makeContext());
+    await script.run({ pipeline_id: "pipe-cache", previous_artifacts: ["artifacts/AI_IMPLEMENTATION_BRIEF.md", "artifacts/current_task.json", "artifacts/sprint_plan_spr_4.md", "artifacts/test_results.json"] }, makeContext());
 
     expect(runCommandResult).toBeDefined();
     expect(runCommandResult).toMatch(/cached/i);
@@ -959,12 +970,17 @@ describe("ImplementerScript ADR-033 helpers (Phase 14)", () => {
       ],
     });
 
-    const readFileMock = fs.readFile as unknown as ReturnType<typeof vi.fn>;
-    readFileMock.mockImplementation(async (filePath: string) => {
-      if (typeof filePath === "string" && filePath.endsWith("test_results.json")) {
-        return priorTestResults;
-      }
-      throw new Error("not found");
+    // ADR-035: test_results are read from previous_artifacts via artifact service
+    mocks.findFirst.mockImplementation(async (paths: string[]) => {
+      if (paths.some((p) => p.includes("AI_IMPLEMENTATION_BRIEF")))
+        return { path: "artifacts/brief.md", content: "# Brief\n\n## Task Flags\nfr_ids_in_scope: []\narchitecture_contract_change: false\nui_evidence_required: false\nincident_tier: none" };
+      if (paths.some((p) => p.includes("current_task")))
+        return { path: "artifacts/ct.json", content: JSON.stringify({ task_id: "S04-001", sprint_id: "SPR-4", status: "in_progress" }) };
+      if (paths.some((p) => p.includes("sprint_plan")))
+        return { path: "artifacts/sprint.md", content: "# Sprint" };
+      if (paths.some((p) => p.includes("test_results")))
+        return { path: "artifacts/test_results.json", content: priorTestResults };
+      return null;
     });
 
     let actualNpmTestRan = false;
@@ -989,7 +1005,7 @@ describe("ImplementerScript ADR-033 helpers (Phase 14)", () => {
     });
 
     const script = new ImplementerScript();
-    await script.run({ pipeline_id: "pipe-nocache", previous_artifacts: ["artifacts/AI_IMPLEMENTATION_BRIEF.md", "artifacts/current_task.json", "artifacts/sprint_plan_spr_4.md"] }, makeContext());
+    await script.run({ pipeline_id: "pipe-nocache", previous_artifacts: ["artifacts/AI_IMPLEMENTATION_BRIEF.md", "artifacts/current_task.json", "artifacts/sprint_plan_spr_4.md", "artifacts/test_results.json"] }, makeContext());
 
     expect(actualNpmTestRan).toBe(true);
     expect(runCommandResult).not.toMatch(/cached/i);
