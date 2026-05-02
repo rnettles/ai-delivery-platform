@@ -25,6 +25,9 @@ if (-not $env:DRY_RUN_SCENARIO_PATH) {
   [Environment]::SetEnvironmentVariable('DRY_RUN_SCENARIO_PATH', $defaultScenario, 'Process')
 }
 
+# ─── Enable pretty log format in the logger service ──────────────────────────
+$env:LOG_FORMAT = "pretty"
+
 Write-Host ""
 Write-Host "===========================================================" -ForegroundColor Yellow
 Write-Host " DRY-RUN MODE — MockLlmProvider for all LLM calls" -ForegroundColor Yellow
