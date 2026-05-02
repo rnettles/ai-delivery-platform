@@ -6,9 +6,11 @@ interface PipelineTimelineProps {
   groups: UIStepGroup[];
   pipelineId: string;
   onArtifactSelect: (path: string) => void;
+  /** Artifact paths from staged phases/sprints to supplement the Planner stage display. */
+  plannerSupplementalPaths?: string[];
 }
 
-export function PipelineTimeline({ groups, pipelineId, onArtifactSelect }: PipelineTimelineProps) {
+export function PipelineTimeline({ groups, pipelineId, onArtifactSelect, plannerSupplementalPaths }: PipelineTimelineProps) {
   const activeRef = useRef<HTMLLIElement | null>(null);
 
   // Scroll the active (running) step into view on mount and when pipeline changes.
@@ -26,10 +28,45 @@ export function PipelineTimeline({ groups, pipelineId, onArtifactSelect }: Pipel
     );
   }
 
+  // Collect the full set of artifact_paths per role across all groups.
+  const allArtifactsByRole = new Map<string, string[]>();
+  for (const group of groups) {
+    const existing = allArtifactsByRole.get(group.role) ?? [];
+    allArtifactsByRole.set(group.role, [...existing, ...group.record.artifact_paths]);
+  }
+
   return (
     <ol className="flex flex-col gap-3 py-4">
       {groups.map((group, i) => {
         const isActive = group.status === "running";
+
+        // Build the extraArtifacts set for this group:
+        // All artifacts accumulated for this role + role-specific supplementals,
+        // excluding this step's own artifact_paths to prevent duplication.
+        const thisStepSet = new Set(group.record.artifact_paths);
+        const roleAccumulated = (allArtifactsByRole.get(group.role) ?? []).filter(
+          (p) => !thisStepSet.has(p)
+        );
+
+        const supplemental: string[] = [];
+        if (group.role === "planner") {
+          for (const p of plannerSupplementalPaths ?? []) {
+            if (!thisStepSet.has(p)) supplemental.push(p);
+          }
+        }
+        if (group.role === "implementer") {
+          // Include the brief.md from the nearest preceding sprint-controller step.
+          for (let j = i - 1; j >= 0; j--) {
+            if (groups[j].role === "sprint-controller") {
+              const briefPath = groups[j].record.artifact_paths.find((p) => p.endsWith("brief.md"));
+              if (briefPath && !thisStepSet.has(briefPath)) supplemental.push(briefPath);
+              break;
+            }
+          }
+        }
+
+        const extraArtifacts = [...new Set([...roleAccumulated, ...supplemental])];
+
         return (
           <li
             key={`${group.role}-${group.iteration}`}
@@ -41,6 +78,7 @@ export function PipelineTimeline({ groups, pipelineId, onArtifactSelect }: Pipel
               isActive={isActive}
               pipelineId={pipelineId}
               onArtifactSelect={onArtifactSelect}
+              extraArtifacts={extraArtifacts.length > 0 ? extraArtifacts : undefined}
             />
           </li>
         );

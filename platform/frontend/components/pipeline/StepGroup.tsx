@@ -36,9 +36,11 @@ interface StepGroupProps {
   isActive: boolean;
   pipelineId: string;
   onArtifactSelect: (path: string) => void;
+  /** Accumulated + supplemental artifacts for this role, excluding this step's own artifact_paths. */
+  extraArtifacts?: string[];
 }
 
-export function StepGroup({ group, isFirst: _isFirst, isActive, pipelineId, onArtifactSelect }: StepGroupProps) {
+export function StepGroup({ group, isFirst: _isFirst, isActive, pipelineId, onArtifactSelect, extraArtifacts }: StepGroupProps) {
   const defaultOpen = group.status === "running" || group.status === "failed" || isActive;
   const [open, setOpen] = useState(defaultOpen);
 
@@ -97,6 +99,7 @@ export function StepGroup({ group, isFirst: _isFirst, isActive, pipelineId, onAr
               record={group.record}
               pipelineId={pipelineId}
               onArtifactSelect={onArtifactSelect}
+              extraArtifacts={extraArtifacts}
             />
             <GateCard record={group.record} />
           </div>

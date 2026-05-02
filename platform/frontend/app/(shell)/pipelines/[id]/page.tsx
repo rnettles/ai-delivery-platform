@@ -2,6 +2,8 @@
 
 import { use, useState } from "react";
 import { usePipeline } from "@/hooks/usePipeline";
+import { useStagedPhases } from "@/hooks/useStagedPhases";
+import { useStagedSprints } from "@/hooks/useStagedSprints";
 import { PipelineHeader } from "@/components/pipeline/PipelineHeader";
 import { PipelineTimeline } from "@/components/pipeline/PipelineTimeline";
 import { ActionBar } from "@/components/pipeline/ActionBar";
@@ -17,6 +19,16 @@ export default function PipelineDetailPage({ params }: PageProps) {
   const { pipeline, timeline, isLoading, isError, error, isLive, isStale } = usePipeline(id);
   const [selectedArtifact, setSelectedArtifact] = useState<string | null>(null);
   const [staleBannerDismissed, setStaleBannerDismissed] = useState(false);
+
+  // Fetch staged phases and sprints for the Planner supplemental artifact display.
+  // These queries are shared with StagedWorkPanel via React Query cache — no double fetch.
+  const phasesQuery = useStagedPhases(id);
+  const sprintsQuery = useStagedSprints(id);
+
+  const plannerSupplementalPaths = [
+    ...(phasesQuery.data?.phases.map((p) => p.artifact_path) ?? []),
+    ...(sprintsQuery.data?.sprints.map((s) => s.sprint_plan_path) ?? []),
+  ];
 
   if (isLoading) {
     return (
@@ -64,6 +76,7 @@ export default function PipelineDetailPage({ params }: PageProps) {
             groups={timeline.groups}
             pipelineId={pipeline.pipeline_id}
             onArtifactSelect={setSelectedArtifact}
+            plannerSupplementalPaths={plannerSupplementalPaths}
           />
         </main>
 
@@ -75,7 +88,7 @@ export default function PipelineDetailPage({ params }: PageProps) {
         />
       </div>
       {/* Staged work — collapsible panel below timeline */}
-      <StagedWorkPanel pipelineId={pipeline.pipeline_id} />
+      <StagedWorkPanel pipelineId={pipeline.pipeline_id} onArtifactSelect={setSelectedArtifact} />
     </div>
   );
 }

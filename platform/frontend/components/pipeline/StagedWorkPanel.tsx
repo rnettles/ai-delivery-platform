@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useStagedPhases } from "@/hooks/useStagedPhases";
 import { useStagedSprints } from "@/hooks/useStagedSprints";
 import { useStagedTasks } from "@/hooks/useStagedTasks";
+import { ArtifactBadge } from "./ArtifactBadge";
 import type {
   StagedPhaseRecord,
   StagedSprintRecord,
@@ -14,6 +15,7 @@ type Tab = "phases" | "sprints" | "tasks";
 
 interface StagedWorkPanelProps {
   pipelineId: string;
+  onArtifactSelect: (path: string) => void;
 }
 
 function SkeletonRows() {
@@ -32,12 +34,22 @@ function EmptyState({ label }: { label: string }) {
   );
 }
 
-function PhaseRow({ phase }: { phase: StagedPhaseRecord }) {
+function PhaseRow({
+  phase,
+  pipelineId,
+  onSelect,
+}: {
+  phase: StagedPhaseRecord;
+  pipelineId: string;
+  onSelect: (path: string) => void;
+}) {
   return (
     <div className="flex items-center justify-between gap-3 rounded border border-gray-100 bg-white px-3 py-2 text-sm">
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         <p className="font-medium text-gray-800 truncate">{phase.name ?? phase.phase_id}</p>
-        <p className="text-xs text-gray-400 font-mono truncate">{phase.artifact_path?.split("/").pop() ?? phase.artifact_path}</p>
+        <div className="mt-1">
+          <ArtifactBadge path={phase.artifact_path} pipelineId={pipelineId} onSelect={onSelect} />
+        </div>
       </div>
       <span className="flex-shrink-0 rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-600">
         {phase.status}
@@ -46,12 +58,22 @@ function PhaseRow({ phase }: { phase: StagedPhaseRecord }) {
   );
 }
 
-function SprintRow({ sprint }: { sprint: StagedSprintRecord }) {
+function SprintRow({
+  sprint,
+  pipelineId,
+  onSelect,
+}: {
+  sprint: StagedSprintRecord;
+  pipelineId: string;
+  onSelect: (path: string) => void;
+}) {
   return (
     <div className="flex items-center justify-between gap-3 rounded border border-gray-100 bg-white px-3 py-2 text-sm">
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         <p className="font-medium text-gray-800 truncate">{sprint.name ?? sprint.sprint_id}</p>
-        <p className="text-xs text-gray-400 font-mono truncate">{sprint.sprint_plan_path?.split("/").pop() ?? sprint.sprint_plan_path}</p>
+        <div className="mt-1">
+          <ArtifactBadge path={sprint.sprint_plan_path} pipelineId={pipelineId} onSelect={onSelect} />
+        </div>
       </div>
       <span className="flex-shrink-0 rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-600">
         {sprint.status}
@@ -60,19 +82,30 @@ function SprintRow({ sprint }: { sprint: StagedSprintRecord }) {
   );
 }
 
-function TaskRow({ task }: { task: StagedTaskRecord }) {
+function TaskRow({
+  task,
+  pipelineId,
+  onSelect,
+}: {
+  task: StagedTaskRecord;
+  pipelineId: string;
+  onSelect: (path: string) => void;
+}) {
   return (
     <div className="flex items-start gap-3 rounded border border-gray-100 bg-white px-3 py-2 text-sm">
       <div className="mt-0.5 h-2 w-2 flex-shrink-0 rounded-full bg-blue-400" />
       <div className="min-w-0 flex-1">
         <p className="text-gray-800 truncate">{task.label}</p>
         <p className="text-xs text-gray-400 font-mono">{task.task_id}</p>
+        <div className="mt-1">
+          <ArtifactBadge path={task.sprint_plan_path} pipelineId={pipelineId} onSelect={onSelect} />
+        </div>
       </div>
     </div>
   );
 }
 
-export function StagedWorkPanel({ pipelineId }: StagedWorkPanelProps) {
+export function StagedWorkPanel({ pipelineId, onArtifactSelect }: StagedWorkPanelProps) {
   const phasesQuery = useStagedPhases(pipelineId);
   const sprintsQuery = useStagedSprints(pipelineId);
   const tasksQuery = useStagedTasks(pipelineId);
@@ -164,7 +197,7 @@ export function StagedWorkPanel({ pipelineId }: StagedWorkPanelProps) {
                 <EmptyState label="phases" />
               )}
               {phasesQuery.data?.phases.map((phase) => (
-                <PhaseRow key={phase.phase_id} phase={phase} />
+                <PhaseRow key={phase.phase_id} phase={phase} pipelineId={pipelineId} onSelect={onArtifactSelect} />
               ))}
             </div>
           )}
@@ -179,7 +212,7 @@ export function StagedWorkPanel({ pipelineId }: StagedWorkPanelProps) {
                 <EmptyState label="sprints" />
               )}
               {sprintsQuery.data?.sprints.map((sprint) => (
-                <SprintRow key={sprint.sprint_id} sprint={sprint} />
+                <SprintRow key={sprint.sprint_id} sprint={sprint} pipelineId={pipelineId} onSelect={onArtifactSelect} />
               ))}
             </div>
           )}
@@ -194,7 +227,7 @@ export function StagedWorkPanel({ pipelineId }: StagedWorkPanelProps) {
                 <EmptyState label="tasks" />
               )}
               {tasksQuery.data?.tasks.map((task) => (
-                <TaskRow key={task.task_id} task={task} />
+                <TaskRow key={task.task_id} task={task} pipelineId={pipelineId} onSelect={onArtifactSelect} />
               ))}
             </div>
           )}

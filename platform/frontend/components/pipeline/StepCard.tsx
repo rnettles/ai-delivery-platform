@@ -5,9 +5,15 @@ interface StepCardProps {
   record: PipelineStepRecord;
   pipelineId: string;
   onArtifactSelect: (path: string) => void;
+  /** Accumulated artifacts for this role across the pipeline, plus role-specific supplementals. */
+  extraArtifacts?: string[];
 }
 
-export function StepCard({ record, pipelineId, onArtifactSelect }: StepCardProps) {
+export function StepCard({ record, pipelineId, onArtifactSelect, extraArtifacts }: StepCardProps) {
+  const uniqueExtra = (extraArtifacts ?? []).filter(
+    (p) => !record.artifact_paths.includes(p)
+  );
+
   return (
     <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
       <dt className="font-medium text-gray-500">Actor</dt>
@@ -55,6 +61,22 @@ export function StepCard({ record, pipelineId, onArtifactSelect }: StepCardProps
           <dt className="font-medium text-gray-500">Artifacts</dt>
           <dd className="flex flex-wrap gap-1">
             {[...new Set(record.artifact_paths)].map((p) => (
+              <ArtifactBadge
+                key={p}
+                path={p}
+                pipelineId={pipelineId}
+                onSelect={onArtifactSelect}
+              />
+            ))}
+          </dd>
+        </>
+      )}
+
+      {uniqueExtra.length > 0 && (
+        <>
+          <dt className="font-medium text-gray-500">Role Artifacts</dt>
+          <dd className="flex flex-wrap gap-1">
+            {uniqueExtra.map((p) => (
               <ArtifactBadge
                 key={p}
                 path={p}
