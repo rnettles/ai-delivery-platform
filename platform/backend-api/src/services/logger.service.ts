@@ -1,5 +1,27 @@
 const PRETTY = process.env.LOG_FORMAT === "pretty";
 
+// ─── In-memory ring buffer ────────────────────────────────────────────────────
+const LOG_BUFFER_SIZE = 500;
+
+export interface LogEntry {
+  timestamp: string;
+  level: "info" | "warn" | "error" | "debug";
+  message: string;
+  context: Record<string, unknown>;
+}
+
+const logBuffer: LogEntry[] = [];
+
+function pushToBuffer(entry: LogEntry): void {
+  logBuffer.push(entry);
+  if (logBuffer.length > LOG_BUFFER_SIZE) logBuffer.shift();
+}
+
+/** Returns a snapshot of recent log entries, newest last. */
+export function getLogs(limit = 200): LogEntry[] {
+  return logBuffer.slice(-limit);
+}
+
 const ANSI = {
   reset:  "\x1b[0m",
   bold:   "\x1b[1m",
@@ -30,26 +52,32 @@ function formatPretty(level: string, message: string, context?: Record<string, u
 
 export class LoggerService {
   info(message: string, context?: Record<string, unknown>): void {
+    const entry: LogEntry = { timestamp: new Date().toISOString(), level: "info", message, context: context ?? {} };
+    pushToBuffer(entry);
     if (PRETTY) {
       process.stdout.write(formatPretty("info", message, context) + "\n");
     } else {
-      console.log(JSON.stringify({ level: "info", message, ...context, timestamp: new Date().toISOString() }));
+      console.log(JSON.stringify({ level: "info", message, ...context, timestamp: entry.timestamp }));
     }
   }
 
   warn(message: string, context?: Record<string, unknown>): void {
+    const entry: LogEntry = { timestamp: new Date().toISOString(), level: "warn", message, context: context ?? {} };
+    pushToBuffer(entry);
     if (PRETTY) {
       process.stderr.write(formatPretty("warn", message, context) + "\n");
     } else {
-      console.warn(JSON.stringify({ level: "warn", message, ...context, timestamp: new Date().toISOString() }));
+      console.warn(JSON.stringify({ level: "warn", message, ...context, timestamp: entry.timestamp }));
     }
   }
 
   error(message: string, context?: Record<string, unknown>): void {
+    const entry: LogEntry = { timestamp: new Date().toISOString(), level: "error", message, context: context ?? {} };
+    pushToBuffer(entry);
     if (PRETTY) {
       process.stderr.write(formatPretty("error", message, context) + "\n");
     } else {
-      console.error(JSON.stringify({ level: "error", message, ...context, timestamp: new Date().toISOString() }));
+      console.error(JSON.stringify({ level: "error", message, ...context, timestamp: entry.timestamp }));
     }
   }
 }

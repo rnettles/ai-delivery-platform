@@ -8,6 +8,7 @@ export function Sidebar() {
 
   const navItems = [
     { label: "Projects", href: "/projects" },
+    { label: "Logs", href: "/logs" },
   ];
 
   return (

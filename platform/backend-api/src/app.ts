@@ -11,6 +11,7 @@ import { requestIdMiddleware } from "./middleware/request-id.middleware";
 import { errorMiddleware } from "./middleware/error.middleware";
 import { apiKeyMiddleware } from "./middleware/api-key.middleware";
 import { dryRunScenarioService } from "./services/llm/dry-run-scenario.service";
+import { getLogs } from "./services/logger.service";
 
 export const app = express();
 
@@ -33,6 +34,11 @@ app.get("/health/dry-run", (_req, res) => {
 		dry_run: config.dryRun,
 		scenario: config.dryRun ? dryRunScenarioService.snapshot() : null,
 	});
+});
+
+app.get("/logs", (_req, res) => {
+	const limit = Math.min(Number(_req.query.limit ?? 200), 500);
+	res.json(getLogs(limit));
 });
 
 app.use(apiKeyMiddleware);
