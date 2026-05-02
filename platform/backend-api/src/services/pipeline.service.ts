@@ -1042,8 +1042,13 @@ export class PipelineService {
     this.assertStatus(run, ["running", "awaiting_approval", "paused_takeover", "awaiting_pr_review"]);
 
     const steps = [...run.steps];
-    const stepIdx = this.currentStepIdx(steps, run.current_step as PipelineRole);
-    steps[stepIdx] = { ...steps[stepIdx], actor, status: "complete", completed_at: new Date().toISOString() };
+
+    // When awaiting_pr_review, current_step is "complete" (not a role) — all steps are
+    // already finished, so there is nothing to stamp; just flip the pipeline status.
+    if (run.status !== "awaiting_pr_review") {
+      const stepIdx = this.currentStepIdx(steps, run.current_step as PipelineRole);
+      steps[stepIdx] = { ...steps[stepIdx], actor, status: "complete", completed_at: new Date().toISOString() };
+    }
 
     return this.save(run, { status: "cancelled", steps });
   }

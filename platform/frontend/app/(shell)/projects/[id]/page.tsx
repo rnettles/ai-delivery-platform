@@ -366,16 +366,24 @@ function MultiPipelineWarning({
 }) {
   const queryClient = useQueryClient();
   const [cancelling, setCancelling] = useState<string | null>(null);
+  const [cancelError, setCancelError] = useState<string | null>(null);
 
   async function cancelPipeline(pipelineId: string) {
     setCancelling(pipelineId);
+    setCancelError(null);
     try {
-      await fetch(`/api/pipelines/${encodeURIComponent(pipelineId)}/actions`, {
+      const res = await fetch(`/api/pipelines/${encodeURIComponent(pipelineId)}/actions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "cancel" }),
       });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? `Cancel failed: ${res.status}`);
+      }
       await queryClient.invalidateQueries({ queryKey: ["project-pipelines", projectId] });
+    } catch (err) {
+      setCancelError(err instanceof Error ? err.message : "Unknown error");
     } finally {
       setCancelling(null);
     }
@@ -420,6 +428,9 @@ function MultiPipelineWarning({
           </div>
         ))}
       </div>
+      {cancelError && (
+        <p className="mt-2 text-xs text-red-600">{cancelError}</p>
+      )}
     </div>
   );
 }
