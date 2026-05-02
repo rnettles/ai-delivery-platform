@@ -8,7 +8,7 @@ import type {
   StagedTaskRecord,
 } from "@/types";
 
-export type WorkStatus = "done" | "current" | "pending";
+export type WorkStatus = "done" | "current" | "pending" | "approval" | "pr_review";
 
 export interface WorkTask extends StagedTaskRecord {
   workStatus: "done" | "pending";
@@ -27,6 +27,8 @@ export interface WorkPhase extends StagedPhaseRecord {
 function derivePhaseStatus(status: string): WorkStatus {
   const s = status.toLowerCase();
   if (s.includes("complete") || s.includes("closed") || s.includes("done")) return "done";
+  if (s === "awaiting_pr_review") return "pr_review";
+  if (s === "awaiting_approval" || s === "ready_for_verification") return "approval";
   if (s === "active" || s === "planning" || s === "approved" || s === "draft") return "current";
   return "pending";
 }
@@ -34,13 +36,9 @@ function derivePhaseStatus(status: string): WorkStatus {
 function deriveSprintStatus(status: string): WorkStatus {
   const s = status.toLowerCase();
   if (s.includes("complete") || s.includes("closed") || s.includes("done")) return "done";
-  if (
-    s === "staged" ||
-    s === "planning" ||
-    s === "active" ||
-    s === "ready_for_verification"
-  )
-    return "current";
+  if (s === "awaiting_pr_review") return "pr_review";
+  if (s === "awaiting_approval" || s === "ready_for_verification") return "approval";
+  if (s === "staged" || s === "planning" || s === "active") return "current";
   return "pending";
 }
 
