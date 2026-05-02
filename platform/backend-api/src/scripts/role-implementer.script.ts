@@ -407,7 +407,7 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
 
     // Inject prior-run state so subsequent runs skip already-passing gates and continue from where
     // the prior run stopped rather than re-reading the brief and starting from scratch.
-    const priorCtx = await this.loadPriorRunContext(previousArtifacts, project.project_id, sprintBranch ?? undefined, clonePath ?? undefined);
+    const priorCtx = await this.loadPriorRunContext(previousArtifacts, project.project_id, sprintBranch ?? undefined);
     if (priorCtx) contextParts.push(`# Prior Run Context\n\n${priorCtx}`);
 
     // ─── Phase 3 (ADR-033): structured prior-run extras ────────────────────
@@ -1032,13 +1032,13 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
    *
    * Falls back to the stable checkpoint file (written outside the git repo by
    * checkpointCommitOnFailure) when the artifact is absent — this recovers prior
-   * context even when the artifact write failed.
+   * context even when the artifact write failed. No active/ fallback — after ADR-035,
+   * test_results.json is never written to active/.
    */
   private async loadPriorRunContext(
     previousArtifacts: string[],
     projectId?: string,
-    sprintBranch?: string,
-    clonePath?: string
+    sprintBranch?: string
   ): Promise<string | null> {
     // ADR-035: Read test_results.json from pipeline artifact service (primary).
     const artifactResult = await artifactService.findFirst(
@@ -1056,15 +1056,6 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       }
     }
 
-    // Legacy: fall back to repo clone if stable checkpoint also absent and clonePath provided.
-    if (!raw && clonePath) {
-      const repoPath = path.join(clonePath, "project_work", "ai_project_tasks", "active", "test_results.json");
-      try {
-        raw = await fs.readFile(repoPath, "utf-8");
-      } catch {
-        // not found
-      }
-    }
     if (!raw) return null;
 
     try {
