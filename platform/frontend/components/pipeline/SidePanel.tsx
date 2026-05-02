@@ -100,11 +100,12 @@ export function SidePanel({ pipelineId, selectedPath, onClose }: SidePanelProps)
             <button
               type="button"
               onClick={() => setExpanded(true)}
-              className="flex items-center gap-1 rounded px-1.5 py-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+              className="flex items-center gap-1 rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 hover:text-blue-600 transition-colors border border-transparent hover:border-gray-200"
               aria-label="Expand artifact viewer"
-              title="Expand"
+              title="Expand to full screen"
             >
               <ExpandIcon />
+              <span>Expand</span>
             </button>
             <button
               type="button"
