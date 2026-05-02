@@ -848,15 +848,16 @@ export class PipelineService {
 
     // ── Execution mode: "next" ────────────────────────────────────────────────
     // Stop immediately after the entry role completes — do not advance downstream.
-    // Non-verifier roles stop unconditionally. Verifier is handled by PASS/FAIL blocks below,
-    // which pause at paused_takeover for operator pipeline-handoff in next mode.
+    // Pause at awaiting_approval so the pipeline stays open and the operator can
+    // invoke the next role manually. Non-verifier roles stop unconditionally.
+    // Verifier is handled by PASS/FAIL blocks below.
     if (executionMode === "next" && role === run.entry_point && role !== "verifier") {
-      logger.info("Pipeline stopping after entry role (mode=next); PR merge gate deferred until sprint close-out", {
+      logger.info("Pipeline pausing after entry role (mode=next) — awaiting operator approval to continue", {
         pipeline_id: run.pipeline_id,
         role,
-        pr_number: run.pr_number,
+        next_step: nextStep,
       });
-      return this.saveAndMaybeCleanup(run, { current_step: "complete", status: "complete", steps });
+      return this.save(run, { current_step: role, status: "awaiting_approval", steps });
     }
 
     // ── Implementer complete in next mode — pause for operator handoff to verifier ────────

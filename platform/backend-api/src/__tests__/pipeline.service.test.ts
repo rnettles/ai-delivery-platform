@@ -363,7 +363,7 @@ describe("PipelineService", () => {
 
     // ── Execution mode tests ─────────────────────────────────────────────────
 
-    it("mode=next: marks pipeline complete after entry role without advancing", async () => {
+    it("mode=next: pauses at awaiting_approval after entry role without advancing", async () => {
       const row = makeRow({
         entry_point: "implementer",
         current_step: "implementer",
@@ -377,7 +377,7 @@ describe("PipelineService", () => {
       });
 
       mocks.selectWhere.mockResolvedValueOnce([row]);
-      const savedRow = makeRow({ current_step: "complete", status: "complete" });
+      const savedRow = makeRow({ current_step: "implementer", status: "awaiting_approval" });
       mocks.updateReturning.mockResolvedValueOnce([savedRow]);
 
       const run = await service.completeStep(
@@ -388,8 +388,8 @@ describe("PipelineService", () => {
         false
       );
 
-      expect(run.status).toBe("complete");
-      expect(run.current_step).toBe("complete");
+      expect(run.status).toBe("awaiting_approval");
+      expect(run.current_step).toBe("implementer");
     });
 
     it("mode=next: implementer pauses at paused_takeover when verifier step exists in history", async () => {
@@ -420,11 +420,12 @@ describe("PipelineService", () => {
       expect(run.status).toBe("paused_takeover");
     });
 
-    it("mode=next: planner stops without advancing to sprint-controller", async () => {
+    it("mode=next: planner pauses at awaiting_approval without advancing to sprint-controller", async () => {
       const row = makeRow({ metadata: { source: "slack", execution_mode: "next" } });
 
       mocks.selectWhere.mockResolvedValueOnce([row]);
-      const savedRow = makeRow({ current_step: "complete", status: "complete" });
+      // Planner is in GATED_ROLES — gate fires before next-mode block, pausing at awaiting_approval.
+      const savedRow = makeRow({ current_step: "planner", status: "awaiting_approval" });
       mocks.updateReturning.mockResolvedValueOnce([savedRow]);
 
       const run = await service.completeStep(
@@ -435,8 +436,8 @@ describe("PipelineService", () => {
         false
       );
 
-      expect(run.status).toBe("complete");
-      expect(run.current_step).toBe("complete");
+      expect(run.status).toBe("awaiting_approval");
+      expect(run.current_step).toBe("planner");
     });
 
     it("mode=next-flow, entry=implementer: stops on verifier PASS (no sprint close-out)", async () => {
@@ -656,9 +657,9 @@ describe("PipelineService", () => {
   // ── artifact cleanup triggers ──────────────────────────────────────────────
 
   describe("artifact cleanup triggering", () => {
-    it("triggers artifact cleanup when pipeline reaches status=complete", async () => {
-      // Use sprint-controller as entry in next mode: not in GATED_ROLES, auto-completes without
-      // advancing downstream, calls saveAndMaybeCleanup with status=complete.
+    it("does NOT trigger artifact cleanup when sprint-controller pauses at awaiting_approval in next mode", async () => {
+      // In next mode, sprint-controller as entry role now pauses at awaiting_approval (not complete).
+      // Artifact cleanup must only fire on terminal status=complete, not on gate pauses.
       const row = makeRow({
         entry_point: "sprint-controller",
         current_step: "sprint-controller",
@@ -669,7 +670,7 @@ describe("PipelineService", () => {
         ],
       });
       mocks.selectWhere.mockResolvedValueOnce([row]);
-      const savedRow = makeRow({ current_step: "complete", status: "complete" });
+      const savedRow = makeRow({ current_step: "sprint-controller", status: "awaiting_approval" });
       mocks.updateReturning.mockResolvedValueOnce([savedRow]);
 
       await service.completeStep(
@@ -682,7 +683,7 @@ describe("PipelineService", () => {
 
       // Allow the fire-and-forget cleanup promise to settle
       await new Promise((r) => setTimeout(r, 0));
-      expect(mocks.artifactCleanup).toHaveBeenCalledWith("pipe-2026-04-19-test1234");
+      expect(mocks.artifactCleanup).not.toHaveBeenCalled();
     });
 
     it("does NOT trigger artifact cleanup when pipeline transitions to status=failed", async () => {
