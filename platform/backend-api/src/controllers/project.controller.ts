@@ -1,5 +1,6 @@
 import { NextFunction, Request, Response } from "express";
 import { projectService } from "../services/project.service";
+import { designInputGateService } from "../services/design-input-gate.service";
 import { HttpError } from "../utils/http-error";
 
 interface CreateProjectRequest {
@@ -124,6 +125,44 @@ export async function assignProjectChannel(req: Request, res: Response, next: Ne
       project_id: projectId,
       channel_id: channelId,
     });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function getProjectDesignArtifacts(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const projectId = String(req.params.projectId ?? "");
+    if (!projectId) {
+      throw new HttpError(400, "PROJECT_ID_REQUIRED", "projectId path parameter is required");
+    }
+
+    const result = await designInputGateService.listProjectDesignArtifacts(projectId);
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function getProjectDesignArtifactContent(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const projectId = String(req.params.projectId ?? "");
+    const filePath = String(req.query.path ?? "").trim();
+
+    if (!projectId) {
+      throw new HttpError(400, "PROJECT_ID_REQUIRED", "projectId path parameter is required");
+    }
+    if (!filePath) {
+      throw new HttpError(400, "PATH_REQUIRED", "Query param 'path' is required");
+    }
+
+    const { content, ext } = await designInputGateService.readDesignArtifactContent(projectId, filePath);
+
+    if (ext === "json") {
+      res.status(200).json(JSON.parse(content));
+    } else {
+      res.status(200).type("text/plain").send(content);
+    }
   } catch (error) {
     next(error);
   }

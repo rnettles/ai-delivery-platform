@@ -112,6 +112,20 @@ export function Sidebar() {
             <span className="ml-3">Work</span>
           </Link>
         )}
+
+        {/* Design Artifacts link */}
+        {currentProject && (
+          <Link
+            href={`/projects/${currentProject.project_id}/design`}
+            className={`flex items-center gap-1 rounded px-2 py-1 text-xs font-medium transition-colors ${
+              pathname.startsWith(`/projects/${currentProject.project_id}/design`)
+                ? "bg-blue-50 text-blue-700"
+                : "text-gray-500 hover:bg-gray-50 hover:text-gray-800"
+            }`}
+          >
+            <span className="ml-3">Design Artifacts</span>
+          </Link>
+        )}
       </div>
 
       {/* Bottom nav */}
