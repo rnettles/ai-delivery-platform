@@ -639,7 +639,12 @@ export class PipelineService {
       sprint_branch?: string;
     } = {};
 
-    if (run.status !== "awaiting_pr_review" && run.status !== "complete") {
+    if (
+      run.status !== "awaiting_pr_review" &&
+      run.status !== "complete" &&
+      run.status !== "cancelled" &&
+      run.status !== "failed"
+    ) {
       nextPatch.status = "awaiting_pr_review";
       nextPatch.current_step = "complete";
     }
