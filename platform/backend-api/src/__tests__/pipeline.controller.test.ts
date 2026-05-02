@@ -38,9 +38,14 @@ vi.mock("../services/logger.service", () => ({
   logger: { info: vi.fn(), error: vi.fn() },
 }));
 
+vi.mock("../services/artifact.service", () => ({
+  artifactService: { read: vi.fn() },
+}));
+
 import { app } from "../app";
 import { pipelineService } from "../services/pipeline.service";
 import { adminOpsService } from "../services/admin-ops.service";
+import { artifactService } from "../services/artifact.service";
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -316,6 +321,80 @@ describe("Pipeline HTTP routes", () => {
 
       expect(res.status).toBe(200);
       expect(res.body.operation.status).toBe("running");
+    });
+  });
+
+  // ── GET /pipeline/:pipelineId/artifact ────────────────────────────────────
+
+  describe("GET /pipeline/:pipelineId/artifact", () => {
+    const PIPELINE_ID = "pipe-2026-05-02-f280c0b6";
+    const STORED_PATH = "../../runtime/artifacts/pipe-2026-05-02-f280c0b6/AI_IMPLEMENTATION_BRIEF.md";
+    const runWithArtifact = {
+      ...mockRun,
+      pipeline_id: PIPELINE_ID,
+      steps: [
+        {
+          role: "sprint-controller",
+          status: "complete",
+          gate_outcome: null,
+          artifact_paths: [STORED_PATH],
+          actor: "system",
+          started_at: "2026-05-02T00:00:00.000Z",
+        },
+      ],
+    };
+
+    beforeEach(() => {
+      vi.mocked(artifactService.read).mockReset();
+      vi.mocked(pipelineService.get).mockReset();
+    });
+
+    it("returns 200 reading content via artifactService when filename matches a stored path", async () => {
+      vi.mocked(pipelineService.get).mockResolvedValueOnce(runWithArtifact as never);
+      vi.mocked(artifactService.read).mockResolvedValueOnce("# Brief content");
+
+      const res = await request(app)
+        .get(`/pipeline/${PIPELINE_ID}/artifact`)
+        .query({ path: "AI_IMPLEMENTATION_BRIEF.md" });
+
+      expect(res.status).toBe(200);
+      expect(res.text).toBe("# Brief content");
+      expect(artifactService.read).toHaveBeenCalledWith(STORED_PATH);
+    });
+
+    it("returns 404 when the filename does not match any stored artifact path", async () => {
+      vi.mocked(pipelineService.get).mockResolvedValueOnce(runWithArtifact as never);
+
+      const res = await request(app)
+        .get(`/pipeline/${PIPELINE_ID}/artifact`)
+        .query({ path: "unknown_file.md" });
+
+      expect(res.status).toBe(404);
+      expect(res.body.error.code).toBe("ARTIFACT_NOT_FOUND");
+    });
+
+    it("returns 400 when path query param is missing", async () => {
+      const res = await request(app)
+        .get(`/pipeline/${PIPELINE_ID}/artifact`);
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe("ARTIFACT_PATH_REQUIRED");
+    });
+
+    it("returns 200 parsing JSON artifacts as objects", async () => {
+      const runWithJson = {
+        ...runWithArtifact,
+        steps: [{ ...runWithArtifact.steps[0], artifact_paths: ["../../runtime/artifacts/pipe-2026-05-02-f280c0b6/current_task.json"] }],
+      };
+      vi.mocked(pipelineService.get).mockResolvedValueOnce(runWithJson as never);
+      vi.mocked(artifactService.read).mockResolvedValueOnce(JSON.stringify({ task_id: "S01-001" }));
+
+      const res = await request(app)
+        .get(`/pipeline/${PIPELINE_ID}/artifact`)
+        .query({ path: "current_task.json" });
+
+      expect(res.status).toBe(200);
+      expect(res.body.task_id).toBe("S01-001");
     });
   });
 });
