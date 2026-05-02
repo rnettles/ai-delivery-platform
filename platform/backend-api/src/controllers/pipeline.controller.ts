@@ -599,14 +599,11 @@ export async function getPipelineArtifact(req: Request, res: Response, next: Nex
       throw new HttpError(400, "ARTIFACT_PATH_REQUIRED", "Query param 'path' is required");
     }
 
-    // Accept either a bare filename or a full relative path.
-    // Resolve to <artifactBasePath>/artifacts/<pipelineId>/<filename>.
+    // Accept either a bare filename or a full relative path; always resolve to
+    // <artifactBasePath>/<pipelineId>/<filename> (ArtifactService layout).
     const filename = path.basename(artifactParam);
-    const artifactPath = path.join("artifacts", pipelineId, filename);
-
-    // Resolve and validate the path stays within the artifact base directory
     const base = path.resolve(config.artifactBasePath);
-    const resolved = path.resolve(base, artifactPath);
+    const resolved = path.join(base, pipelineId, filename);
     if (!resolved.startsWith(base + path.sep) && resolved !== base) {
       throw new HttpError(400, "INVALID_ARTIFACT_PATH", "Artifact path must be within the artifact base directory");
     }
