@@ -9,6 +9,13 @@ interface CreateProjectRequest {
   repo_url?: string;
   default_branch?: string;
   channel_id?: string;
+  prompt_role?: string;
+  prompt_context?: string;
+}
+
+interface UpdatePromptFieldsRequest {
+  prompt_role?: string;
+  prompt_context?: string;
 }
 
 interface AssignChannelRequest {
@@ -70,12 +77,17 @@ export async function createProject(req: Request, res: Response, next: NextFunct
     const repoUrl = (body.repo_url ?? "").trim();
     const defaultBranch = (body.default_branch ?? "").trim();
     const channelId = (body.channel_id ?? "").trim();
+    const promptRole = (body.prompt_role ?? "").trim();
+    const promptContext = (body.prompt_context ?? "").trim();
 
     if (!name) {
       throw new HttpError(400, "PROJECT_NAME_REQUIRED", "name is required");
     }
     if (!repoUrl) {
       throw new HttpError(400, "PROJECT_REPO_URL_REQUIRED", "repo_url is required");
+    }
+    if (!promptRole) {
+      throw new HttpError(400, "PROJECT_PROMPT_ROLE_REQUIRED", "prompt_role is required");
     }
 
     const existing = await projectService.getByName(name);
@@ -87,6 +99,8 @@ export async function createProject(req: Request, res: Response, next: NextFunct
       name,
       repoUrl,
       defaultBranch: defaultBranch || undefined,
+      promptRole,
+      promptContext: promptContext || undefined,
     });
 
     if (channelId) {
@@ -170,6 +184,31 @@ export async function getProjectDesignArtifactContent(req: Request, res: Respons
     } else {
       res.status(200).type("text/plain").send(content);
     }
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function updateProjectPromptFields(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const projectId = String(req.params.projectId ?? "");
+    const body = req.body as UpdatePromptFieldsRequest;
+    const promptRole = (body.prompt_role ?? "").trim();
+    const promptContext = (body.prompt_context ?? "").trim();
+
+    if (!projectId) {
+      throw new HttpError(400, "PROJECT_ID_REQUIRED", "projectId path parameter is required");
+    }
+    if (!promptRole) {
+      throw new HttpError(400, "PROMPT_ROLE_REQUIRED", "prompt_role is required");
+    }
+
+    const project = await projectService.updatePromptFields(projectId, promptRole, promptContext || undefined);
+    if (!project) {
+      throw new HttpError(404, "PROJECT_NOT_FOUND", `Project not found: ${projectId}`);
+    }
+
+    res.status(200).json(project);
   } catch (error) {
     next(error);
   }

@@ -12,6 +12,8 @@ export interface Project {
   repo_url: string;
   default_branch: string;
   clone_path: string;
+  prompt_role: string | null;
+  prompt_context: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -27,6 +29,8 @@ function rowToProject(row: typeof projects.$inferSelect): Project {
     repo_url: row.repo_url,
     default_branch: row.default_branch,
     clone_path: row.clone_path,
+    prompt_role: row.prompt_role ?? null,
+    prompt_context: row.prompt_context ?? null,
     created_at: row.created_at.toISOString(),
     updated_at: row.updated_at.toISOString(),
   };
@@ -160,6 +164,8 @@ class ProjectService {
     name: string;
     repoUrl: string;
     defaultBranch?: string;
+    promptRole: string;
+    promptContext?: string;
   }): Promise<Project> {
     const projectId = randomUUID();
     const clonePath = clonePathFor(opts.name);
@@ -173,6 +179,8 @@ class ProjectService {
         repo_url: opts.repoUrl,
         default_branch: opts.defaultBranch ?? "main",
         clone_path: clonePath,
+        prompt_role: opts.promptRole,
+        prompt_context: opts.promptContext ?? null,
         created_at: now,
         updated_at: now,
       })
@@ -191,6 +199,18 @@ class ProjectService {
     logger.info("Channel registered to project", { channel_id: channelId, project_id: projectId });
   }
 
+  async updatePromptFields(projectId: string, promptRole: string, promptContext?: string): Promise<Project | null> {
+    const [row] = await db
+      .update(projects)
+      .set({ prompt_role: promptRole, prompt_context: promptContext ?? null, updated_at: new Date() })
+      .where(eq(projects.project_id, projectId))
+      .returning();
+
+    if (!row) return null;
+    logger.info("Project prompt fields updated", { project_id: projectId });
+    return rowToProject(row);
+  }
+
   /**
    * Bootstraps the "default" project from GIT_REPO_URL on startup.
    * This maintains backward compatibility for single-repo deployments.
@@ -204,7 +224,7 @@ class ProjectService {
     if (existing) return existing;
 
     logger.info("Bootstrapping default project from GIT_REPO_URL");
-    return this.create({ name: "default", repoUrl, defaultBranch: "master" });
+    return this.create({ name: "default", repoUrl, defaultBranch: "master", promptRole: "" });
   }
 }
 

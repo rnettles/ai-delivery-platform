@@ -59,6 +59,43 @@ export async function fetchProject(projectId: string): Promise<ProjectWithChanne
   return res.json() as Promise<ProjectWithChannels>;
 }
 
+export async function createProject(opts: {
+  name: string;
+  repo_url: string;
+  default_branch?: string;
+  channel_id?: string;
+  prompt_role: string;
+  prompt_context?: string;
+}): Promise<ProjectWithChannels> {
+  const res = await fetch("/api/projects", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(opts),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string };
+    throw new Error(body.message ?? `Failed to create project: ${res.status}`);
+  }
+  return res.json() as Promise<ProjectWithChannels>;
+}
+
+export async function updateProjectPromptFields(
+  projectId: string,
+  promptRole: string,
+  promptContext?: string,
+): Promise<ProjectWithChannels> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/prompt-fields`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt_role: promptRole, prompt_context: promptContext ?? null }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string };
+    throw new Error(body.message ?? `Failed to update prompt fields: ${res.status}`);
+  }
+  return res.json() as Promise<ProjectWithChannels>;
+}
+
 /** Maps a PipelineAction to the backend route suffix */
 const ACTION_ROUTE: Record<PipelineAction, string> = {
   approve: "approve",

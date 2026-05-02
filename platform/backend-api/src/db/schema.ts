@@ -98,6 +98,8 @@ export const projects = pgTable(
     repo_url: text("repo_url").notNull(),
     default_branch: text("default_branch").notNull().default("main"),
     clone_path: text("clone_path").notNull(), // e.g. /mnt/repo/{name}/
+    prompt_role: text("prompt_role"), // LLM role/persona preamble injected into agent conversations
+    prompt_context: text("prompt_context"), // LLM project context preamble injected into agent conversations
     created_at: timestamp("created_at").defaultNow().notNull(),
     updated_at: timestamp("updated_at").defaultNow().notNull(),
   },

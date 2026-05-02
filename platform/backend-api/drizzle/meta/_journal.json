@@ -22,6 +22,13 @@
       "when": 1776648063897,
       "tag": "0002_sleepy_moonstone",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1746212006000,
+      "tag": "0003_project_prompt_fields",
+      "breakpoints": true
     }
   ]
 }

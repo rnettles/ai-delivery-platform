@@ -9,3 +9,15 @@ export async function GET() {
   }
   return NextResponse.json(await res.json());
 }
+
+export async function POST(req: Request) {
+  const body: unknown = await req.json();
+  const res = await fetch(`${BACKEND}/projects`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  const data: unknown = await res.json();
+  return NextResponse.json(data, { status: res.status });
+}

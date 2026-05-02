@@ -221,9 +221,10 @@ export function formatProject(p: ProjectWithChannels): string {
   const channels = p.channel_ids?.length
     ? ` | channels: ${p.channel_ids.join(", ")}`
     : "";
+  const role = p.prompt_role ? ` | role: ${p.prompt_role.slice(0, 80)}${p.prompt_role.length > 80 ? "…" : ""}` : "";
   return (
     `project_id: ${p.project_id} | name: ${p.name}` +
-    ` | repo: ${p.repo_url} | branch: ${p.default_branch}${channels}` +
+    ` | repo: ${p.repo_url} | branch: ${p.default_branch}${channels}${role}` +
     ` | created: ${fmt(p.created_at)}`
   );
 }

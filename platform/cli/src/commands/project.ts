@@ -66,12 +66,16 @@ export function registerProjectCommands(program: Command): void {
     .requiredOption("--repo-url <url>", "Repository URL")
     .option("--default-branch <branch>", "Default branch", "main")
     .option("--channel-id <id>", "Slack channel ID to assign immediately")
+    .requiredOption("--prompt-role <text>", "LLM role/persona definition (injected as preamble into agent conversations)")
+    .option("--prompt-context <text>", "LLM project context (injected as preamble into agent conversations)")
     .option("--json", "Output raw JSON")
     .action(async (opts) => {
       const body: CreateProjectRequest = {
         name: opts.projectName,
         repo_url: opts.repoUrl,
         default_branch: opts.defaultBranch,
+        prompt_role: opts.promptRole,
+        prompt_context: opts.promptContext,
       };
       if (opts.channelId) body.channel_id = opts.channelId;
 

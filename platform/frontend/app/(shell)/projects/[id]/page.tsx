@@ -7,8 +7,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useProject } from "@/hooks/useProject";
 import { useProjectPipelines } from "@/hooks/useProjectPipelines";
 import { useCurrentProject } from "@/hooks/useCurrentProject";
+import { useProjectWork, type WorkPhase } from "@/hooks/useProjectWork";
 import { deriveAllowedActions, ACTION_LABELS } from "@/lib/action-map";
 import { LiveBadge } from "@/components/LiveBadge";
+import { updateProjectPromptFields } from "@/lib/api-client";
 import type { PipelineStatus, PipelineStatusChoice, PipelineAction } from "@/types";
 
 const OPEN_STATUSES: PipelineStatus[] = [
@@ -47,6 +49,57 @@ const ACTION_VARIANT: Record<PipelineAction, string> = {
 
 type EntryPoint = "planner" | "sprint-controller" | "implementer" | "verifier";
 type ExecutionMode = "next" | "next-flow" | "full-sprint";
+
+function isActiveWorkPath(path: string): boolean {
+  return path.includes("/active/") || path.includes("\\active\\");
+}
+
+function isStagedSprintPath(path: string): boolean {
+  return path.includes("/staged_sprints/") || path.includes("\\staged_sprints\\");
+}
+
+function recommendEntryPoint(phases: WorkPhase[] | undefined): EntryPoint {
+  if (!phases || phases.length === 0) {
+    return "planner";
+  }
+
+  let hasActivePendingTask = false;
+  let hasActiveDoneTask = false;
+  let hasStagedSprint = false;
+
+  for (const phase of phases) {
+    for (const sprint of phase.sprints) {
+      if (isStagedSprintPath(sprint.sprint_plan_path)) {
+        hasStagedSprint = true;
+      }
+
+      for (const task of sprint.tasks) {
+        if (!isActiveWorkPath(task.sprint_plan_path)) {
+          continue;
+        }
+
+        if (task.status === "pending") {
+          hasActivePendingTask = true;
+        }
+        if (task.status === "done") {
+          hasActiveDoneTask = true;
+        }
+      }
+    }
+  }
+
+  if (hasActivePendingTask) {
+    return "implementer";
+  }
+  if (hasActiveDoneTask) {
+    return "verifier";
+  }
+  if (hasStagedSprint) {
+    return "sprint-controller";
+  }
+
+  return "planner";
+}
 
 // ─── Active Pipeline Panel ────────────────────────────────────────────────────
 
@@ -216,13 +269,22 @@ function StartRunPanel({
   projectId: string;
   onCreated: (pipelineId: string) => void;
 }) {
-  const [entryPoint, setEntryPoint] = useState<EntryPoint>("sprint-controller");
+  const { phases } = useProjectWork(projectId);
+  const recommendedEntryPoint = recommendEntryPoint(phases);
+  const [entryPoint, setEntryPoint] = useState<EntryPoint>("planner");
+  const [entryPointOverridden, setEntryPointOverridden] = useState(false);
   const [sprintBranch, setSprintBranch] = useState("");
   const [description, setDescription] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+
+  useEffect(() => {
+    if (!entryPointOverridden) {
+      setEntryPoint(recommendedEntryPoint);
+    }
+  }, [entryPointOverridden, recommendedEntryPoint]);
 
   async function handleCreate(mode: ExecutionMode) {
     setDropdownOpen(false);
@@ -314,7 +376,10 @@ function StartRunPanel({
             <label className="block text-xs font-medium text-gray-600 mb-1">Entry Point</label>
             <select
               value={entryPoint}
-              onChange={(e) => setEntryPoint(e.target.value as EntryPoint)}
+              onChange={(e) => {
+                setEntryPointOverridden(true);
+                setEntryPoint(e.target.value as EntryPoint);
+              }}
               className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
             >
               <option value="sprint-controller">sprint-controller</option>
@@ -322,6 +387,16 @@ function StartRunPanel({
               <option value="implementer">implementer</option>
               <option value="verifier">verifier</option>
             </select>
+            <p className="mt-1 text-[11px] text-gray-500">
+              Default: {recommendedEntryPoint}
+              <span
+                className="ml-1 inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-gray-300 text-[10px] font-semibold text-gray-500"
+                title="Auto-selected to the deepest ready role based on repository work artifacts. Priority: implementer (active pending task) -> verifier (active completed task) -> sprint-controller (staged sprint plan) -> planner."
+                aria-label="How entry point default is chosen"
+              >
+                i
+              </span>
+            </p>
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">
@@ -435,9 +510,133 @@ function MultiPipelineWarning({
   );
 }
 
+// ─── Prompt Fields Section ───────────────────────────────────────────────────
+
+function PromptFieldsSection({ projectId, promptRole, promptContext }: { projectId: string; promptRole: string | null; promptContext: string | null }) {
+  const queryClient = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [roleValue, setRoleValue] = useState(promptRole ?? "");
+  const [contextValue, setContextValue] = useState(promptContext ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function handleEdit() {
+    setRoleValue(promptRole ?? "");
+    setContextValue(promptContext ?? "");
+    setEditing(true);
+    setError(null);
+  }
+
+  function handleCancel() {
+    setEditing(false);
+    setError(null);
+  }
+
+  async function handleSave() {
+    if (!roleValue.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await updateProjectPromptFields(projectId, roleValue.trim(), contextValue.trim() || undefined);
+      await queryClient.invalidateQueries({ queryKey: ["projects", projectId] });
+      setEditing(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="mb-4 rounded-lg border border-gray-200 bg-white p-4">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          Agent Prompt Configuration
+        </h2>
+        {!editing && (
+          <button
+            type="button"
+            onClick={handleEdit}
+            className="text-xs text-blue-600 hover:underline"
+          >
+            Edit
+          </button>
+        )}
+      </div>
+
+      {editing ? (
+        <div className="space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              Prompt Role <span className="text-red-500">*</span>
+            </label>
+            <p className="text-[11px] text-gray-500 mb-1">Defines the LLM role/persona for all agent conversations in this project.</p>
+            <textarea
+              value={roleValue}
+              onChange={(e) => setRoleValue(e.target.value)}
+              rows={4}
+              className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 resize-y"
+              placeholder="You are an expert software engineer specializing in…"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              Prompt Context <span className="text-gray-400 text-[11px] font-normal">(optional)</span>
+            </label>
+            <p className="text-[11px] text-gray-500 mb-1">Provides broader project domain knowledge and system boundaries.</p>
+            <textarea
+              value={contextValue}
+              onChange={(e) => setContextValue(e.target.value)}
+              rows={5}
+              className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 resize-y"
+              placeholder="This project implements…"
+            />
+          </div>
+          {error && <p className="text-xs text-red-600">{error}</p>}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={saving || !roleValue.trim()}
+              onClick={() => void handleSave()}
+              className="rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50 transition-colors"
+            >
+              {saving ? "Saving…" : "Save"}
+            </button>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={handleCancel}
+              className="text-xs text-gray-500 hover:text-gray-700"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div>
+            <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wide mb-0.5">Role</p>
+            {promptRole
+              ? <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">{promptRole}</p>
+              : <p className="text-sm text-gray-400 italic">No prompt role set. Click Edit to add one.</p>
+            }
+          </div>
+          <div>
+            <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wide mb-0.5">Context</p>
+            {promptContext
+              ? <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">{promptContext}</p>
+              : <p className="text-sm text-gray-400 italic">No prompt context set.</p>
+            }
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 // ─── Collapsible project metadata ─────────────────────────────────────────────
 
-function ProjectDetails({ project }: { project: { project_id: string; repo_url: string; default_branch: string; clone_path: string; channel_ids?: string[]; created_at: string; updated_at: string } }) {
+function ProjectDetails({ project }: { project: { project_id: string; repo_url: string; default_branch: string; clone_path: string; prompt_role?: string | null; prompt_context?: string | null; channel_ids?: string[]; created_at: string; updated_at: string } }) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -546,6 +745,9 @@ export default function ProjectDetailPage() {
           />
         )
       )}
+
+      {/* Agent Prompt Configuration */}
+      <PromptFieldsSection projectId={id} promptRole={project.prompt_role ?? null} promptContext={project.prompt_context ?? null} />
 
       {/* Collapsed project metadata */}
       <ProjectDetails project={project} />

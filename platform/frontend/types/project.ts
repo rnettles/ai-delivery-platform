@@ -6,6 +6,8 @@ export interface Project {
   repo_url: string;
   default_branch: string;
   clone_path: string;
+  prompt_role: string | null;
+  prompt_context: string | null;
   created_at: string;
   updated_at: string;
 }

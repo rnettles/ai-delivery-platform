@@ -7,6 +7,8 @@ export interface Project {
   repo_url: string;
   default_branch: string;
   clone_path: string;
+  prompt_role: string | null;
+  prompt_context: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -25,6 +27,8 @@ export interface CreateProjectRequest {
   repo_url: string;
   default_branch?: string;
   channel_id?: string;
+  prompt_role: string;
+  prompt_context?: string;
 }
 
 export interface AssignChannelRequest {

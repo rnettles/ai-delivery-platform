@@ -613,6 +613,8 @@ export async function getPipelineArtifact(req: Request, res: Response, next: Nex
     const directPathAllowed =
       normalizedParam.startsWith("../../runtime/artifacts/") ||
       normalizedParam.startsWith("runtime/artifacts/") ||
+      normalizedParam.startsWith("../../runtime/git-clones/") ||
+      normalizedParam.startsWith("runtime/git-clones/") ||
       normalizedParam.startsWith("project_work/");
 
     const candidatePaths = [

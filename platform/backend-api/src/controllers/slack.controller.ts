@@ -124,6 +124,7 @@ export async function handleSlackEvents(req: Request, res: Response, next: NextF
               name: project_name ?? "",
               repoUrl: repo_url ?? "",
               defaultBranch: default_branch || "main",
+              promptRole: "",
             });
             slackService
               .ack(response_url, `✅ Project \`${project.name}\` registered (id: \`${project.project_id}\`)`, true)
