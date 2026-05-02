@@ -9,7 +9,8 @@ interface LogEntry {
   context: Record<string, unknown>;
 }
 
-type LevelFilter = "all" | "info" | "warn" | "error";
+type Level = "info" | "warn" | "error" | "debug";
+const ALL_LEVELS: Level[] = ["error", "warn", "info", "debug"];
 
 const LEVEL_STYLES: Record<string, string> = {
   info:  "bg-blue-50 text-blue-700 border-blue-200",
@@ -24,6 +25,15 @@ const ROW_ACCENT: Record<string, string> = {
   info:  "",
   debug: "",
 };
+
+const LEVEL_ACTIVE_STYLE: Record<string, string> = {
+  error: "bg-red-600 text-white border-red-600",
+  warn:  "bg-yellow-500 text-white border-yellow-500",
+  info:  "bg-blue-600 text-white border-blue-600",
+  debug: "bg-gray-500 text-white border-gray-500",
+};
+
+const LEVEL_INACTIVE_STYLE = "bg-white text-gray-500 border-gray-200 hover:border-gray-400 hover:text-gray-800";
 
 function ContextCell({ ctx }: { ctx: Record<string, unknown> }) {
   const pairs = Object.entries(ctx);
@@ -42,7 +52,8 @@ function ContextCell({ ctx }: { ctx: Record<string, unknown> }) {
 
 export default function LogsPage() {
   const [entries, setEntries] = useState<LogEntry[]>([]);
-  const [filter, setFilter] = useState<LevelFilter>("all");
+  // Empty set = all levels shown (same as "All")
+  const [activeLevels, setActiveLevels] = useState<Set<Level>>(new Set());
   const [autoScroll, setAutoScroll] = useState(true);
   const [lastFetch, setLastFetch] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -61,67 +72,100 @@ export default function LogsPage() {
     }
   }, []);
 
-  // Initial fetch + 3-second poll
   useEffect(() => {
     void fetchLogs();
     const id = setInterval(() => { void fetchLogs(); }, 3000);
     return () => clearInterval(id);
   }, [fetchLogs]);
 
-  // Auto-scroll to bottom on new entries
   useEffect(() => {
     if (autoScroll) {
       bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     }
   }, [entries, autoScroll]);
 
-  const visible = filter === "all"
-    ? entries.filter((e) => !e.message.includes("PR merge gate waiting"))
-    : entries.filter((e) => e.level === filter && !e.message.includes("PR merge gate waiting"));
+  function toggleLevel(lvl: Level) {
+    setActiveLevels((prev) => {
+      const next = new Set(prev);
+      if (next.has(lvl)) {
+        next.delete(lvl);
+      } else {
+        next.add(lvl);
+      }
+      return next;
+    });
+  }
+
+  function clearFilters() {
+    setActiveLevels(new Set());
+  }
+
+  const isAllShown = activeLevels.size === 0;
 
   const filteredEntries = entries.filter((e) => !e.message.includes("PR merge gate waiting"));
 
-  const counts = {
+  const visible = isAllShown
+    ? filteredEntries
+    : filteredEntries.filter((e) => activeLevels.has(e.level as Level));
+
+  const counts: Record<Level, number> = {
     error: filteredEntries.filter((e) => e.level === "error").length,
     warn:  filteredEntries.filter((e) => e.level === "warn").length,
     info:  filteredEntries.filter((e) => e.level === "info").length,
+    debug: filteredEntries.filter((e) => e.level === "debug").length,
   };
 
   return (
     <div className="flex h-full flex-col">
       {/* ── Toolbar ── */}
-      <div className="flex flex-shrink-0 items-center gap-3 border-b border-gray-200 bg-white px-6 py-3">
+      <div className="flex flex-shrink-0 flex-wrap items-center gap-3 border-b border-gray-200 bg-white px-6 py-3">
         <h1 className="text-sm font-semibold text-gray-800">Server Logs</h1>
 
-        {/* Level filter buttons */}
-        <div className="flex items-center gap-1 rounded-md border border-gray-200 p-0.5">
-          {(["all", "error", "warn", "info"] as const).map((lvl) => (
-            <button
-              key={lvl}
-              type="button"
-              onClick={() => setFilter(lvl)}
-              className={`rounded px-2.5 py-0.5 text-xs font-medium transition-colors ${
-                filter === lvl
-                  ? "bg-gray-900 text-white"
-                  : "text-gray-500 hover:text-gray-800"
-              }`}
-            >
-              {lvl === "all" ? "All" : lvl.toUpperCase()}
-              {lvl !== "all" && counts[lvl] > 0 && (
-                <span className={`ml-1.5 rounded-full px-1.5 py-0 text-[10px] font-semibold ${
-                  lvl === "error" ? "bg-red-500 text-white" :
-                  lvl === "warn"  ? "bg-yellow-500 text-white" :
-                  "bg-gray-200 text-gray-700"
-                }`}>
-                  {counts[lvl]}
-                </span>
-              )}
-            </button>
-          ))}
+        {/* Level filter toggle buttons */}
+        <div className="flex items-center gap-1.5">
+          {/* All pill */}
+          <button
+            type="button"
+            onClick={clearFilters}
+            className={`rounded-full border px-3 py-0.5 text-xs font-medium transition-colors ${
+              isAllShown
+                ? "bg-gray-900 text-white border-gray-900"
+                : "bg-white text-gray-400 border-gray-200 hover:text-gray-700 hover:border-gray-400"
+            }`}
+          >
+            All
+          </button>
+
+          {ALL_LEVELS.map((lvl) => {
+            const active = activeLevels.has(lvl);
+            return (
+              <button
+                key={lvl}
+                type="button"
+                onClick={() => toggleLevel(lvl)}
+                className={`rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors ${
+                  active ? LEVEL_ACTIVE_STYLE[lvl] : LEVEL_INACTIVE_STYLE
+                }`}
+              >
+                {lvl.toUpperCase()}
+                {counts[lvl] > 0 && (
+                  <span className={`ml-1.5 text-[10px] font-bold ${active ? "opacity-80" : "text-gray-400"}`}>
+                    {counts[lvl]}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
 
+        {/* Active filter summary */}
+        {!isAllShown && (
+          <span className="text-xs text-gray-400">
+            showing {[...activeLevels].join(" + ")} · <button type="button" className="underline hover:text-gray-600" onClick={clearFilters}>clear</button>
+          </span>
+        )}
+
         <div className="ml-auto flex items-center gap-3">
-          {/* Auto-scroll toggle */}
           <label className="flex cursor-pointer items-center gap-1.5 text-xs text-gray-500">
             <input
               type="checkbox"
@@ -132,7 +176,6 @@ export default function LogsPage() {
             Auto-scroll
           </label>
 
-          {/* Clear button */}
           <button
             type="button"
             onClick={() => setEntries([])}
@@ -141,14 +184,10 @@ export default function LogsPage() {
             Clear
           </button>
 
-          {/* Status */}
           <span className="text-xs text-gray-400">
-            {lastFetch
-              ? `Updated ${lastFetch.toLocaleTimeString()}`
-              : "Connecting…"}
+            {lastFetch ? `Updated ${lastFetch.toLocaleTimeString()}` : "Connecting…"}
           </span>
 
-          {/* Live indicator */}
           <span className="flex items-center gap-1 text-xs text-green-600">
             <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />
             LIVE
@@ -156,7 +195,6 @@ export default function LogsPage() {
         </div>
       </div>
 
-      {/* ── Error banner ── */}
       {error && (
         <div className="flex-shrink-0 bg-red-50 px-6 py-2 text-xs text-red-700 border-b border-red-200">
           Failed to fetch logs: {error}
