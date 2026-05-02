@@ -76,7 +76,125 @@ export interface DesignInputGateResult {
   intake_context?: DesignFile[];
 }
 
+export interface DesignArtifactEntry {
+  path: string;
+  filename: string;
+  category: "fr" | "adr" | "tdn";
+}
+
+export interface ProjectDesignArtifactsResult {
+  project_id: string;
+  fr: DesignArtifactEntry[];
+  adr: DesignArtifactEntry[];
+  tdn: DesignArtifactEntry[];
+  total: number;
+}
+
 export class DesignInputGateService {
+  /**
+   * Lists design artifact files for a project, grouped by category (FR, ADR, TDN).
+   * Does NOT load file content — intended for UI catalogue views.
+   */
+  async listProjectDesignArtifacts(projectId: string): Promise<ProjectDesignArtifactsResult> {
+    const project = await projectService.getById(projectId);
+    if (!project) {
+      throw new HttpError(404, "PROJECT_NOT_FOUND", `Project not found: ${projectId}`);
+    }
+
+    await projectGitService.ensureReady(project, { forcePull: false });
+
+    const repoRoot = path.isAbsolute(project.clone_path)
+      ? project.clone_path
+      : path.join(process.cwd(), project.clone_path);
+
+    const [frPaths, adrPaths, tdnPaths] = await Promise.all([
+      this.collectCategoryFiles(repoRoot, FR_ROOTS),
+      this.collectCategoryFiles(repoRoot, ADR_ROOTS),
+      this.collectCategoryFiles(repoRoot, TDN_ROOTS),
+    ]);
+
+    const toEntry = (relPath: string, category: DesignArtifactEntry["category"]): DesignArtifactEntry => ({
+      path: relPath,
+      filename: path.basename(relPath),
+      category,
+    });
+
+    const fr = frPaths.map((p) => toEntry(p, "fr"));
+    const adr = adrPaths.map((p) => toEntry(p, "adr"));
+    const tdn = tdnPaths.map((p) => toEntry(p, "tdn"));
+
+    return {
+      project_id: projectId,
+      fr,
+      adr,
+      tdn,
+      total: fr.length + adr.length + tdn.length,
+    };
+  }
+
+  /**
+   * Collects file paths from all given roots within a repo, no content loaded.
+   */
+  private async collectCategoryFiles(repoRoot: string, roots: string[]): Promise<string[]> {
+    const all: string[] = [];
+    for (const root of roots) {
+      const absRoot = path.join(repoRoot, root);
+      const files = await this.collectFiles(absRoot, repoRoot, 0, 4, 50);
+      for (const f of files) {
+        if (!all.includes(f)) all.push(f);
+      }
+    }
+    return all;
+  }
+
+  /**
+   * Reads and returns the content of a single design artifact file.
+   * The requested path must resolve to a file within one of the known design roots
+   * (DESIGN_ROOTS) to prevent path traversal.
+   */
+  async readDesignArtifactContent(projectId: string, relFilePath: string): Promise<{ content: string; ext: string }> {
+    const project = await projectService.getById(projectId);
+    if (!project) {
+      throw new HttpError(404, "PROJECT_NOT_FOUND", `Project not found: ${projectId}`);
+    }
+
+    const repoRoot = path.isAbsolute(project.clone_path)
+      ? project.clone_path
+      : path.join(process.cwd(), project.clone_path);
+
+    // Resolve the requested path within repoRoot.
+    // path.resolve normalizes '..' segments and anchors to repoRoot.
+    const absFile = path.resolve(repoRoot, path.normalize(relFilePath));
+
+    // Defense in depth: verify the resolved absolute path is still inside repoRoot.
+    const relToRepo = path.relative(repoRoot, absFile);
+    if (relToRepo.startsWith("..") || path.isAbsolute(relToRepo)) {
+      throw new HttpError(403, "PATH_NOT_ALLOWED", "Requested path is outside permitted design roots");
+    }
+
+    // Security: ensure the resolved path falls within one of the known design roots.
+    // Use path.relative() for robust cross-platform comparison instead of startsWith().
+    const withinDesignRoot = DESIGN_ROOTS.some((root) => {
+      const relToDesignRoot = path.relative(path.join(repoRoot, root), absFile);
+      return !relToDesignRoot.startsWith("..") && !path.isAbsolute(relToDesignRoot);
+    });
+    if (!withinDesignRoot) {
+      throw new HttpError(403, "PATH_NOT_ALLOWED", "Requested path is outside permitted design roots");
+    }
+
+    let raw: string;
+    try {
+      raw = await fs.readFile(absFile, "utf-8");
+    } catch {
+      throw new HttpError(404, "ARTIFACT_NOT_FOUND", `Design artifact not found: ${path.basename(relFilePath)}`);
+    }
+
+    return {
+      content: raw,
+      ext: path.extname(absFile).toLowerCase().replace(/^\./, ""),
+    };
+  }
+
   /**
    * Validates that design inputs exist AND loads FR/PRD content for LLM injection.
    * Throws HTTP 422 DESIGN_INPUT_MISSING if the project is not mapped or no design
