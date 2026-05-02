@@ -6,6 +6,42 @@ import { useProjectPipelines } from "@/hooks/useProjectPipelines";
 import { LiveBadge } from "@/components/LiveBadge";
 import type { PipelineStatusChoice, PipelineStatus } from "@/types";
 
+type DateRange = "today" | "yesterday" | "last7" | "all";
+
+const DATE_RANGE_LABELS: Record<DateRange, string> = {
+  today:     "Today",
+  yesterday: "Yesterday",
+  last7:     "Last 7 days",
+  all:       "All time",
+};
+
+function startOfDay(d: Date): Date {
+  const out = new Date(d);
+  out.setHours(0, 0, 0, 0);
+  return out;
+}
+
+function filterByDateRange(pipelines: PipelineStatusChoice[], range: DateRange): PipelineStatusChoice[] {
+  if (range === "all") return pipelines;
+  const now = new Date();
+  const todayStart = startOfDay(now);
+  if (range === "today") {
+    return pipelines.filter((p) => new Date(p.updated_at) >= todayStart);
+  }
+  if (range === "yesterday") {
+    const yesterdayStart = new Date(todayStart);
+    yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+    return pipelines.filter((p) => {
+      const d = new Date(p.updated_at);
+      return d >= yesterdayStart && d < todayStart;
+    });
+  }
+  // last7
+  const sevenDaysAgo = new Date(todayStart);
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+  return pipelines.filter((p) => new Date(p.updated_at) >= sevenDaysAgo);
+}
+
 const STATUS_STYLES: Record<PipelineStatus, string> = {
   running:            "bg-blue-100 text-blue-800",
   awaiting_approval:  "bg-yellow-100 text-yellow-800",
@@ -73,8 +109,14 @@ interface PageProps {
 export default function ProjectPipelinesPage({ params }: PageProps) {
   const { id } = use(params);
   const { data: allPipelines, isLoading, isError, isLive } = useProjectPipelines(id);
-  const pipelines = (allPipelines ?? []).filter((p) => INACTIVE_STATUSES.includes(p.status));
   const [filterStatus, setFilterStatus] = useState<PipelineStatus | null>(null);
+  const [dateRange, setDateRange] = useState<DateRange>("today");
+
+  const inactivePipelines = (allPipelines ?? [])
+    .filter((p) => INACTIVE_STATUSES.includes(p.status))
+    .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+
+  const pipelines = filterByDateRange(inactivePipelines, dateRange);
 
   if (isLoading) {
     return (
@@ -99,7 +141,7 @@ export default function ProjectPipelinesPage({ params }: PageProps) {
     );
   }
 
-  if (!allPipelines || pipelines.length === 0) {
+  if (!allPipelines || inactivePipelines.length === 0) {
     return (
       <div className="p-6">
         <div className="mb-4 flex items-center justify-between">
@@ -115,7 +157,7 @@ export default function ProjectPipelinesPage({ params }: PageProps) {
     );
   }
 
-  // Build per-status counts from all pipelines
+  // Build per-status counts from filtered (by date) pipelines
   const counts = pipelines.reduce<Partial<Record<PipelineStatus, number>>>((acc, p) => {
     acc[p.status] = (acc[p.status] ?? 0) + 1;
     return acc;
@@ -140,9 +182,26 @@ export default function ProjectPipelinesPage({ params }: PageProps) {
           </h1>
           <LiveBadge active={isLive} />
         </div>
-        <Link href={`/projects/${id}`} className="text-xs text-gray-400 hover:text-gray-600">
-          ← Back to project
-        </Link>
+        <div className="flex items-center gap-3">
+          {/* Date range dropdown */}
+          <select
+            value={dateRange}
+            onChange={(e) => {
+              setDateRange(e.target.value as DateRange);
+              setFilterStatus(null);
+            }}
+            className="rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-400"
+          >
+            {(Object.keys(DATE_RANGE_LABELS) as DateRange[]).map((key) => (
+              <option key={key} value={key}>
+                {DATE_RANGE_LABELS[key]}
+              </option>
+            ))}
+          </select>
+          <Link href={`/projects/${id}`} className="text-xs text-gray-400 hover:text-gray-600">
+            ← Back to project
+          </Link>
+        </div>
       </div>
 
       {/* Status filter pills */}
@@ -176,11 +235,17 @@ export default function ProjectPipelinesPage({ params }: PageProps) {
         </div>
       )}
 
-      <div className="flex flex-col gap-2">
-        {visible.map((pipeline) => (
-          <PipelineRow key={pipeline.pipeline_id} pipeline={pipeline} />
-        ))}
-      </div>
+      {visible.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-16 text-center text-sm text-gray-400">
+          No pipelines for {DATE_RANGE_LABELS[dateRange].toLowerCase()}.
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {visible.map((pipeline) => (
+            <PipelineRow key={pipeline.pipeline_id} pipeline={pipeline} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

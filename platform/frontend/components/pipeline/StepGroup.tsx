@@ -43,7 +43,17 @@ export function StepGroup({ group, isFirst: _isFirst, isActive, pipelineId, onAr
   const [open, setOpen] = useState(defaultOpen);
 
   const label = ROLE_LABEL[group.role] ?? group.role;
-  const iterSuffix = group.iteration > 1 ? ` (attempt ${group.iteration})` : "";
+  let iterSuffix = "";
+  switch (group.kind) {
+    case "verifier-fix":   iterSuffix = group.fixCycle > 1 ? ` (fix ${group.fixCycle})` : " (fix)"; break;
+    case "recheck":        iterSuffix = group.fixCycle > 1 ? ` (re-check ${group.fixCycle})` : " (re-check)"; break;
+    case "impl-closeout":  iterSuffix = " (close-out)"; break;
+    case "task-closeout":  iterSuffix = " (task close-out)"; break;
+    case "sprint-closeout": iterSuffix = " (sprint close-out)"; break;
+    case "phase-closeout":  iterSuffix = " (phase close-out)"; break;
+    case "retry":          iterSuffix = group.iteration > 2 ? ` (retry ${group.iteration - 1})` : " (retry)"; break;
+    default:               iterSuffix = ""; break;
+  }
   const depth = ROLE_DEPTH[group.role] ?? 0;
   const paddingClass = DEPTH_PADDING[Math.min(depth, DEPTH_PADDING.length - 1)];
 
