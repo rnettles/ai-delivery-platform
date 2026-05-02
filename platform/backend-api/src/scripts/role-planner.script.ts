@@ -12,6 +12,11 @@ import { prRemediationService } from "../services/pr-remediation.service";
 import { designInputGateService, EntryMode, DesignInputGateResult } from "../services/design-input-gate.service";
 import { HttpError } from "../utils/http-error";
 import { buildProjectPreamble } from "../utils/prompt-preamble";
+import { featureFlags } from "../utils/feature-flags";
+import { sprintPlanValidatorService } from "../services/sprint-plan-validator.service";
+import { sprintPlanRendererService } from "../services/sprint-plan-renderer.service";
+import type { RichSprintLlmResponse } from "../domain/sprint-plan.types";
+import { logger } from "../services/logger.service";
 
 export interface PlannerInput {
   description: string;
@@ -460,38 +465,21 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
 
     context.notify("📋 Staging Sprint 1 plan from phase plan...");
 
-    interface SprintLlmResponse {
-      sprint_plan: { sprint_id: string; phase_id: string; name: string; goals: string[]; tasks: string[]; status: "staged"; execution_mode?: "normal" | "fast-track" };
-      first_task: { task_id: string; title: string; description: string; acceptance_criteria: string[]; estimated_effort: "S" | "M" | "L"; files_likely_affected: string[]; status: "pending" };
-    }
-
-    const userContent =
-      `Phase plan:\n\n${phasePlanContent}\n\n` +
-      `Produce a sprint plan for Sprint 1 including the first task detail. ` +
-      (description ? `Additional context: ${description}` : "");
-
-    const systemPrompt = buildProjectPreamble(project) + await governanceService.getComposedPrompt("sprint-controller");
-    const provider = await llmFactory.forRole("sprint-controller");
-    const llm = await provider.chatJson<SprintLlmResponse>(
-      [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userContent },
-      ],
-      { meta: { role: "sprint-controller", pipeline_id: pipelineId, call_type: "sprint-plan" } }
+    const { content: sprintPlanContent, sprint_id: sprintIdRaw } = await this.generateSprintPlanContent(
+      pipelineId,
+      phasePlanContent,
+      description,
+      project,
+      { includeFirstTaskInLegacy: true }
     );
 
-    if (!llm.sprint_plan?.sprint_id || !llm.first_task?.task_id) {
-      throw new Error("Sprint planning LLM response missing required fields (sprint_id, first_task.task_id)");
-    }
-
-    const sprintPlanContent = this.formatSprintMarkdown(llm.sprint_plan, llm.first_task);
-    const sprintPlanFilename = `sprint_plan_${llm.sprint_plan.sprint_id.toLowerCase()}.md`;
+    const sprintPlanFilename = `sprint_plan_${sprintIdRaw.toLowerCase()}.md`;
     const repoRelPath = path.join("project_work", "ai_project_tasks", "staged_sprints", sprintPlanFilename);
 
     await fs.mkdir(stagedSprintsDir, { recursive: true });
     await fs.writeFile(path.join(stagedSprintsDir, sprintPlanFilename), sprintPlanContent, "utf-8");
     await projectGitService.ensureReady(project);
-    await projectGitService.commitAll(project, project.default_branch, `plan: stage ${llm.sprint_plan.sprint_id} sprint plan`);
+    await projectGitService.commitAll(project, project.default_branch, `plan: stage ${sprintIdRaw} sprint plan`);
     await projectGitService.push(project, project.default_branch);
     context.notify(`📁 Sprint plan staged at \`${repoRelPath}\` on \`${project.default_branch}\``);
   }
@@ -1080,40 +1068,21 @@ ${designArtifacts}
       );
     }
 
-    const userContent =
-      `Phase plan:\n\n${phasePlanContent}\n\n` +
-      `Produce a sprint plan for Sprint 1 only. Do not generate task briefs or current_task artifacts. ` +
-      (description ? `Additional context: ${description}` : "");
-
     const _preambleRun = await pipelineService.get(pipelineId);
     const _preambleProject = _preambleRun.project_id ? await projectService.getById(_preambleRun.project_id) : null;
-    const systemPrompt = buildProjectPreamble(_preambleProject) + await governanceService.getComposedPrompt("sprint-controller");
-    const provider = await llmFactory.forRole("sprint-controller");
 
-    interface SprintLlmResponse {
-      sprint_plan: { sprint_id: string; phase_id: string; name: string; goals: string[]; tasks: string[]; status: "staged" };
-      // Optional compatibility fields if the model returns extra content.
-      first_task?: { task_id: string; title: string; description: string; acceptance_criteria: string[]; estimated_effort: "S" | "M" | "L"; files_likely_affected: string[]; status: "pending" };
-      task_flags?: { fr_ids_in_scope: string[]; architecture_contract_change: boolean; ui_evidence_required: boolean; incident_tier: "none" | "p0" | "p1" | "p2" | "p3"; schema_change?: boolean; migration_change?: boolean; cross_subsystem_change?: boolean };
-    }
-
-    const llm = await provider.chatJson<SprintLlmResponse>([
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userContent },
-    ], { meta: { role: "sprint-controller", pipeline_id: pipelineId, call_type: "sprint-plan" } });
-
-    if (!llm.sprint_plan?.sprint_id) {
-      throw new Error("Sprint planning LLM response missing required fields");
-    }
-
-    // Use full format (with first task detail) when first_task is available so SCT can parse it.
-    const sprintPlanContent = llm.first_task
-      ? this.formatSprintMarkdown(llm.sprint_plan, llm.first_task)
-      : this.formatSprintMarkdownFromPlan(llm.sprint_plan);
+    const { content: sprintPlanContent, sprint_id: sprintIdRaw, phase_id: phaseIdRaw } =
+      await this.generateSprintPlanContent(
+        pipelineId,
+        phasePlanContent,
+        description,
+        _preambleProject,
+        { includeFirstTaskInLegacy: false }
+      );
 
     const sprintPlanPath = await artifactService.write(
       pipelineId,
-      `sprint_plan_${llm.sprint_plan.sprint_id.toLowerCase()}.md`,
+      `sprint_plan_${sprintIdRaw.toLowerCase()}.md`,
       sprintPlanContent
     );
 
@@ -1126,19 +1095,19 @@ ${designArtifacts}
       const repoBase = path.isAbsolute(project.clone_path)
         ? project.clone_path
         : path.join(process.cwd(), project.clone_path);
-      const sprintPlanFilename = `sprint_plan_${llm.sprint_plan.sprint_id.toLowerCase()}.md`;
+      const sprintPlanFilename = `sprint_plan_${sprintIdRaw.toLowerCase()}.md`;
       const stagedSprintsDir = path.join(repoBase, "project_work", "ai_project_tasks", "staged_sprints");
       const repoRelPath = path.join("project_work", "ai_project_tasks", "staged_sprints", sprintPlanFilename);
       await fs.mkdir(stagedSprintsDir, { recursive: true });
       await fs.writeFile(path.join(stagedSprintsDir, sprintPlanFilename), sprintPlanContent, "utf-8");
       await projectGitService.ensureReady(project);
-      await projectGitService.commitAll(project, project.default_branch, `plan: stage ${llm.sprint_plan.sprint_id} sprint plan`);
+      await projectGitService.commitAll(project, project.default_branch, `plan: stage ${sprintIdRaw} sprint plan`);
       await projectGitService.push(project, project.default_branch);
       context.notify(`📁 Sprint plan staged at \`${repoRelPath}\` on \`${project.default_branch}\``);
     }
 
     return {
-      phase_id: llm.sprint_plan.phase_id,
+      phase_id: phaseIdRaw,
       artifact_path: sprintPlanPath,
     };
   }
@@ -1163,11 +1132,117 @@ ${designArtifacts}
     }
   }
 
+  /**
+   * Calls the Sprint Planner LLM and returns the rendered sprint-plan markdown plus
+   * top-level identifiers. Behavior depends on the SPRINT_PLAN_RICH feature flag:
+   *
+   *  - Flag ON: uses the rich (Plan v1) prompt, validates the response with
+   *    sprintPlanValidatorService, and renders deterministic markdown via
+   *    sprintPlanRendererService. Validation failure → falls back to legacy path.
+   *  - Flag OFF (default): uses the legacy thin prompt and `formatSprintMarkdown`.
+   *
+   * The rich path also returns the parsed `RichSprintLlmResponse` so callers can persist
+   * structured data alongside the markdown if they wish (current callers do not yet).
+   */
+  private async generateSprintPlanContent(
+    pipelineId: string,
+    phasePlanContent: string,
+    description: string,
+    project: Awaited<ReturnType<typeof projectService.getById>> | null,
+    options: { includeFirstTaskInLegacy: boolean }
+  ): Promise<{
+    content: string;
+    sprint_id: string;
+    phase_id: string;
+    rich?: RichSprintLlmResponse;
+  }> {
+    const provider = await llmFactory.forRole("sprint-controller");
+    const userContent =
+      `Phase plan:\n\n${phasePlanContent}\n\n` +
+      `Produce a sprint plan for Sprint 1${options.includeFirstTaskInLegacy ? " including the first task detail" : " only. Do not generate task briefs or current_task artifacts"}. ` +
+      (description ? `Additional context: ${description}` : "");
+
+    if (featureFlags.sprintPlanRich()) {
+      const invariants = await governanceService.processInvariantsFor("sprint-controller");
+      const richPrompt = await governanceService.getPrompt("sprint-controller-rich");
+      const systemPrompt =
+        buildProjectPreamble(project) +
+        `## PROCESS INVARIANTS (non-overridable)\n\n${invariants}\n\n---\n\n## ROLE-SPECIFIC MECHANICS\n\n${richPrompt}`;
+
+      const richSchema = (await governanceService.getSchema("sprint_plan_rich")) as Record<string, unknown>;
+
+      try {
+        const llm = await provider.chatJson<RichSprintLlmResponse>(
+          [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userContent },
+          ],
+          {
+            meta: { role: "sprint-controller", pipeline_id: pipelineId, call_type: "sprint-plan-rich" },
+            output_schema: richSchema,
+          }
+        );
+
+        const result = await sprintPlanValidatorService.validateRichResponse(llm);
+        if (!result.ok) {
+          logger.warn("Rich sprint plan failed validation; falling back to legacy path", {
+            pipeline_id: pipelineId,
+            error_count: result.errors.length,
+            first_errors: result.errors.slice(0, 3),
+          });
+        } else {
+          const content = sprintPlanRendererService.render(
+            result.value.sprint_plan,
+            result.value.task_specifications
+          );
+          return {
+            content,
+            sprint_id: result.value.sprint_plan.sprint_id,
+            phase_id: result.value.sprint_plan.phase_id,
+            rich: result.value,
+          };
+        }
+      } catch (err) {
+        logger.warn("Rich sprint plan LLM call failed; falling back to legacy path", {
+          pipeline_id: pipelineId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // Legacy thin path.
+    interface LegacyResponse {
+      sprint_plan: { sprint_id: string; phase_id: string; name: string; goals: string[]; tasks: string[]; status: "staged"; execution_mode?: "normal" | "fast-track" };
+      first_task?: { task_id: string; title: string; description: string; acceptance_criteria: string[]; estimated_effort: "S" | "M" | "L"; files_likely_affected: string[]; status: "pending" };
+    }
+    const systemPrompt = buildProjectPreamble(project) + (await governanceService.getComposedPrompt("sprint-controller"));
+    const llm = await provider.chatJson<LegacyResponse>(
+      [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userContent },
+      ],
+      { meta: { role: "sprint-controller", pipeline_id: pipelineId, call_type: "sprint-plan" } }
+    );
+
+    if (!llm.sprint_plan?.sprint_id) {
+      throw new Error("Sprint planning LLM response missing required fields (sprint_plan.sprint_id)");
+    }
+
+    const content = llm.first_task
+      ? this.formatSprintMarkdown(llm.sprint_plan, llm.first_task)
+      : this.formatSprintMarkdownFromPlan(llm.sprint_plan);
+
+    return {
+      content,
+      sprint_id: llm.sprint_plan.sprint_id,
+      phase_id: llm.sprint_plan.phase_id,
+    };
+  }
+
   private formatSprintMarkdown(
     plan: { sprint_id: string; phase_id: string; name: string; goals: string[]; tasks: string[]; status: string },
     firstTask: { task_id: string; title: string; description: string; estimated_effort: string; files_likely_affected: string[]; acceptance_criteria: string[] }
-  ): string {
-    const goals = plan.goals.map((g) => `- ${g}`).join("\n");
+  ): string {    const goals = plan.goals.map((g) => `- ${g}`).join("\n");
     const tasks = plan.tasks.map((t) => `- ${t}`).join("\n");
     return `# Sprint Plan: ${plan.sprint_id}
 

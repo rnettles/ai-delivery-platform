@@ -9,6 +9,7 @@
   "roles": {
     "planner": { "prompt": "prompts/role-planner.md" },
     "sprint-controller": { "prompt": "prompts/role-sprint-controller.md" },
+    "sprint-controller-rich": { "prompt": "prompts/role-sprint-controller-rich.md" },
     "implementer": { "prompt": "prompts/role-implementer.md" },
     "verifier": { "prompt": "prompts/role-verifier.md" }
   },
@@ -23,6 +24,8 @@
   "schemas": {
     "phase_plan": "schemas/phase_plan.schema.json",
     "sprint_plan": "schemas/sprint_plan.schema.json",
+    "sprint_plan_rich": "schemas/sprint_plan_rich.schema.json",
+    "execution_contract": "schemas/execution_contract.schema.json",
     "task": "schemas/task.schema.json"
   }
 }

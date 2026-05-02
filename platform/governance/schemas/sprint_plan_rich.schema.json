@@ -1,0 +1,253 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "sprint_plan_rich.schema.json",
+  "title": "RichSprintLlmResponse",
+  "description": "Rich Sprint Plan emitted by the Sprint Planner LLM call. Carries full per-task specifications including execution_contract. Schema-strict; consumed by the deterministic markdown renderer and Sprint Controller staging.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["plan_version", "sprint_plan", "task_specifications", "first_task_id"],
+  "properties": {
+    "plan_version": { "type": "integer", "const": 1 },
+    "first_task_id": { "type": "string", "minLength": 1 },
+    "sprint_plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sprint_id",
+        "phase_id",
+        "name",
+        "status",
+        "execution_mode",
+        "overview",
+        "design_decisions",
+        "goals",
+        "tasks",
+        "data_contracts",
+        "invariants",
+        "dependency_graph",
+        "test_matrix",
+        "validation_gates",
+        "definition_of_done"
+      ],
+      "properties": {
+        "sprint_id": { "type": "string", "pattern": "^S\\d{2,}$" },
+        "phase_id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "status": { "type": "string", "const": "staged" },
+        "execution_mode": { "type": "string", "enum": ["normal", "fast-track"] },
+        "overview": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["purpose", "scope"],
+          "properties": {
+            "purpose": { "type": "string", "minLength": 1 },
+            "scope": { "type": "string", "minLength": 1 }
+          }
+        },
+        "design_decisions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["decision", "choice", "rationale"],
+            "properties": {
+              "decision": { "type": "string", "minLength": 1 },
+              "choice": { "type": "string", "minLength": 1 },
+              "rationale": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "goals": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "tasks": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "pattern": "^S\\d{2,}-\\d{3,}$" }
+        },
+        "data_contracts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "kind", "json_schema"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "kind": {
+                "type": "string",
+                "enum": ["request", "response", "entity", "event", "db_row", "config"]
+              },
+              "description": { "type": "string" },
+              "json_schema": { "type": "object" }
+            }
+          }
+        },
+        "invariants": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "statement", "testable_via"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "statement": { "type": "string", "minLength": 1 },
+              "testable_via": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "dependency_graph": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "string", "pattern": "^S\\d{2,}-\\d{3,}$" }
+          }
+        },
+        "test_matrix": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["task_id", "normal", "edge", "failure", "idempotency"],
+            "properties": {
+              "task_id": { "type": "string", "pattern": "^S\\d{2,}-\\d{3,}$" },
+              "normal": { "type": "array", "items": { "type": "string" } },
+              "edge": { "type": "array", "items": { "type": "string" } },
+              "failure": { "type": "array", "items": { "type": "string" } },
+              "idempotency": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
+        "validation_gates": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["lint", "typecheck", "unit", "integration", "contract"]
+          },
+          "uniqueItems": true
+        },
+        "definition_of_done": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "fast_track_lane": { "type": "string" },
+        "fast_track_rationale": { "type": "string" },
+        "fast_track_intake_id": { "type": "string" }
+      }
+    },
+    "task_specifications": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "task_id",
+          "title",
+          "description",
+          "subsystem",
+          "fr_ids_in_scope",
+          "inputs",
+          "outputs",
+          "implementation_notes",
+          "acceptance_criteria",
+          "estimated_effort",
+          "files_likely_affected",
+          "depends_on",
+          "test_refs",
+          "invariant_refs",
+          "contract_refs",
+          "task_flags",
+          "execution_contract"
+        ],
+        "properties": {
+          "task_id": { "type": "string", "pattern": "^S\\d{2,}-\\d{3,}$" },
+          "title": { "type": "string", "minLength": 1 },
+          "description": { "type": "string", "minLength": 1 },
+          "subsystem": { "type": "string", "minLength": 1 },
+          "fr_ids_in_scope": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "inputs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "type"],
+              "properties": {
+                "name": { "type": "string" },
+                "type": { "type": "string" },
+                "source": { "type": "string" },
+                "sink": { "type": "string" }
+              }
+            }
+          },
+          "outputs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "type"],
+              "properties": {
+                "name": { "type": "string" },
+                "type": { "type": "string" },
+                "source": { "type": "string" },
+                "sink": { "type": "string" }
+              }
+            }
+          },
+          "implementation_notes": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "acceptance_criteria": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "estimated_effort": { "type": "string", "enum": ["S", "M", "L"] },
+          "files_likely_affected": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "depends_on": {
+            "type": "array",
+            "items": { "type": "string", "pattern": "^S\\d{2,}-\\d{3,}$" }
+          },
+          "test_refs": { "type": "array", "items": { "type": "string" } },
+          "invariant_refs": { "type": "array", "items": { "type": "string" } },
+          "contract_refs": { "type": "array", "items": { "type": "string" } },
+          "task_flags": {
+            "type": "object",
+            "required": [
+              "fr_ids_in_scope",
+              "architecture_contract_change",
+              "ui_evidence_required",
+              "incident_tier"
+            ],
+            "properties": {
+              "fr_ids_in_scope": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "architecture_contract_change": { "type": "boolean" },
+              "ui_evidence_required": { "type": "boolean" },
+              "incident_tier": {
+                "type": "string",
+                "enum": ["none", "p0", "p1", "p2", "p3"]
+              },
+              "schema_change": { "type": "boolean" },
+              "migration_change": { "type": "boolean" },
+              "cross_subsystem_change": { "type": "boolean" }
+            }
+          },
+          "execution_contract": { "$ref": "execution_contract.schema.json" }
+        }
+      }
+    }
+  }
+}
