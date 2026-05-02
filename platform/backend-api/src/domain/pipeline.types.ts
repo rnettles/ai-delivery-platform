@@ -35,6 +35,7 @@ export type GateOutcome =
   | "human_complete"
   | "skipped"
   | "auto"
+  | "awaiting_pr_review"
   | null;
 
 export interface PipelineStepRecord {

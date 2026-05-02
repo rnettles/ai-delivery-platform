@@ -978,33 +978,16 @@ export class PipelineService {
       return this.save(run, { current_step: "sprint-controller", status: "running", steps });
     }
 
-    // Sprint Controller task close-out: verifier already passed -> hand off to Planner.
+    // Sprint Controller task close-out: verifier already passed -> create PR and await merge.
     // Detected by presence of a completed verifier step in the history.
+    // ADR-030: Sprint Controller is the PR gate point; no Planner step in close-out.
     if (role === "sprint-controller") {
       const verifierPassed = steps.some((s) => s.role === "verifier" && s.status === "complete");
       if (verifierPassed) {
-        logger.info("Sprint Controller task close-out complete: routing to planner sprint close-out", {
+        logger.info("Sprint Controller task close-out complete: transitioning to awaiting_pr_review", {
           pipeline_id: run.pipeline_id,
         });
-        steps.push(this.newRunningStep("planner", now));
-        return this.save(run, { current_step: "planner", status: "running", steps });
-      }
-    }
-
-    // Planner sprint close-out: verifier and sprint-controller have already completed.
-    // Planner finalizes sprint closure (PR handoff), then pipeline awaits PR review.
-    if (role === "planner") {
-      const verifierPassed = steps.some((s) => s.role === "verifier" && s.status === "complete");
-      const sprintControllerClosedTask = steps.some(
-        (s) =>
-          s.role === "sprint-controller" &&
-          s.status === "complete" &&
-          s.artifact_paths.some((p) => p.includes("sprint_closeout.json"))
-      );
-      if (verifierPassed && sprintControllerClosedTask) {
-        logger.info("Planner sprint close-out: transitioning to awaiting_pr_review", {
-          pipeline_id: run.pipeline_id,
-        });
+        steps[stepIdx] = { ...steps[stepIdx], gate_outcome: "awaiting_pr_review" };
         return this.saveAndMaybeCleanup(run, { current_step: "complete", status: "awaiting_pr_review", steps });
       }
     }

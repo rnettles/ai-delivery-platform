@@ -21,6 +21,10 @@ const OUTCOME_STYLE: Record<NonNullable<GateOutcome>, { label: string; classes: 
     label: "Auto",
     classes: "border-blue-200 bg-blue-50 text-blue-600",
   },
+  awaiting_pr_review: {
+    label: "Waiting for PR review",
+    classes: "border-purple-200 bg-purple-50 text-purple-700",
+  },
 };
 
 export function GateCard({ record }: GateCardProps) {
