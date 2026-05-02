@@ -30,7 +30,7 @@ export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const prGateCount = usePrGateCount();
-  const { data: projects, isLoading: projectsLoading } = useProjects();
+  const { data: projects, isLoading: projectsLoading, isError: projectsError } = useProjects();
   const { currentProjectId, setCurrentProject } = useCurrentProject();
 
   // When visiting a project page, auto-set it as current
@@ -67,6 +67,10 @@ export function Sidebar() {
 
         {projectsLoading ? (
           <div className="h-8 rounded bg-gray-100 animate-pulse" />
+        ) : projectsError ? (
+          <div className="rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-800">
+            Failed to load projects. Check backend status and refresh.
+          </div>
         ) : (
           <select
             value={currentProjectId ?? urlProjectId ?? ""}
@@ -75,6 +79,9 @@ export function Sidebar() {
           >
             {!currentProjectId && !urlProjectId && (
               <option value="">— select a project —</option>
+            )}
+            {(projects?.length ?? 0) === 0 && (
+              <option value="" disabled>No projects available</option>
             )}
             {projects?.map((p) => (
               <option key={p.project_id} value={p.project_id}>
