@@ -133,7 +133,7 @@ export interface StagedTaskRecord {
   phase_id?: string;
   task_id: string;
   label: string;
-  status: "staged";
+  status: "done" | "pending";
   sprint_plan_path: string;
   sourced_from: PipelineRole;
   completed_at?: string;
@@ -370,17 +370,23 @@ export class PipelineService {
 
   private markdownField(markdown: string, fieldName: string): string | undefined {
     const escaped = fieldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const match = new RegExp(`^\\*\\*${escaped}:\\*\\*\\s*(.+?)\\s*$`, "im").exec(markdown);
+    // Match both **Key:** Value (bold) and bare Key: Value forms
+    const match = new RegExp(
+      `^(?:\\*\\*${escaped}:\\*\\*|${escaped}:)\\s*(.+?)\\s*$`,
+      "im"
+    ).exec(markdown);
     return match?.[1]?.trim() || undefined;
   }
 
   private parsePhasePlan(markdown: string, artifactPath: string): { phase_id: string; name?: string; status: string } {
     const titleMatch = /^#\s*Phase\s*Plan:\s*(.+?)\s*$/im.exec(markdown);
     const pathMatch = /phase_plan_([^/.]+)\.md$/i.exec(artifactPath);
+    // Prefer explicit "Phase ID:" field, then filename match, then the (possibly long) title
+    const fieldId = this.markdownField(markdown, "Phase ID");
 
     return {
-      phase_id: titleMatch?.[1]?.trim() || pathMatch?.[1] || "",
-      name: this.markdownField(markdown, "Name"),
+      phase_id: fieldId || pathMatch?.[1] || titleMatch?.[1]?.trim() || "",
+      name: this.markdownField(markdown, "Name") ?? titleMatch?.[1]?.trim(),
       status: this.markdownField(markdown, "Status") || "staged",
     };
   }
@@ -397,13 +403,14 @@ export class PipelineService {
     };
   }
 
-  private parseSprintTasks(markdown: string): Array<{ task_id: string; label: string; status: "staged" }> {
+  private parseSprintTasks(markdown: string): Array<{ task_id: string; label: string; status: "done" | "pending" }> {
     const lines = markdown.split(/\r?\n/);
-    const tasks: Array<{ task_id: string; label: string; status: "staged" }> = [];
+    const tasks: Array<{ task_id: string; label: string; status: "done" | "pending" }> = [];
     let inTasks = false;
 
     for (const line of lines) {
-      if (!inTasks && /^##\s+Tasks\b/i.test(line)) {
+      // Recognise both "## Tasks" and "## Task Checklist"
+      if (!inTasks && /^##\s+Tasks(?:\s+Checklist)?\b/i.test(line)) {
         inTasks = true;
         continue;
       }
@@ -416,6 +423,21 @@ export class PipelineService {
         continue;
       }
 
+      // Match checklist items: - [x] TASK: label  or  - [ ] TASK: label  or  - TASK
+      const checklistMatch = /^\s*-\s+\[(x| )\]\s+(.+?)\s*$/i.exec(line);
+      if (checklistMatch) {
+        const checked = checklistMatch[1].toLowerCase() === "x";
+        const rest = checklistMatch[2].trim();
+        const taskIdMatch = /[A-Za-z]\S*-\d+\w*/i.exec(rest);
+        tasks.push({
+          task_id: taskIdMatch?.[0] ?? rest,
+          label: rest,
+          status: checked ? "done" : "pending",
+        });
+        continue;
+      }
+
+      // Plain list item (no checkbox)
       const match = /^\s*-\s+(.+?)\s*$/.exec(line);
       if (!match) {
         continue;
@@ -426,7 +448,7 @@ export class PipelineService {
       tasks.push({
         task_id: taskIdMatch?.[0] || label,
         label,
-        status: "staged",
+        status: "pending",
       });
     }
 
@@ -1650,7 +1672,7 @@ export class PipelineService {
             phase_id: parsedSprint.phase_id,
             task_id: task.task_id,
             label: task.label,
-            status: "staged",
+            status: task.status,
             sprint_plan_path: entry.artifact_path,
             sourced_from: entry.sourced_from,
             completed_at: entry.completed_at,
@@ -1782,7 +1804,7 @@ export class PipelineService {
             phase_id: sprint.phase_id,
             task_id: task.task_id,
             label: task.label,
-            status: "staged",
+            status: task.status,
             sprint_plan_path: relPath,
             sourced_from: "sprint-controller",
             completed_at: completedAt,

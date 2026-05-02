@@ -24,7 +24,7 @@ export interface StagedTaskRecord {
   phase_id?: string;
   task_id: string;
   label: string;
-  status: "staged";
+  status: "done" | "pending";
   sprint_plan_path: string;
   sourced_from: string;
   completed_at?: string;
@@ -48,6 +48,31 @@ export interface StagedSprintsResult {
 
 export interface StagedTasksResult {
   pipeline_id: string;
+  refreshed_at: string;
+  source: "artifacts";
+  git_head_commit?: string;
+  tasks: StagedTaskRecord[];
+}
+
+// Project-scoped variants (not tied to a pipeline_id)
+export interface RepoStagedPhasesResult {
+  project_id: string;
+  refreshed_at: string;
+  source: "artifacts";
+  git_head_commit?: string;
+  phases: StagedPhaseRecord[];
+}
+
+export interface RepoStagedSprintsResult {
+  project_id: string;
+  refreshed_at: string;
+  source: "artifacts";
+  git_head_commit?: string;
+  sprints: StagedSprintRecord[];
+}
+
+export interface RepoStagedTasksResult {
+  project_id: string;
   refreshed_at: string;
   source: "artifacts";
   git_head_commit?: string;

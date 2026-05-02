@@ -39,3 +39,4 @@ This directory contains all architectural decisions for the system.
 - ADR-032: Planner Next-Mode Auto-Advance After Closeout
 - ADR-033: Deterministic Artifact Contracts and Script-Side Housekeeping
 - ADR-034: Native Slack Integration (Deprecation of n8n as Slack Adapter)
+- ADR-035: Pipeline-Scoped Task Artifacts for Concurrent Pipeline Support

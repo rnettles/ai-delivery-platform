@@ -89,13 +89,27 @@ export function Sidebar() {
           <Link
             href={`/projects/${currentProject.project_id}`}
             className={`flex items-center gap-1 rounded px-2 py-1 text-xs font-medium transition-colors ${
-              urlProjectId === currentProject.project_id
+              urlProjectId === currentProject.project_id && !pathname.includes("/work")
                 ? "bg-blue-50 text-blue-700"
                 : "text-blue-600 hover:bg-blue-50 hover:text-blue-800"
             }`}
           >
             <span>←</span>
             <span className="truncate">{currentProject.name}</span>
+          </Link>
+        )}
+
+        {/* Work link — phases / sprints / tasks hierarchy */}
+        {currentProject && (
+          <Link
+            href={`/projects/${currentProject.project_id}/work`}
+            className={`flex items-center gap-1 rounded px-2 py-1 text-xs font-medium transition-colors ${
+              pathname.startsWith(`/projects/${currentProject.project_id}/work`)
+                ? "bg-blue-50 text-blue-700"
+                : "text-gray-500 hover:bg-gray-50 hover:text-gray-800"
+            }`}
+          >
+            <span className="ml-3">Work</span>
           </Link>
         )}
       </div>
