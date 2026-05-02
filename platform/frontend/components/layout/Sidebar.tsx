@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useProjects } from "@/hooks/useProjects";
+import { useCurrentProject } from "@/hooks/useCurrentProject";
 
 function usePrGateCount() {
   const [count, setCount] = useState(0);
@@ -27,13 +28,23 @@ function usePrGateCount() {
 
 export function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
   const prGateCount = usePrGateCount();
   const { data: projects, isLoading: projectsLoading } = useProjects();
-  const [projectsOpen, setProjectsOpen] = useState(true);
+  const { currentProjectId, setCurrentProject } = useCurrentProject();
 
-  // Derive the active project id from the current URL
-  const activeProjectMatch = pathname.match(/\/projects\/([^/]+)/);
-  const activeProjectId = activeProjectMatch?.[1] ?? null;
+  // When visiting a project page, auto-set it as current
+  const urlProjectMatch = pathname.match(/\/projects\/([^/]+)/);
+  const urlProjectId = urlProjectMatch?.[1] ?? null;
+
+  const currentProject = projects?.find((p) => p.project_id === currentProjectId);
+
+  function handleProjectChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    const id = e.target.value;
+    if (!id) return;
+    setCurrentProject(id);
+    router.push(`/projects/${id}`);
+  }
 
   const bottomNavItems = [
     { label: "PR Gates", href: "/pr-gates", badge: prGateCount > 0 ? prGateCount : null },
@@ -48,46 +59,44 @@ export function Sidebar() {
         </span>
       </div>
 
-      {/* Projects section */}
-      <div className="flex flex-col border-b border-gray-100">
-        <button
-          type="button"
-          onClick={() => setProjectsOpen((v) => !v)}
-          className="flex items-center justify-between px-4 py-2.5 text-xs font-semibold uppercase tracking-widest text-gray-500 hover:text-gray-800 transition-colors"
-        >
-          Projects
-          <span className="text-gray-400">{projectsOpen ? "▲" : "▼"}</span>
-        </button>
+      {/* Current project switcher */}
+      <div className="border-b border-gray-100 px-3 py-3 flex flex-col gap-2">
+        <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">
+          Current Project
+        </span>
 
-        {projectsOpen && (
-          <ul className="flex flex-col pb-2">
-            {projectsLoading && (
-              <li className="px-4 py-2">
-                <div className="h-3 w-28 rounded bg-gray-100 animate-pulse" />
-              </li>
+        {projectsLoading ? (
+          <div className="h-8 rounded bg-gray-100 animate-pulse" />
+        ) : (
+          <select
+            value={currentProjectId ?? urlProjectId ?? ""}
+            onChange={handleProjectChange}
+            className="w-full rounded border border-gray-200 bg-white px-2 py-1.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-400"
+          >
+            {!currentProjectId && !urlProjectId && (
+              <option value="">— select a project —</option>
             )}
-            {!projectsLoading && (!projects || projects.length === 0) && (
-              <li className="px-4 py-2 text-xs text-gray-400">No projects found</li>
-            )}
-            {projects?.map((project) => {
-              const isActive = activeProjectId === project.project_id;
-              return (
-                <li key={project.project_id}>
-                  <Link
-                    href={`/projects/${project.project_id}`}
-                    className={`block truncate px-4 py-1.5 text-sm transition-colors ${
-                      isActive
-                        ? "bg-blue-50 text-blue-700 font-medium"
-                        : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
-                    }`}
-                    title={project.name}
-                  >
-                    {project.name}
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
+            {projects?.map((p) => (
+              <option key={p.project_id} value={p.project_id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        )}
+
+        {/* Back to current project — visible from any page */}
+        {currentProject && (
+          <Link
+            href={`/projects/${currentProject.project_id}`}
+            className={`flex items-center gap-1 rounded px-2 py-1 text-xs font-medium transition-colors ${
+              urlProjectId === currentProject.project_id
+                ? "bg-blue-50 text-blue-700"
+                : "text-blue-600 hover:bg-blue-50 hover:text-blue-800"
+            }`}
+          >
+            <span>←</span>
+            <span className="truncate">{currentProject.name}</span>
+          </Link>
         )}
       </div>
 

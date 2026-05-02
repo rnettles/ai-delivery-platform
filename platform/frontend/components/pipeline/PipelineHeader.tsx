@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { PipelineRun, PipelineStatus } from "@/types";
 import { LiveBadge } from "@/components/LiveBadge";
 
@@ -33,6 +34,17 @@ export function PipelineHeader({ pipeline, isLive = false }: PipelineHeaderProps
 
   return (
     <header className="border-b border-gray-200 bg-white px-6 py-4">
+      {/* Breadcrumb — back to project if we know it */}
+      {pipeline.project_id && (
+        <div className="mb-2">
+          <Link
+            href={`/projects/${pipeline.project_id}`}
+            className="text-xs text-blue-600 hover:text-blue-800 hover:underline"
+          >
+            ← Project
+          </Link>
+        </div>
+      )}
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="text-xs font-medium uppercase tracking-wide text-gray-400">
