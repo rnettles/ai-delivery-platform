@@ -3,6 +3,7 @@
 import { use } from "react";
 import Link from "next/link";
 import { useProjectPipelines } from "@/hooks/useProjectPipelines";
+import { LiveBadge } from "@/components/LiveBadge";
 import type { PipelineStatusChoice, PipelineStatus } from "@/types";
 
 const STATUS_STYLES: Record<PipelineStatus, string> = {
@@ -57,7 +58,7 @@ interface PageProps {
 
 export default function ProjectPipelinesPage({ params }: PageProps) {
   const { id } = use(params);
-  const { data: pipelines, isLoading, isError } = useProjectPipelines(id);
+  const { data: pipelines, isLoading, isError, isLive } = useProjectPipelines(id);
 
   if (isLoading) {
     return (
@@ -101,10 +102,13 @@ export default function ProjectPipelinesPage({ params }: PageProps) {
   return (
     <div className="p-6">
       <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-lg font-semibold text-gray-900">
-          Pipelines
-          <span className="ml-2 text-sm font-normal text-gray-400">({pipelines.length})</span>
-        </h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-lg font-semibold text-gray-900">
+            Pipelines
+            <span className="ml-2 text-sm font-normal text-gray-400">({pipelines.length})</span>
+          </h1>
+          <LiveBadge active={isLive} />
+        </div>
         <Link href={`/projects/${id}`} className="text-xs text-gray-400 hover:text-gray-600">
           ← Back to project
         </Link>

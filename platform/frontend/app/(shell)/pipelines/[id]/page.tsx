@@ -13,8 +13,9 @@ interface PageProps {
 
 export default function PipelineDetailPage({ params }: PageProps) {
   const { id } = use(params);
-  const { pipeline, timeline, isLoading, isError, error } = usePipeline(id);
+  const { pipeline, timeline, isLoading, isError, error, isLive, isStale } = usePipeline(id);
   const [selectedArtifact, setSelectedArtifact] = useState<string | null>(null);
+  const [staleBannerDismissed, setStaleBannerDismissed] = useState(false);
 
   if (isLoading) {
     return (
@@ -27,10 +28,13 @@ export default function PipelineDetailPage({ params }: PageProps) {
   }
 
   if (isError || !pipeline || !timeline) {
+    const is404 = error?.message?.includes("404") || error?.message?.includes("not found");
     return (
       <div className="p-6">
         <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error?.message ?? "Failed to load pipeline."}
+          {is404
+            ? "Pipeline not found — it may have been cancelled or removed."
+            : (error?.message ?? "Failed to load pipeline.")}
         </div>
       </div>
     );
@@ -38,7 +42,19 @@ export default function PipelineDetailPage({ params }: PageProps) {
 
   return (
     <div className="flex flex-col">
-      <PipelineHeader pipeline={pipeline} />
+      <PipelineHeader pipeline={pipeline} isLive={isLive} />
+      {isStale && !staleBannerDismissed && (
+        <div className="flex items-center justify-between gap-4 border-b border-amber-200 bg-amber-50 px-6 py-2 text-sm text-amber-800">
+          <span>Pipeline has finished. This is a final snapshot.</span>
+          <button
+            onClick={() => setStaleBannerDismissed(true)}
+            className="text-amber-600 hover:text-amber-900 font-medium"
+            aria-label="Dismiss"
+          >
+            ✕
+          </button>
+        </div>
+      )}
       <ActionBar pipeline={pipeline} />
       <div className="flex flex-1 gap-6 p-6">
         {/* Timeline — left column */}
