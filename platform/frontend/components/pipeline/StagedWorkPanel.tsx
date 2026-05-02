@@ -37,7 +37,7 @@ function PhaseRow({ phase }: { phase: StagedPhaseRecord }) {
     <div className="flex items-center justify-between gap-3 rounded border border-gray-100 bg-white px-3 py-2 text-sm">
       <div className="min-w-0">
         <p className="font-medium text-gray-800 truncate">{phase.name ?? phase.phase_id}</p>
-        <p className="text-xs text-gray-400 font-mono truncate">{phase.artifact_path}</p>
+        <p className="text-xs text-gray-400 font-mono truncate">{phase.artifact_path?.split("/").pop() ?? phase.artifact_path}</p>
       </div>
       <span className="flex-shrink-0 rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-600">
         {phase.status}
@@ -51,7 +51,7 @@ function SprintRow({ sprint }: { sprint: StagedSprintRecord }) {
     <div className="flex items-center justify-between gap-3 rounded border border-gray-100 bg-white px-3 py-2 text-sm">
       <div className="min-w-0">
         <p className="font-medium text-gray-800 truncate">{sprint.name ?? sprint.sprint_id}</p>
-        <p className="text-xs text-gray-400 font-mono truncate">{sprint.sprint_plan_path}</p>
+        <p className="text-xs text-gray-400 font-mono truncate">{sprint.sprint_plan_path?.split("/").pop() ?? sprint.sprint_plan_path}</p>
       </div>
       <span className="flex-shrink-0 rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-600">
         {sprint.status}

@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from "express";
-import * as fs from "fs";
 import * as path from "path";
 import { pipelineService } from "../services/pipeline.service";
+import { artifactService } from "../services/artifact.service";
 import { adminOpsService } from "../services/admin-ops.service";
 import { pipelineNotifierService } from "../services/pipeline-notifier.service";
 import { executionService } from "../services/execution.service";
@@ -593,31 +593,28 @@ async function executeCurrentStep(
 export async function getPipelineArtifact(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const pipelineId = String(req.params.pipelineId);
-    const artifactPath = String(req.query.path ?? "");
+    const artifactParam = String(req.query.path ?? "");
 
-    if (!artifactPath) {
+    if (!artifactParam) {
       throw new HttpError(400, "ARTIFACT_PATH_REQUIRED", "Query param 'path' is required");
     }
 
-    // Resolve and validate the path stays within the artifact base directory
-    const base = path.resolve(config.artifactBasePath);
-    const resolved = path.resolve(base, artifactPath);
-    if (!resolved.startsWith(base + path.sep) && resolved !== base) {
-      throw new HttpError(400, "INVALID_ARTIFACT_PATH", "Artifact path must be within the artifact base directory");
+    // Normalise to bare filename so the UI only needs to send the name, not the full path.
+    const filename = path.basename(artifactParam);
+
+    // Find the canonical stored path from the pipeline's own step records.
+    // This is the authoritative source and avoids reconstructing a path that
+    // may differ from what ArtifactService wrote (e.g. ../../runtime/artifacts/…).
+    const run = await pipelineService.get(pipelineId);
+    const allArtifactPaths: string[] = run.steps.flatMap((s) => s.artifact_paths ?? []);
+    const storedPath = allArtifactPaths.find((p) => path.basename(p) === filename);
+
+    if (!storedPath) {
+      throw new HttpError(404, "ARTIFACT_NOT_FOUND", `Artifact not found: ${filename}`);
     }
 
-    // Verify the artifact belongs to this pipeline
-    const pipelinePrefix = path.join("artifacts", pipelineId);
-    if (!artifactPath.startsWith(pipelinePrefix)) {
-      throw new HttpError(403, "ARTIFACT_PIPELINE_MISMATCH", "Artifact does not belong to the specified pipeline");
-    }
-
-    if (!fs.existsSync(resolved)) {
-      throw new HttpError(404, "ARTIFACT_NOT_FOUND", `Artifact not found: ${artifactPath}`);
-    }
-
-    const content = fs.readFileSync(resolved, "utf-8");
-    const ext = path.extname(resolved).toLowerCase();
+    const content = await artifactService.read(storedPath);
+    const ext = path.extname(storedPath).toLowerCase();
 
     if (ext === ".json") {
       res.status(200).json(JSON.parse(content));
