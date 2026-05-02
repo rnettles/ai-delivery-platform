@@ -451,7 +451,10 @@ async function executeCurrentStep(
       const project = await projectService.getById(currentRun.project_id);
       if (project) {
         logger.info("git: force-pull before role execution", { pipeline_id: pipelineId, role, project: project.name });
-        await projectGitService.ensureReady(project, { forcePull: true });
+        const gitCtx = await projectGitService.ensureReady(project, { forcePull: true });
+        if (!gitCtx.is_repo_accessible) {
+          logger.error("git: force-pull failed before role execution; clone may be stale", { pipeline_id: pipelineId, role, project: project.name });
+        }
       }
     }
     const previousArtifacts = currentRun.steps

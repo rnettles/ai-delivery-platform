@@ -297,7 +297,21 @@ class ProjectGitService {
             // Checkout the default branch before reset so an in-progress feature branch
             // left checked out by a prior sprint-controller run is never clobbered.
             // reset --hard only moves the currently checked-out branch's ref.
-            this.checkoutWithIndexRecovery(clonePath, project.default_branch, project.name);
+            // If the checkout is blocked by uncommitted local changes (e.g. from a
+            // previously failed implementer run), discard them and retry so the force-pull
+            // always succeeds.  This only destroys uncommitted work — committed branch
+            // history is preserved.
+            try {
+              this.checkoutWithIndexRecovery(clonePath, project.default_branch, project.name);
+            } catch (checkoutErr) {
+              if (!this.isCheckoutOverwriteError(checkoutErr)) throw checkoutErr;
+              logger.warn("git: checkout blocked by local changes during force-pull; discarding uncommitted changes and retrying", {
+                project: project.name,
+                clonePath,
+              });
+              this.cleanWorkingTree(clonePath);
+              this.checkoutWithIndexRecovery(clonePath, project.default_branch, project.name);
+            }
             this.git(clonePath, ["reset", "--hard", `origin/${project.default_branch}`]);
           } else {
             // Reattach a detached HEAD before pulling — detached state causes pull to fail.
