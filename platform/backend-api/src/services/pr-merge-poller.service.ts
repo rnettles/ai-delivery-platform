@@ -34,11 +34,11 @@ class PrMergePollerService {
       const runs = await pipelineService.listAwaitingPrReviewRuns();
       if (runs.length === 0) return;
 
-      logger.info("PR merge poll tick", { awaiting_pr_review_count: runs.length });
+      logger.debug("PR merge poll tick", { awaiting_pr_review_count: runs.length });
 
       for (const run of runs) {
         if (!run.project_id || !run.pr_number) {
-          logger.info("PR merge poll skipped run missing project/pr", {
+          logger.debug("PR merge poll skipped run missing project/pr", {
             pipeline_id: run.pipeline_id,
             project_id: run.project_id,
             pr_number: run.pr_number,
@@ -48,7 +48,7 @@ class PrMergePollerService {
 
         const project = await projectService.getById(run.project_id);
         if (!project) {
-          logger.info("PR merge poll skipped run missing project", {
+          logger.debug("PR merge poll skipped run missing project", {
             pipeline_id: run.pipeline_id,
             project_id: run.project_id,
           });
@@ -71,6 +71,13 @@ class PrMergePollerService {
         }
 
         if (pr.state !== "open") {
+          logger.warn("PR merge poll: PR is closed but not merged — auto-failing pipeline", {
+            pipeline_id: run.pipeline_id,
+            pr_number: run.pr_number,
+            pr_state: pr.state,
+            sprint_branch: run.sprint_branch,
+          });
+          await pipelineService.markPrClosed(run.pipeline_id);
           continue;
         }
 

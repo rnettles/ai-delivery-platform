@@ -1,11 +1,14 @@
 import type { PipelineAction, PipelineRun, PipelineStatusChoice } from "@/types";
+import type { ProjectWithChannels } from "@/types/project";
 
-const BACKEND_URL = process.env.BACKEND_URL;
-if (!BACKEND_URL) {
-  throw new Error("BACKEND_URL environment variable is not set");
+function getBackendUrl(): string {
+  const url = process.env.BACKEND_URL;
+  if (!url) throw new Error("BACKEND_URL environment variable is not set");
+  return url;
 }
 
 export async function fetchPipeline(pipelineId: string): Promise<PipelineRun> {
+  const BACKEND_URL = getBackendUrl();
   const url = `${BACKEND_URL}/pipeline/${encodeURIComponent(pipelineId)}`;
   const res = await fetch(url, { cache: "no-store" });
 
@@ -21,7 +24,7 @@ export async function fetchArtifact(
   artifactPath: string,
 ): Promise<string> {
   const url = new URL(
-    `${BACKEND_URL}/pipeline/${encodeURIComponent(pipelineId)}/artifact`,
+    `${getBackendUrl()}/pipeline/${encodeURIComponent(pipelineId)}/artifact`,
   );
   url.searchParams.set("path", artifactPath);
   const res = await fetch(url.toString(), { cache: "no-store" });
@@ -44,6 +47,18 @@ export async function fetchProjectPipelines(projectId: string): Promise<Pipeline
   return res.json() as Promise<PipelineStatusChoice[]>;
 }
 
+export async function fetchProjects(): Promise<ProjectWithChannels[]> {
+  const res = await fetch("/api/projects");
+  if (!res.ok) throw new Error("Failed to fetch projects");
+  return res.json() as Promise<ProjectWithChannels[]>;
+}
+
+export async function fetchProject(projectId: string): Promise<ProjectWithChannels> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}`);
+  if (!res.ok) throw new Error(`Failed to fetch project ${projectId}`);
+  return res.json() as Promise<ProjectWithChannels>;
+}
+
 /** Maps a PipelineAction to the backend route suffix */
 const ACTION_ROUTE: Record<PipelineAction, string> = {
   approve: "approve",
@@ -60,7 +75,7 @@ export async function submitPipelineAction(
   payload: Record<string, unknown>,
 ): Promise<PipelineRun> {
   const route = ACTION_ROUTE[action];
-  const url = `${BACKEND_URL}/pipeline/${encodeURIComponent(pipelineId)}/${route}`;
+  const url = `${getBackendUrl()}/pipeline/${encodeURIComponent(pipelineId)}/${route}`;
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

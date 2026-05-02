@@ -1,4 +1,6 @@
+import Link from "next/link";
 import type { PipelineRun, PipelineStatus } from "@/types";
+import { LiveBadge } from "@/components/LiveBadge";
 
 const STATUS_STYLES: Record<PipelineStatus, string> = {
   running:            "bg-blue-100 text-blue-800",
@@ -22,15 +24,27 @@ function StatusBadge({ status }: { status: PipelineStatus }) {
 
 interface PipelineHeaderProps {
   pipeline: PipelineRun;
+  isLive?: boolean;
 }
 
-export function PipelineHeader({ pipeline }: PipelineHeaderProps) {
+export function PipelineHeader({ pipeline, isLive = false }: PipelineHeaderProps) {
   const mode = (pipeline.metadata as Record<string, unknown>)?.execution_mode as
     | string
     | undefined;
 
   return (
     <header className="border-b border-gray-200 bg-white px-6 py-4">
+      {/* Breadcrumb — back to project if we know it */}
+      {pipeline.project_id && (
+        <div className="mb-2">
+          <Link
+            href={`/projects/${pipeline.project_id}`}
+            className="text-xs text-blue-600 hover:text-blue-800 hover:underline"
+          >
+            ← Project
+          </Link>
+        </div>
+      )}
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="text-xs font-medium uppercase tracking-wide text-gray-400">
@@ -40,7 +54,10 @@ export function PipelineHeader({ pipeline }: PipelineHeaderProps) {
             {pipeline.pipeline_id}
           </h1>
         </div>
-        <StatusBadge status={pipeline.status} />
+        <div className="flex items-center gap-2">
+          <LiveBadge active={isLive} />
+          <StatusBadge status={pipeline.status} />
+        </div>
       </div>
 
       <dl className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs text-gray-500">

@@ -24,6 +24,10 @@ export interface UsePipelineResult {
   isLoading: boolean;
   isError: boolean;
   error: Error | null;
+  /** True while the pipeline is in an active status and polling is running. */
+  isLive: boolean;
+  /** True when the pipeline has reached a terminal status (polling has stopped). */
+  isStale: boolean;
 }
 
 export function usePipeline(id: string): UsePipelineResult {
@@ -39,6 +43,10 @@ export function usePipeline(id: string): UsePipelineResult {
     },
   });
 
+  const status = query.data?.status;
+  const isLive = Boolean(status && ACTIVE_STATUSES.includes(status));
+  const isStale = Boolean(query.data && !isLive);
+
   const timeline = query.data ? mapToUITimeline(query.data) : undefined;
 
   return {
@@ -47,5 +55,7 @@ export function usePipeline(id: string): UsePipelineResult {
     isLoading: query.isLoading,
     isError: query.isError,
     error: query.error,
+    isLive,
+    isStale,
   };
 }

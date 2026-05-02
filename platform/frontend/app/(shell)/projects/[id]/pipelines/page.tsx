@@ -1,8 +1,9 @@
 "use client";
 
-import { use } from "react";
+import { use, useState } from "react";
 import Link from "next/link";
 import { useProjectPipelines } from "@/hooks/useProjectPipelines";
+import { LiveBadge } from "@/components/LiveBadge";
 import type { PipelineStatusChoice, PipelineStatus } from "@/types";
 
 const STATUS_STYLES: Record<PipelineStatus, string> = {
@@ -51,13 +52,29 @@ function PipelineRow({ pipeline }: { pipeline: PipelineStatusChoice }) {
   );
 }
 
+const INACTIVE_STATUSES: PipelineStatus[] = ["failed", "complete", "cancelled"];
+
+const STATUS_ORDER: PipelineStatus[] = ["failed", "complete", "cancelled"];
+
+const FILTER_LABEL: Record<PipelineStatus, string> = {
+  running: "Running",
+  awaiting_approval: "Awaiting Approval",
+  awaiting_pr_review: "Awaiting PR Review",
+  paused_takeover: "Paused Takeover",
+  failed: "Failed",
+  complete: "Complete",
+  cancelled: "Cancelled",
+};
+
 interface PageProps {
   params: Promise<{ id: string }>;
 }
 
 export default function ProjectPipelinesPage({ params }: PageProps) {
   const { id } = use(params);
-  const { data: pipelines, isLoading, isError } = useProjectPipelines(id);
+  const { data: allPipelines, isLoading, isError, isLive } = useProjectPipelines(id);
+  const pipelines = (allPipelines ?? []).filter((p) => INACTIVE_STATUSES.includes(p.status));
+  const [filterStatus, setFilterStatus] = useState<PipelineStatus | null>(null);
 
   if (isLoading) {
     return (
@@ -82,35 +99,85 @@ export default function ProjectPipelinesPage({ params }: PageProps) {
     );
   }
 
-  if (!pipelines || pipelines.length === 0) {
+  if (!allPipelines || pipelines.length === 0) {
     return (
       <div className="p-6">
         <div className="mb-4 flex items-center justify-between">
-          <h1 className="text-lg font-semibold text-gray-900">Pipelines</h1>
+          <h1 className="text-lg font-semibold text-gray-900">Inactive Pipelines</h1>
           <Link href={`/projects/${id}`} className="text-xs text-gray-400 hover:text-gray-600">
             ← Back to project
           </Link>
         </div>
         <div className="flex flex-col items-center justify-center py-16 text-center text-sm text-gray-400">
-          No pipelines found for this project.
+          No inactive pipelines yet.
         </div>
       </div>
     );
   }
 
+  // Build per-status counts from all pipelines
+  const counts = pipelines.reduce<Partial<Record<PipelineStatus, number>>>((acc, p) => {
+    acc[p.status] = (acc[p.status] ?? 0) + 1;
+    return acc;
+  }, {});
+
+  // Statuses present in this data, in priority order
+  const presentStatuses = STATUS_ORDER.filter((s) => (counts[s] ?? 0) > 0);
+
+  const visible = filterStatus
+    ? pipelines.filter((p) => p.status === filterStatus)
+    : pipelines;
+
   return (
     <div className="p-6">
       <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-lg font-semibold text-gray-900">
-          Pipelines
-          <span className="ml-2 text-sm font-normal text-gray-400">({pipelines.length})</span>
-        </h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-lg font-semibold text-gray-900">
+            Inactive Pipelines
+            <span className="ml-2 text-sm font-normal text-gray-400">
+              ({visible.length}{filterStatus ? ` of ${pipelines.length}` : ""})
+            </span>
+          </h1>
+          <LiveBadge active={isLive} />
+        </div>
         <Link href={`/projects/${id}`} className="text-xs text-gray-400 hover:text-gray-600">
           ← Back to project
         </Link>
       </div>
+
+      {/* Status filter pills */}
+      {presentStatuses.length > 1 && (
+        <div className="mb-4 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setFilterStatus(null)}
+            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+              filterStatus === null
+                ? "bg-gray-800 text-white"
+                : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+            }`}
+          >
+            All ({pipelines.length})
+          </button>
+          {presentStatuses.map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => setFilterStatus(filterStatus === s ? null : s)}
+              className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                filterStatus === s
+                  ? `${STATUS_STYLES[s]} ring-2 ring-offset-1 ring-current`
+                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+              }`}
+            >
+              {FILTER_LABEL[s]} ({counts[s]})
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="flex flex-col gap-2">
-        {pipelines.map((pipeline) => (
+        {visible.map((pipeline) => (
           <PipelineRow key={pipeline.pipeline_id} pipeline={pipeline} />
         ))}
       </div>

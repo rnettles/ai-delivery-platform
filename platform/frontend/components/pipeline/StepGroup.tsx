@@ -20,48 +20,78 @@ const ROLE_LABEL: Record<string, string> = {
   "verifier":         "Verifier",
 };
 
+// Visual indentation depth per role — mirrors the agent hierarchy
+const ROLE_DEPTH: Record<string, number> = {
+  "planner":           0,
+  "sprint-controller": 1,
+  "implementer":       2,
+  "verifier":          3,
+};
+
+const DEPTH_PADDING = ["pl-0", "pl-5", "pl-10", "pl-16"] as const;
+
 interface StepGroupProps {
   group: UIStepGroup;
   isFirst: boolean;
+  isActive: boolean;
   pipelineId: string;
   onArtifactSelect: (path: string) => void;
 }
 
-export function StepGroup({ group, isFirst: _isFirst, pipelineId, onArtifactSelect }: StepGroupProps) {
-  const defaultOpen = group.status === "running" || group.status === "failed";
+export function StepGroup({ group, isFirst: _isFirst, isActive, pipelineId, onArtifactSelect }: StepGroupProps) {
+  const defaultOpen = group.status === "running" || group.status === "failed" || isActive;
   const [open, setOpen] = useState(defaultOpen);
 
   const label = ROLE_LABEL[group.role] ?? group.role;
   const iterSuffix = group.iteration > 1 ? ` (attempt ${group.iteration})` : "";
+  const depth = ROLE_DEPTH[group.role] ?? 0;
+  const paddingClass = DEPTH_PADDING[Math.min(depth, DEPTH_PADDING.length - 1)];
+
+  const borderClass = isActive
+    ? "border-blue-400 shadow-md"
+    : "border-gray-200 shadow-sm";
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-3 px-4 py-3 text-left"
-        aria-expanded={open}
-      >
-        <span className={`h-2.5 w-2.5 flex-shrink-0 rounded-full ${STATUS_DOT[group.status]}`} />
-        <span className="flex-1 text-sm font-semibold text-gray-800">
-          {label}{iterSuffix}
-        </span>
-        <span className="text-xs font-medium uppercase tracking-wide text-gray-400">
-          {group.status}
-        </span>
-        <span className="ml-2 text-gray-400">{open ? "▲" : "▼"}</span>
-      </button>
+    <div className={`${paddingClass}`}>
+      <div className={`rounded-lg border-2 bg-white ${borderClass}`}>
+        <button
+          type="button"
+          onClick={() => !isActive && setOpen((v) => !v)}
+          className={`flex w-full items-center gap-3 px-4 py-3 text-left ${
+            isActive ? "cursor-default" : "cursor-pointer"
+          }`}
+          aria-expanded={open}
+        >
+          <span className={`h-2.5 w-2.5 flex-shrink-0 rounded-full ${STATUS_DOT[group.status]}`} />
+          <span className={`flex-1 text-sm font-semibold ${
+            isActive ? "text-blue-900" : "text-gray-800"
+          }`}>
+            {label}{iterSuffix}
+          </span>
+          {isActive && (
+            <span className="text-xs font-medium text-blue-600 bg-blue-50 rounded px-2 py-0.5">
+              ● Active
+            </span>
+          )}
+          <span className="text-xs font-medium uppercase tracking-wide text-gray-400">
+            {group.status}
+          </span>
+          {!isActive && (
+            <span className="ml-2 text-gray-400">{open ? "▲" : "▼"}</span>
+          )}
+        </button>
 
-      {open && (
-        <div className="border-t border-gray-100 px-4 pb-4 pt-3">
-          <StepCard
-            record={group.record}
-            pipelineId={pipelineId}
-            onArtifactSelect={onArtifactSelect}
-          />
-          <GateCard record={group.record} />
-        </div>
-      )}
+        {open && (
+          <div className="border-t border-gray-100 px-4 pb-4 pt-3">
+            <StepCard
+              record={group.record}
+              pipelineId={pipelineId}
+              onArtifactSelect={onArtifactSelect}
+            />
+            <GateCard record={group.record} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }

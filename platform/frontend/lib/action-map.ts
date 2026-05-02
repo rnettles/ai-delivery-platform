@@ -10,9 +10,10 @@ export function deriveAllowedActions(status: PipelineStatus): PipelineAction[] {
       return ["retry", "cancel"];
     case "running":
       return ["cancel"];
+    case "awaiting_pr_review":
+      return ["cancel"];
     case "complete":
     case "cancelled":
-    case "awaiting_pr_review":
       return [];
     default:
       return [];
