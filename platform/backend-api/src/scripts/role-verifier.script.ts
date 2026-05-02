@@ -11,6 +11,9 @@ import { projectService } from "../services/project.service";
 import { projectGitService } from "../services/project-git.service";
 import { designInputGateService } from "../services/design-input-gate.service";
 import { HttpError } from "../utils/http-error";
+import { parseExecutionContract } from "../utils/brief-parser";
+import { executionContractEnforcer } from "../services/execution-contract-enforcer.service";
+import type { ExecutionContract } from "../domain/execution-contract.types";
 
 const execAsync = promisify(exec);
 
@@ -405,22 +408,55 @@ export class VerifierScript implements Script<Record<string, unknown>, unknown> 
 
     // ── Aggregate ─────────────────────────────────────────────────────────────
     const failedChecks = checks.filter((c) => c.result === "FAIL");
-    const passed = failedChecks.length === 0;
+
+    // ── Phase 5 (ADR-033): Execution Contract enforcement ─────────────────────
+    // Re-runs the same deterministic enforcer the Implementer used at write time,
+    // catching violations the Implementer's tool layer might have missed (e.g. a
+    // legacy thin brief retro-fitted with a contract, or a contract added after
+    // the implementation finished). Failures surface as OUT_OF_SCOPE_PATH /
+    // EVIDENCE_INCOMPLETE / CONTRACT_VIOLATION reasons appended to
+    // required_corrections and the FAIL handoff.
+    const executionContract: ExecutionContract | null = parseExecutionContract(brief.content);
+    const contractViolations = await this.enforceExecutionContract(
+      executionContract,
+      repoPath,
+      run.sprint_branch ?? null,
+      commandResults,
+      previousArtifacts
+    );
+
+    const passed = failedChecks.length === 0 && contractViolations.length === 0;
 
     const requiredCorrections = dedup([
       ...governanceResult.required_corrections,
       ...failedChecks
         .filter((c) => c.category !== "governance" && c.failure_detail)
         .map((c) => c.failure_detail!),
+      ...contractViolations.map((v) => `${v.code}: ${v.reason}`),
     ]);
 
-    const summary = passed
+    const baseSummary = passed
       ? "All 10 verification checks passed."
       : `${failedChecks.length} of 10 verification check(s) failed.`;
+    const summary =
+      contractViolations.length > 0
+        ? `${baseSummary} ${contractViolations.length} execution contract violation(s) detected.`
+        : baseSummary;
 
     let handoff: HandoffContract | undefined;
     if (!passed) {
       handoff = this.buildFailHandoff(taskId, failedChecks, governanceResult.handoff, brief.path);
+      if (contractViolations.length > 0) {
+        // Inject contract violations into the existing handoff so Fixer + SCT see them.
+        handoff.open_risks = dedup([
+          ...handoff.open_risks,
+          ...contractViolations.map((v) => `${v.code}: ${v.reason}`),
+        ]);
+        handoff.evidence_refs = dedup([
+          ...handoff.evidence_refs,
+          ...contractViolations.map((v, i) => `contract-violation-${i + 1}:${v.code}`),
+        ]);
+      }
     }
 
     const verifiedAt = new Date().toISOString();
@@ -828,6 +864,138 @@ Be precise and evidence-based. Reference specific artifact content in evidence f
       evidence: `verification_result.json target: ${resolved}; active-slot base: ${base}`,
       failure_detail: safe ? undefined : "verification_result.json would be written outside the active-slot directory",
     };
+  }
+
+  /**
+   * Phase 5 (ADR-033): Execution Contract enforcement on the Verifier side.
+   *
+   * Mirrors the deterministic checks the Implementer's tool layer performs at
+   * write/run time, but applied retroactively against the resulting state of the
+   * sprint branch:
+   *  - Every added/modified file path must satisfy `scope.allowed_paths` (else
+   *    OUT_OF_SCOPE_PATH).
+   *  - Modified `package.json` is diffed against the merge base; new packages
+   *    must appear in `dependencies.allowed` (else CONTRACT_VIOLATION).
+   *  - All three contract gate commands must have exit 0 in `commandResults`
+   *    (else CONTRACT_VIOLATION via `checkPreFinishGates`).
+   *  - Every `verification_inputs` entry must resolve to an existing previous
+   *    artifact (else EVIDENCE_INCOMPLETE).
+   *
+   * Returns an empty array when no contract is present (legacy briefs unchanged)
+   * or when every check passes. Errors during git/fs probing degrade gracefully
+   * to "no violation" rather than blocking — the 10-check pipeline is still the
+   * primary gate, and this layer is additive.
+   */
+  private async enforceExecutionContract(
+    contract: ExecutionContract | null,
+    repoPath: string,
+    sprintBranch: string | null,
+    commandResults: CommandResult[],
+    previousArtifacts: string[]
+  ): Promise<{ code: "OUT_OF_SCOPE_PATH" | "EVIDENCE_INCOMPLETE" | "CONTRACT_VIOLATION"; reason: string; detail?: string }[]> {
+    if (!contract) return [];
+    const out: { code: "OUT_OF_SCOPE_PATH" | "EVIDENCE_INCOMPLETE" | "CONTRACT_VIOLATION"; reason: string; detail?: string }[] = [];
+
+    // 1. Path-scope re-validation against actual changed files.
+    if (sprintBranch) {
+      const changed = await this.computeChangedFilesForContract(repoPath, sprintBranch);
+      for (const f of changed) {
+        if (f.status === "D") continue; // deletions need separate forbidden_actions handling, out of scope here
+        const r = executionContractEnforcer.checkWriteAllowed(contract, f.path);
+        if (!r.ok) {
+          out.push({
+            code: "OUT_OF_SCOPE_PATH",
+            reason: `Changed file outside contract.scope.allowed_paths: ${f.path}`,
+            detail: r.detail,
+          });
+        }
+      }
+
+      // 2. Manifest dep diff for package.json edits, if modified.
+      const manifest = changed.find((f) => /(^|\/)package\.json$/.test(f.path));
+      if (manifest && manifest.status !== "D") {
+        try {
+          const afterContent = await fs.readFile(path.join(repoPath, manifest.path), "utf-8");
+          const { stdout: beforeStdout } = await execAsync(
+            `git show origin/HEAD:${manifest.path}`,
+            { cwd: repoPath, timeout: 10_000, maxBuffer: 4 * 1024 * 1024 }
+          ).catch(() => ({ stdout: "" }));
+          const r = executionContractEnforcer.checkManifestDependencyDiff(
+            contract,
+            beforeStdout || null,
+            afterContent
+          );
+          if (!r.ok) {
+            out.push({ code: "CONTRACT_VIOLATION", reason: r.reason, detail: r.detail });
+          }
+        } catch {
+          // Skip silently — manifest probe is best-effort.
+        }
+      }
+    }
+
+    // 3. Pre-finish gate replay against actual command_results.
+    const preFinish = executionContractEnforcer.checkPreFinishGates(
+      contract,
+      commandResults.map((r) => ({ command: r.command, exit_code: r.exit_code }))
+    );
+    if (!preFinish.ok) {
+      out.push({ code: "CONTRACT_VIOLATION", reason: preFinish.reason, detail: preFinish.detail });
+    }
+
+    // 4. Evidence completeness — every verification_inputs path must exist among artifacts.
+    if (contract.evidence_required) {
+      for (const required of contract.verification_inputs) {
+        const present = previousArtifacts.some((p) => p.endsWith(required) || p.includes(required));
+        if (!present) {
+          out.push({
+            code: "EVIDENCE_INCOMPLETE",
+            reason: `Required verification input missing from artifacts: ${required}`,
+          });
+        }
+      }
+    }
+
+    return out;
+  }
+
+  /**
+   * Phase 5 helper: enumerate files changed between the default branch tip and
+   * the current sprint branch. Mirrors implementer.computeChangedFiles but is
+   * defined locally so the verifier remains self-contained.
+   */
+  private async computeChangedFilesForContract(
+    repoPath: string,
+    sprintBranch: string
+  ): Promise<{ path: string; status: "A" | "M" | "D" }[]> {
+    try {
+      let defaultBranch = "master";
+      try {
+        const { stdout } = await execAsync(
+          "git symbolic-ref --short refs/remotes/origin/HEAD",
+          { cwd: repoPath, timeout: 5_000 }
+        );
+        const head = stdout.trim().replace(/^origin\//, "");
+        if (head) defaultBranch = head;
+      } catch {
+        try {
+          await execAsync("git rev-parse --verify origin/main", { cwd: repoPath, timeout: 5_000 });
+          defaultBranch = "main";
+        } catch { /* keep master */ }
+      }
+      const { stdout } = await execAsync(
+        `git diff --name-status origin/${defaultBranch}...${sprintBranch}`,
+        { cwd: repoPath, timeout: 15_000, maxBuffer: 4 * 1024 * 1024 }
+      );
+      const out: { path: string; status: "A" | "M" | "D" }[] = [];
+      for (const line of stdout.split("\n").map((l) => l.trim()).filter(Boolean)) {
+        const m = /^([AMD])\s+(.+)$/.exec(line);
+        if (m) out.push({ path: m[2], status: m[1] as "A" | "M" | "D" });
+      }
+      return out;
+    } catch {
+      return [];
+    }
   }
 
   /**
