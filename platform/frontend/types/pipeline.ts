@@ -73,3 +73,16 @@ export interface PipelineRun {
   created_at: string;
   updated_at: string;
 }
+
+// Mirrored from platform/backend-api/src/services/pipeline.service.ts
+export interface PipelineStatusChoice {
+  pipeline_id: string;
+  status: PipelineStatus;
+  current_step: PipelineRole | "complete";
+  current_actor?: string;
+  project_id?: string;
+  repo_url?: string;
+  sprint_branch?: string;
+  updated_at: string;
+  wait_state?: string;
+}

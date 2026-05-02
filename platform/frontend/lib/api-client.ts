@@ -1,4 +1,4 @@
-import type { PipelineAction, PipelineRun } from "@/types";
+import type { PipelineAction, PipelineRun, PipelineStatusChoice } from "@/types";
 
 const BACKEND_URL = process.env.BACKEND_URL;
 if (!BACKEND_URL) {
@@ -36,6 +36,12 @@ export async function fetchArtifact(
     return JSON.stringify(json, null, 2);
   }
   return res.text();
+}
+
+export async function fetchProjectPipelines(projectId: string): Promise<PipelineStatusChoice[]> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/pipelines`);
+  if (!res.ok) throw new Error("Failed to fetch pipelines");
+  return res.json() as Promise<PipelineStatusChoice[]>;
 }
 
 /** Maps a PipelineAction to the backend route suffix */
