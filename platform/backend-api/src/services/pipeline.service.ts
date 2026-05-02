@@ -1017,7 +1017,7 @@ export class PipelineService {
 
   async cancel(pipelineId: string, actor: string): Promise<PipelineRun> {
     const run = await this.get(pipelineId);
-    this.assertStatus(run, ["running", "awaiting_approval", "paused_takeover"]);
+    this.assertStatus(run, ["running", "awaiting_approval", "paused_takeover", "awaiting_pr_review"]);
 
     const steps = [...run.steps];
     const stepIdx = this.currentStepIdx(steps, run.current_step as PipelineRole);
