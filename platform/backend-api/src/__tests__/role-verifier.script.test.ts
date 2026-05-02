@@ -704,17 +704,24 @@ describe("Suite 4 (Integration): Full verification path scenarios", () => {
     expect(result.handoff).toBeDefined();
   });
 
-  it("4.4 — verification_result.json is persisted to repo active-slot directory", async () => {
+  it("4.4 — ADR-035: verification_result.json is written to artifact service only (not repo active-slot)", async () => {
     mockCommandsPass();
     mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
 
     const ctx = makeContext();
     await script.run({ previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"], pipeline_id: PIPELINE_ID }, ctx);
 
-    expect(mocks.writeFile).toHaveBeenCalledWith(
-      expect.stringContaining(path.join("project_work", "ai_project_tasks", "active", "verification_result.json")),
+    // ADR-035: verification_result.json is written only via artifact service, NOT via fs.writeFile to active/
+    expect(mocks.writeFile).not.toHaveBeenCalledWith(
+      expect.stringContaining("verification_result.json"),
       expect.any(String),
       "utf-8"
+    );
+    // Artifact service write IS expected
+    expect(mocks.write).toHaveBeenCalledWith(
+      expect.any(String),
+      "verification_result.json",
+      expect.any(String)
     );
   });
 
@@ -1159,7 +1166,7 @@ describe("Suite 7 (Phase 6): Task-flag structural parsing", () => {
 
 // ─── Suite 8 (Phase 7): Output contract schema completeness ───────────────────
 
-const CANONICAL_BRIEF = path.join("project_work", "ai_project_tasks", "active", "AI_IMPLEMENTATION_BRIEF.md");
+const CANONICAL_BRIEF = "/artifacts/AI_IMPLEMENTATION_BRIEF.md";
 
 describe("Suite 8 (Phase 7): Output contract schema \u2014 REV-003 completeness", () => {
   const script = new VerifierScript();
@@ -1263,7 +1270,8 @@ describe("Suite 8 (Phase 7): Output contract schema \u2014 REV-003 completeness"
 
     expect(result.brief_path).toBeDefined();
     expect(result.brief_path).toContain("AI_IMPLEMENTATION_BRIEF.md");
-    expect(result.brief_path).toContain("active");
+    // ADR-035: brief_path now points to pipeline artifact service path, not active/ directory
+    expect(result.brief_path).not.toContain("active");
   });
 
   it("8.6 \u2014 VerifierOutput.brief_path is set to canonical path on FAIL", async () => {
@@ -1399,7 +1407,7 @@ describe("Suite 9 (Phase 8): Active-slot and path invariant compliance \u2014 PT
     expect(result.handoff!.evidence_refs).not.toContain(CANONICAL_BRIEF);
   });
 
-  it("9.6 \u2014 verification_result.json is written to active-slot directory (PTH-002)", async () => {
+  it("9.6 — ADR-035: verification_result.json is NOT written to active-slot directory (PTH-002 superseded)", async () => {
     mockCommandsPass();
     mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
 
@@ -1409,31 +1417,34 @@ describe("Suite 9 (Phase 8): Active-slot and path invariant compliance \u2014 PT
       pipeline_id: PIPELINE_ID,
     }, ctx);
 
-    expect(mocks.writeFile).toHaveBeenCalledWith(
+    // ADR-035: no longer writes verification_result.json to repo active-slot directory
+    expect(mocks.writeFile).not.toHaveBeenCalledWith(
       expect.stringContaining(path.join("project_work", "ai_project_tasks", "active", "verification_result.json")),
       expect.any(String),
       "utf-8"
     );
   });
 
-  it("9.7 \u2014 verification_result.json committed to repo active-slot also contains handoff on FAIL", async () => {
+  it("9.7 — verification_result output contains handoff on FAIL (ADR-035: via artifact service only)", async () => {
     mockCommandFail();
     mocks.chatJson.mockResolvedValue(GOVERNANCE_PASS_RESPONSE);
 
     const ctx = makeContext();
-    await script.run({
+    const result = await script.run({
       previous_artifacts: ["/artifacts/AI_IMPLEMENTATION_BRIEF.md", "/artifacts/current_task.json", "/artifacts/test_results.json"],
       pipeline_id: PIPELINE_ID,
-    }, ctx);
+    }, ctx) as VerifierOutput;
 
-    const writeFileCall = mocks.writeFile.mock.calls.find(([p]: string[]) =>
-      p.includes("verification_result.json")
-    );
-    expect(writeFileCall).toBeDefined();
-    const repoWritten = JSON.parse(writeFileCall![1] as string) as VerificationResult;
-    // Phase 7.1: handoff embedded in repo JSON too
-    expect(repoWritten.handoff).toBeDefined();
-    expect(repoWritten.handoff!.verification_state).toBe("fail");
+    // ADR-035: handoff is in the VerifierOutput, not in a repo-written file
+    expect(result.handoff).toBeDefined();
+    expect(result.passed).toBe(false);
+
+    // The artifact service write for verification_result.json must contain handoff
+    const writeCall = mocks.write.mock.calls.find(([, name]: string[]) => name === "verification_result.json");
+    expect(writeCall).toBeDefined();
+    const written = JSON.parse(writeCall![2] as string) as VerificationResult;
+    expect(written.handoff).toBeDefined();
+    expect(written.handoff!.verification_state).toBe("fail");
   });
 });
 

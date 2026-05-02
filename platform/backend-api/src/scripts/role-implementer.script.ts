@@ -172,7 +172,7 @@ const FILESYSTEM_TOOLS: ToolDefinition[] = [
     description:
       "Persist current work state for cross-session continuity. Call before finishing, and " +
       "any time you pause on a blocker, so the next run can resume cleanly. Writes to " +
-      "project_work/ai_project_tasks/active/progress.json.",
+      "the pipeline artifact store as progress.json.",
     parameters: {
       type: "object",
       properties: {
@@ -302,13 +302,10 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       `Using project: \`${designInputs.project_name}\``
     );
 
-    // Backstop the governance rules in script logic: if this pipeline invocation lacks
-    // staged task artifacts, reuse the canonical active task package from the repo.
-    if (!briefArtifact || !taskArtifact || !sprintArtifact) {
-      const activeArtifacts = await this.loadActiveTaskArtifacts(clonePath ?? project.clone_path);
-      briefArtifact = briefArtifact ?? activeArtifacts.briefArtifact;
-      taskArtifact = taskArtifact ?? activeArtifacts.taskArtifact;
-      sprintArtifact = sprintArtifact ?? activeArtifacts.sprintArtifact;
+    // ADR-035: sprint artifact (from staged_sprints/) is not in previous_artifacts — load it from repo.
+    if (!sprintArtifact) {
+      const repoSprintArtifact = await this.loadStagedSprintArtifact(clonePath ?? project.clone_path);
+      sprintArtifact = sprintArtifact ?? repoSprintArtifact;
     }
 
     if (!briefArtifact || !taskArtifact || !sprintArtifact) {
@@ -410,23 +407,21 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
 
     // Inject prior-run state so subsequent runs skip already-passing gates and continue from where
     // the prior run stopped rather than re-reading the brief and starting from scratch.
-    if (clonePath) {
-      const priorCtx = await this.loadPriorRunContext(clonePath, project.project_id, sprintBranch ?? undefined);
-      if (priorCtx) contextParts.push(`# Prior Run Context\n\n${priorCtx}`);
+    const priorCtx = await this.loadPriorRunContext(previousArtifacts, project.project_id, sprintBranch ?? undefined);
+    if (priorCtx) contextParts.push(`# Prior Run Context\n\n${priorCtx}`);
 
-      // ─── Phase 3 (ADR-033): structured prior-run extras ────────────────────
-      const progressBlock = await this.loadProgressArtifact(clonePath);
-      if (progressBlock) contextParts.push(`# Prior Run State\n\n${progressBlock}`);
+    // ─── Phase 3 (ADR-033): structured prior-run extras ────────────────────
+    const progressBlock = await this.loadProgressArtifact(previousArtifacts);
+    if (progressBlock) contextParts.push(`# Prior Run State\n\n${progressBlock}`);
 
-      const corrections = await this.extractCorrections(clonePath);
-      if (corrections) contextParts.push(`# Required Corrections (from prior verification)\n\n${corrections}`);
+    const corrections = await this.extractCorrections(previousArtifacts);
+    if (corrections) contextParts.push(`# Required Corrections (from prior verification)\n\n${corrections}`);
 
-      if (sprintBranch) {
-        const changedFiles = await this.computeChangedFiles(clonePath, sprintBranch);
-        if (changedFiles && changedFiles.length > 0) {
-          const lines = changedFiles.map((c) => `- ${c.status} \`${c.path}\``);
-          contextParts.push(`# Files Changed Since Branch Diverged\n\n${lines.join("\n")}`);
-        }
+    if (clonePath && sprintBranch) {
+      const changedFiles = await this.computeChangedFiles(clonePath, sprintBranch);
+      if (changedFiles && changedFiles.length > 0) {
+        const lines = changedFiles.map((c) => `- ${c.status} \`${c.path}\``);
+        contextParts.push(`# Files Changed Since Branch Diverged\n\n${lines.join("\n")}`);
       }
     }
 
@@ -461,7 +456,7 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       recorded_at: string;
     } | null = null;
 
-    /** Phase 4 helper: persist progress snapshot to repo `active/progress.json`. */
+    /** Phase 4 helper: persist progress snapshot to pipeline artifact service (ADR-035). */
     const persistProgress = async (snapshot: {
       current_focus: string;
       open_todos: string[];
@@ -469,19 +464,8 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       planned_next_action: string;
       recorded_at: string;
     }): Promise<void> => {
-      if (!clonePath) return;
-      const repoPath = path.join(
-        clonePath,
-        "project_work",
-        "ai_project_tasks",
-        "active",
-        "progress.json"
-      );
       const json = JSON.stringify(snapshot, null, 2);
-      await fs.mkdir(path.dirname(repoPath), { recursive: true });
-      await fs.writeFile(repoPath, json, "utf-8");
-      // Note: progress.json lives only in the repo clone. checkpointCommitOnFailure
-      // will commit it alongside test_results.json so the next run picks it up.
+      await artifactService.write(pipelineId, "progress.json", json);
     };
 
     const toolExecutor = async (toolCall: ToolCall): Promise<string> => {
@@ -550,6 +534,7 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
         // If the prior run recorded an exit_code=0 for this exact command and
         // none of the relevant files changed since, reuse the prior pass.
         const cached = await this.tryReuseGateResult(
+          previousArtifacts,
           clonePath,
           command,
           sprintBranch ?? undefined
@@ -712,16 +697,14 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       : !finishPayload
         ? "FINISH_NOT_CALLED"
         : "completed";
-    if (clonePath) {
-      await this.writeTestResultsToRepo(
-        clonePath,
+    await this.writeTestResultsToRepo(
+        pipelineId,
         resolvedTaskId,
         resolvedSprintId,
         gateResults,
         stopReason
       );
-      context.log("Implementer: test_results.json written to repo", { stop_reason: stopReason });
-    }
+      context.log("Implementer: test_results.json written to artifact service", { stop_reason: stopReason });
 
     // Phase 5.3 / MAX_ITERATIONS: fail closed — checkpoint commit first so operator can review
     // failure state locally and subsequent runs continue from where this run stopped.
@@ -1018,72 +1001,61 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
     }
   }
 
-  private async loadActiveTaskArtifacts(clonePath: string): Promise<{
-    briefArtifact: ArtifactContextFile | null;
-    taskArtifact: ArtifactContextFile | null;
-    sprintArtifact: ArtifactContextFile | null;
-  }> {
-    const activeDir = path.join(clonePath, "project_work", "ai_project_tasks", "active");
-    const readOptional = async (filePath: string): Promise<ArtifactContextFile | null> => {
-      try {
-        return {
-          path: filePath,
-          content: await fs.readFile(filePath, "utf-8"),
-        };
-      } catch {
-        return null;
-      }
-    };
-
-    let sprintArtifact: ArtifactContextFile | null = null;
+  /**
+   * ADR-035: Load the sprint plan artifact from staged_sprints/ in the repo.
+   * The sprint plan is NOT stored in the artifact service — it lives in the project
+   * repo under staged_sprints/ (Planner owns it). This is the only repo-based fallback
+   * that is still valid after the artifact isolation change.
+   */
+  private async loadStagedSprintArtifact(clonePath: string): Promise<ArtifactContextFile | null> {
     try {
       // Sprint plans live in staged_sprints/ (not active/) — Planner owns sprint plan creation.
       const stagedSprintsDir = path.join(clonePath, "project_work", "ai_project_tasks", "staged_sprints");
       const entries = await fs.readdir(stagedSprintsDir, { withFileTypes: true });
       const sprintPlanEntry = entries.find((entry) => entry.isFile() && /^sprint_plan_.*\.md$/i.test(entry.name));
       if (sprintPlanEntry) {
-        sprintArtifact = await readOptional(path.join(stagedSprintsDir, sprintPlanEntry.name));
+        const filePath = path.join(stagedSprintsDir, sprintPlanEntry.name);
+        const content = await fs.readFile(filePath, "utf-8");
+        return { path: filePath, content };
       }
+      return null;
     } catch {
-      // no staged_sprints dir — non-fatal
+      return null;
     }
-
-    return {
-      briefArtifact: await readOptional(path.join(activeDir, "AI_IMPLEMENTATION_BRIEF.md")),
-      taskArtifact: await readOptional(path.join(activeDir, "current_task.json")),
-      sprintArtifact,
-    };
   }
 
   /**
-   * Load prior-run context from test_results.json committed to the repo by a previous run.
+   * Load prior-run context from test_results.json in the pipeline artifact service.
    * Injects a "Prior Run Context" section into the user prompt so subsequent runs skip
    * already-passing gates and continue from where the prior run left off rather than
    * re-reading the brief and starting from scratch.
    *
    * Falls back to the stable checkpoint file (written outside the git repo by
-   * checkpointCommitOnFailure) when the repo file is absent — this recovers prior
-   * context even when the checkpoint git commit failed (stash conflicts, push rejection).
+   * checkpointCommitOnFailure) when the artifact is absent — this recovers prior
+   * context even when the artifact write failed. No active/ fallback — after ADR-035,
+   * test_results.json is never written to active/.
    */
   private async loadPriorRunContext(
-    clonePath: string,
+    previousArtifacts: string[],
     projectId?: string,
     sprintBranch?: string
   ): Promise<string | null> {
-    const repoPaths = [
-      path.join(clonePath, "project_work", "ai_project_tasks", "active", "test_results.json"),
-      ...(projectId && sprintBranch ? [this.stableCheckpointPath(projectId, sprintBranch)] : []),
-    ];
+    // ADR-035: Read test_results.json from pipeline artifact service (primary).
+    const artifactResult = await artifactService.findFirst(
+      previousArtifacts.filter((p) => p.includes("test_results"))
+    );
 
-    let raw: string | null = null;
-    for (const candidate of repoPaths) {
+    let raw: string | null = artifactResult?.content ?? null;
+
+    // Fall back to stable checkpoint file (outside git repo) as secondary.
+    if (!raw && projectId && sprintBranch) {
       try {
-        raw = await fs.readFile(candidate, "utf-8");
-        break;
+        raw = await fs.readFile(this.stableCheckpointPath(projectId, sprintBranch), "utf-8");
       } catch {
-        // try next candidate
+        // not found — no prior context
       }
     }
+
     if (!raw) return null;
 
     try {
@@ -1130,23 +1102,21 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
    * run's `test_results.json` recorded a successful run of the same command and
    * whether any files matching the command's pattern have changed since. If
    * both conditions hold, returns a cached GateResult; otherwise null.
+   * ADR-035: reads test_results from pipeline artifact service, not active/ directory.
    */
   private async tryReuseGateResult(
+    previousArtifacts: string[],
     clonePath: string,
     command: string,
     sprintBranch?: string
   ): Promise<GateResult | null> {
-    const repoTestResultsPath = path.join(
-      clonePath,
-      "project_work",
-      "ai_project_tasks",
-      "active",
-      "test_results.json"
+    const testResult = await artifactService.findFirst(
+      previousArtifacts.filter((p) => p.includes("test_results"))
     );
+    if (!testResult) return null;
     let priorGates: GateResult[] = [];
     try {
-      const raw = await fs.readFile(repoTestResultsPath, "utf-8");
-      const parsed = JSON.parse(raw) as { gate_results?: GateResult[] };
+      const parsed = JSON.parse(testResult.content) as { gate_results?: GateResult[] };
       priorGates = parsed.gate_results ?? [];
     } catch {
       return null;
@@ -1192,18 +1162,15 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
    * tool on the previous run. Returns a markdown block describing current focus,
    * open todos, blockers and the planned next action — or null if the file is
    * absent / unparseable.
+   * ADR-035: reads from pipeline artifact service, not active/ directory.
    */
-  private async loadProgressArtifact(clonePath: string): Promise<string | null> {
-    const progressPath = path.join(
-      clonePath,
-      "project_work",
-      "ai_project_tasks",
-      "active",
-      "progress.json"
+  private async loadProgressArtifact(previousArtifacts: string[]): Promise<string | null> {
+    const result = await artifactService.findFirst(
+      previousArtifacts.filter((p) => p.includes("progress"))
     );
+    if (!result) return null;
     try {
-      const raw = await fs.readFile(progressPath, "utf-8");
-      const p = JSON.parse(raw) as {
+      const p = JSON.parse(result.content) as {
         current_focus?: string;
         open_todos?: string[];
         blockers?: string[];
@@ -1232,18 +1199,15 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
    * Phase 3 (ADR-033): if the prior verifier run produced a FAIL with
    * `required_corrections[]`, surface those as a numbered directive list so the
    * implementer addresses them in priority order. Returns null on PASS or absent.
+   * ADR-035: reads from pipeline artifact service, not active/ directory.
    */
-  private async extractCorrections(clonePath: string): Promise<string | null> {
-    const verResultPath = path.join(
-      clonePath,
-      "project_work",
-      "ai_project_tasks",
-      "active",
-      "verification_result.json"
+  private async extractCorrections(previousArtifacts: string[]): Promise<string | null> {
+    const result = await artifactService.findFirst(
+      previousArtifacts.filter((p) => p.includes("verification_result"))
     );
+    if (!result) return null;
     try {
-      const raw = await fs.readFile(verResultPath, "utf-8");
-      const v = JSON.parse(raw) as {
+      const v = JSON.parse(result.content) as {
         result?: string;
         required_corrections?: string[];
       };
@@ -1302,23 +1266,16 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
   }
 
   /**
-   * Persist accumulated gate results to `project_work/ai_project_tasks/active/test_results.json`
-   * within the cloned repo so that downstream roles (and the next run) can read them.
+   * Persist accumulated gate results to the pipeline artifact service (ADR-035).
+   * Returns the artifact path for inclusion in artifact_paths.
    */
   private async writeTestResultsToRepo(
-    clonePath: string,
+    pipelineId: string,
     taskId: string,
     sprintId: string,
     gateResults: GateResult[],
     stopReason: string
   ): Promise<void> {
-    const repoTestResultsPath = path.join(
-      clonePath,
-      "project_work",
-      "ai_project_tasks",
-      "active",
-      "test_results.json"
-    );
     const latest = latestResultPerCommand(gateResults);
     const summary =
       latest.length > 0
@@ -1334,8 +1291,7 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       gate_results: gateResults,
       summary,
     };
-    await fs.mkdir(path.dirname(repoTestResultsPath), { recursive: true });
-    await fs.writeFile(repoTestResultsPath, JSON.stringify(payload, null, 2), "utf-8");
+    await artifactService.write(pipelineId, "test_results.json", JSON.stringify(payload, null, 2));
   }
 
   /**
