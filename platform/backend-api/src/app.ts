@@ -44,11 +44,24 @@ app.get("/logs", (_req, res) => {
 app.get("/pr-gates", (_req, res) => {
 	const all = getLogs(500);
 	const gateEntries = all.filter((e) => e.message.includes("PR merge gate waiting"));
+
+	// Pipelines already resolved (merged or closed) — exclude them from the gate list
+	const resolvedPipelines = new Set(
+		all
+			.filter((e) =>
+				e.message.includes("PR merge detected via poll") ||
+				e.message.includes("PR is closed but not merged")
+			)
+			.map((e) => String(e.context.pipeline_id ?? ""))
+	);
+
 	// Deduplicate by pipeline_id — keep the latest entry per pipeline
 	const byPipeline = new Map<string, typeof gateEntries[0]>();
 	for (const entry of gateEntries) {
 		const pid = String(entry.context.pipeline_id ?? "unknown");
-		byPipeline.set(pid, entry);
+		if (!resolvedPipelines.has(pid)) {
+			byPipeline.set(pid, entry);
+		}
 	}
 	// Newest first
 	res.json(Array.from(byPipeline.values()).reverse());
