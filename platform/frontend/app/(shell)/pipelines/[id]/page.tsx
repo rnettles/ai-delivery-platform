@@ -6,6 +6,7 @@ import { PipelineHeader } from "@/components/pipeline/PipelineHeader";
 import { PipelineTimeline } from "@/components/pipeline/PipelineTimeline";
 import { ActionBar } from "@/components/pipeline/ActionBar";
 import { SidePanel } from "@/components/pipeline/SidePanel";
+import { StagedWorkPanel } from "@/components/pipeline/StagedWorkPanel";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -73,6 +74,8 @@ export default function PipelineDetailPage({ params }: PageProps) {
           onClose={() => setSelectedArtifact(null)}
         />
       </div>
+      {/* Staged work — collapsible panel below timeline */}
+      <StagedWorkPanel pipelineId={pipeline.pipeline_id} />
     </div>
   );
 }
