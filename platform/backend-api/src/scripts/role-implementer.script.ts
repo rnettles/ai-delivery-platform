@@ -9,8 +9,10 @@ import { projectGitService } from "../services/project-git.service";
 import { designInputGateService } from "../services/design-input-gate.service";
 import { ToolDefinition, ToolCall } from "../services/llm/llm-provider.interface";
 import { HttpError } from "../utils/http-error";
-import { parseBrief } from "../utils/brief-parser";
+import { parseBrief, parseExecutionContract } from "../utils/brief-parser";
 import { buildProjectPreamble } from "../utils/prompt-preamble";
+import { executionContractEnforcer } from "../services/execution-contract-enforcer.service";
+import type { ExecutionContract } from "../domain/execution-contract.types";
 import { config } from "../config";
 import fs from "fs/promises";
 import path from "path";
@@ -426,6 +428,25 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       }
     }
 
+    // ─── Phase 4 (ADR-033): Execution Contract extraction ──────────────────
+    // The Sprint Controller emits Section 0 of the brief as a fenced JSON block
+    // when the sprint plan is rich (Phase 3). When present, it binds the
+    // Implementer's tool layer below: write_file enforces allowed_paths,
+    // run_command enforces the canonical command set, package.json edits enforce
+    // dependencies.allowed, and finish requires all three contract gates green.
+    // Legacy thin briefs return null here, in which case Phase 1–3 behaviour is
+    // preserved (only VERIFIER_OWNED_ARTIFACTS guard remains).
+    const executionContract: ExecutionContract | null = briefArtifact
+      ? parseExecutionContract(briefArtifact.content)
+      : null;
+    if (executionContract) {
+      context.log("Implementer: execution contract loaded", {
+        task_id: executionContract.task_id,
+        allowed_paths: executionContract.scope.allowed_paths.length,
+        forbidden: executionContract.scope.forbidden_actions.length,
+      });
+    }
+
     const repoNote = clonePath
       ? `\n\nThe repository is available for you to read and write. Use the provided tools to explore the codebase and implement the task. When you are done, call the \`finish\` tool.`
       : `\n\nNo repository is available. Describe what you would implement in the finish tool's summary.`;
@@ -498,6 +519,41 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
         }
         const safeAbs = this.safeResolve(clonePath, relPath);
         if (!safeAbs) return `Error: path '${relPath}' is outside the repository root`;
+
+        // Phase 4 (ADR-033): Execution Contract enforcement (write side).
+        // Three deterministic checks before any bytes hit disk: allowed_paths
+        // glob match, randomness/external-call content scan, and (for
+        // package.json) dependency-diff against contract.dependencies.allowed.
+        if (executionContract) {
+          const allowed = executionContractEnforcer.checkWriteAllowed(executionContract, relPath);
+          if (!allowed.ok) {
+            context.notify(`🚫 CONTRACT_VIOLATION: ${allowed.reason}`);
+            return `CONTRACT_VIOLATION: ${allowed.reason}\n${allowed.detail ?? ""}`;
+          }
+          const determinism = executionContractEnforcer.checkContentDeterminism(executionContract, relPath, content);
+          if (!determinism.ok) {
+            context.notify(`🚫 CONTRACT_VIOLATION: ${determinism.reason}`);
+            return `CONTRACT_VIOLATION: ${determinism.reason}\n${determinism.detail ?? ""}`;
+          }
+          if (/(^|\/)package\.json$/.test(relPath.replace(/\\/g, "/"))) {
+            let beforeContent: string | null = null;
+            try {
+              beforeContent = await fs.readFile(safeAbs, "utf-8");
+            } catch {
+              beforeContent = null;
+            }
+            const depDiff = executionContractEnforcer.checkManifestDependencyDiff(
+              executionContract,
+              beforeContent,
+              content
+            );
+            if (!depDiff.ok) {
+              context.notify(`🚫 CONTRACT_VIOLATION: ${depDiff.reason}`);
+              return `CONTRACT_VIOLATION: ${depDiff.reason}\n${depDiff.detail ?? ""}`;
+            }
+          }
+        }
+
         let exists = false;
         try {
           await fs.access(safeAbs);
@@ -529,6 +585,19 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
         const command = String(args["command"] ?? "").trim();
         if (!command) return "Error: command is required";
         if (!clonePath) return "Error: no repository available";
+
+        // Phase 4 (ADR-033): Execution Contract enforcement (command side).
+        // The agent may only invoke the canonical lint/typecheck/test commands
+        // declared in the contract. Arbitrary shell strings are rejected as a
+        // CONTRACT_VIOLATION so the gate set stays deterministic across runs.
+        if (executionContract) {
+          const allowed = executionContractEnforcer.checkCommandAllowed(executionContract, command);
+          if (!allowed.ok) {
+            context.notify(`🚫 CONTRACT_VIOLATION: ${allowed.reason}`);
+            return `CONTRACT_VIOLATION: ${allowed.reason}\n${allowed.detail ?? ""}`;
+          }
+        }
+
         const timestamp = new Date().toISOString();
 
         // ─── Phase 9 (ADR-033): cross-run gate evidence reuse ──────────────
@@ -629,6 +698,21 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
             openFailures.map((g) => `  - \`${g.command}\` (exit ${g.exit_code})`).join("\n") +
             "\nFix the failing gates, then call finish."
           );
+        }
+
+        // Phase 4 (ADR-033): Execution Contract pre-finish gate.
+        // When a contract is present the latest result per command must contain
+        // exit 0 for each of {lint, typecheck, test}. This catches the case
+        // where the agent calls finish without ever invoking a required gate.
+        if (executionContract) {
+          const preFinish = executionContractEnforcer.checkPreFinishGates(
+            executionContract,
+            latestResultPerCommand(gateResults).map((r) => ({ command: r.command, exit_code: r.exit_code }))
+          );
+          if (!preFinish.ok) {
+            context.notify(`🚫 CONTRACT_VIOLATION: ${preFinish.reason}`);
+            return `CONTRACT_VIOLATION: ${preFinish.reason}\n${preFinish.detail ?? ""}`;
+          }
         }
 
         finishPayload = {
