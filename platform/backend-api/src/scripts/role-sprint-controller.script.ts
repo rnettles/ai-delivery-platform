@@ -273,11 +273,14 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       `task ${stagedSprint.firstTask.task_id}: ${stagedSprint.firstTask.title}`
     );
 
-    // Load phase plan for gate checks (from previousArtifacts or staged_phases/ fallback).
-    let phasePlanArtifact = await artifactService.findFirst(
-      previousArtifacts.filter((p) => p.includes("phase_plan")).concat(previousArtifacts)
-    );
-    if (!phasePlanArtifact) {
+
+    // Load phase plan for gate checks — always read directly from the repo's staged_phases/.
+    // ADR-001: Git is the authoritative source of truth for planning artifacts. The pipeline
+    // artifact store holds a Draft copy written by the Planner; human promotion (Draft -> Planning)
+    // happens in the repo file. Reading previousArtifacts here would always see Draft and block
+    // staging even after operator approval.
+    let phasePlanArtifact: { path: string; content: string } | null = null;
+    {
       const stagedPhasesDir = path.join(
         designInputs.clone_path,
         "project_work",
