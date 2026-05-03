@@ -1417,7 +1417,8 @@ export class PipelineService {
     pipelineId: string,
     role: PipelineRole,
     executionId: string,
-    errorMessage: string
+    errorMessage: string,
+    artifactPaths: string[] = []
   ): Promise<PipelineRun | null> {
     let run: PipelineRun;
     try {
@@ -1440,7 +1441,7 @@ export class PipelineService {
       ...steps[stepIdx],
       status: "failed",
       execution_id: executionId,
-      artifact_paths: steps[stepIdx].artifact_paths ?? [],
+      artifact_paths: [...(steps[stepIdx].artifact_paths ?? []), ...artifactPaths],
       completed_at: now,
       error_message: errorMessage,
     };

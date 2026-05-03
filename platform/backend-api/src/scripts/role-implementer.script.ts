@@ -826,13 +826,14 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
         await this.checkpointCommitOnFailure(project, sprintBranch, gateResults, writtenFiles, failureReason, context, resolvedTaskId, resolvedSprintId);
       }
       // Persist per-turn log so operator can inspect what each iteration attempted.
+      let turnLogArtifactPath: string | undefined;
       try {
         const turnLogJson = JSON.stringify(
           { stop_reason: failureReason, turn_count: turnLog.length, turns: turnLog },
           null,
           2
         );
-        await artifactService.write(pipelineId, "turn_log.json", turnLogJson);
+        turnLogArtifactPath = await artifactService.write(pipelineId, "turn_log.json", turnLogJson);
         context.log("Implementer: turn_log.json written", {
           stop_reason: failureReason,
           turn_count: turnLog.length,
@@ -846,7 +847,7 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
           `Implementer agent loop exceeded maximum iterations (30) after ${turnLog.length} turn(s). ` +
             "Work has been checkpointed to the branch. " +
             "Rerun Implementer — the next run will load prior gate results and continue from where it left off.",
-          { gate_results: gateResults, written_files: writtenFiles, turn_count: turnLog.length }
+          { gate_results: gateResults, written_files: writtenFiles, turn_count: turnLog.length, turn_log_path: turnLogArtifactPath }
         );
       }
       throw new HttpError(
@@ -855,7 +856,7 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
         `Implementer agent loop terminated after ${turnLog.length} turn(s) without calling the finish tool. ` +
           "Work has been checkpointed to the branch. " +
           "Inspect the agent trace, resolve any gate failures, and rerun.",
-        { gate_results: gateResults, written_files: writtenFiles, turn_count: turnLog.length }
+        { gate_results: gateResults, written_files: writtenFiles, turn_count: turnLog.length, turn_log_path: turnLogArtifactPath }
       );
     }
 

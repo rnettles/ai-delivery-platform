@@ -601,18 +601,23 @@ async function executeCurrentStep(
       error: errorMessage,
     });
 
+    // Extract any artifact paths attached to the error (e.g. turn_log_path from implementer).
+    const errorDetails = (error instanceof HttpError ? error.details : undefined) as Record<string, unknown> | undefined;
+    const turnLogPath = typeof errorDetails?.turn_log_path === "string" ? errorDetails.turn_log_path : undefined;
+    const failureArtifacts: string[] = turnLogPath ? [turnLogPath] : [];
+
     // Attempt to mark step as failed in the pipeline.
     // First try the normal path (completeStep); if current_step has drifted due
     // to a concurrent write, fall back to failStepDirect which bypasses the
     // assertCurrentStep guard and corrects the DB state directly.
     try {
-      const run = await pipelineService.completeStep(pipelineId, role, "failed", [], true, undefined, errorMessage);
+      const run = await pipelineService.completeStep(pipelineId, role, "failed", failureArtifacts, true, undefined, errorMessage);
       await pipelineNotifierService.notify({
         pipeline_id: pipelineId,
         step: run.current_step,
         status: "failed",
         gate_required: false,
-        artifact_paths: [],
+        artifact_paths: failureArtifacts,
         metadata: run.metadata,
         agent_caller: callerLabel,
         message: errorMessage,
@@ -624,7 +629,7 @@ async function executeCurrentStep(
         error: completeStepError instanceof Error ? completeStepError.message : String(completeStepError),
       });
       try {
-        const recovered = await pipelineService.failStepDirect(pipelineId, role, "failed", errorMessage);
+        const recovered = await pipelineService.failStepDirect(pipelineId, role, "failed", errorMessage, failureArtifacts);
         if (recovered) {
           logger.info("failStepDirect recovery succeeded", { pipeline_id: pipelineId, role });
           await pipelineNotifierService.notify({
@@ -632,7 +637,7 @@ async function executeCurrentStep(
             step: recovered.current_step,
             status: "failed",
             gate_required: false,
-            artifact_paths: [],
+            artifact_paths: failureArtifacts,
             metadata: recovered.metadata,
             agent_caller: callerLabel,
             message: errorMessage,
