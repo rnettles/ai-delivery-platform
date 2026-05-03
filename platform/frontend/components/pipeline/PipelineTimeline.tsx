@@ -54,6 +54,13 @@ export function PipelineTimeline({ groups, pipelineId, onArtifactSelect, planner
             if (!thisStepSet.has(p)) supplemental.push(p);
           }
         }
+        if (group.role === "sprint-controller") {
+          // Supplement sprint-controller steps with staged plan artifacts so the sprint plan
+          // is visible even when the step failed before registering any artifact_paths.
+          for (const p of plannerSupplementalPaths ?? []) {
+            if (!thisStepSet.has(p)) supplemental.push(p);
+          }
+        }
         if (group.role === "implementer") {
           // Include the brief.md from the nearest preceding sprint-controller step.
           for (let j = i - 1; j >= 0; j--) {

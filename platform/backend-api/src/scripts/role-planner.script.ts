@@ -52,6 +52,7 @@ export interface PlannerOutput {
   phase_id?: string;
   phase_plan?: PlannerPhasePlan;
   artifact_path: string;
+  sprint_plan_path?: string;
   closeout_mode?: "sprint";
   pr_number?: number;
   pr_url?: string;
@@ -419,14 +420,17 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
     context.log("Planner phase plan complete", { phase_id: plan.phase_id, artifact_path: artifactPath });
 
     // Immediately stage Sprint 1 plan after phase plan commit (two discrete commits on main).
+    let sprintPlanPath: string | undefined;
     if (project) {
-      await this.runInitialSprintPlanning(pipelineId, artifactContent, description, context);
+      const staged = await this.runInitialSprintPlanning(pipelineId, artifactContent, description, context);
+      if (staged) sprintPlanPath = staged;
     }
 
     const output: PlannerOutput = {
       phase_id: plan.phase_id,
       phase_plan: plan,
       artifact_path: artifactPath,
+      ...(sprintPlanPath ? { sprint_plan_path: sprintPlanPath } : {}),
     };
 
     return output;
@@ -442,10 +446,10 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
     phasePlanContent: string,
     description: string,
     context: ScriptExecutionContext
-  ): Promise<void> {
+  ): Promise<string | null> {
     const run = await pipelineService.get(pipelineId);
     const project = run.project_id ? await projectService.getById(run.project_id) : null;
-    if (!project) return;
+    if (!project) return null;
 
     const repoBase = path.isAbsolute(project.clone_path)
       ? project.clone_path
@@ -455,9 +459,10 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
     // Skip if a sprint plan already exists — planner is idempotent.
     try {
       const existing = await fs.readdir(stagedSprintsDir);
-      if (existing.some((e) => /^sprint_plan_.*\.md$/i.test(e))) {
+      const existingFile = existing.find((e) => /^sprint_plan_.*\.md$/i.test(e));
+      if (existingFile) {
         context.notify("ℹ️ Sprint plan already exists in staged_sprints/ — skipping Sprint 1 generation.");
-        return;
+        return path.relative(process.cwd(), path.join(stagedSprintsDir, existingFile)).replace(/\\/g, "/");
       }
     } catch {
       // staged_sprints/ doesn't exist yet — that's fine, we'll create it
@@ -490,6 +495,8 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
     await projectGitService.commitAll(project, project.default_branch, `plan: stage ${sprintIdRaw} sprint plan`);
     await projectGitService.push(project, project.default_branch);
     context.notify(`📁 Sprint plan staged at \`${repoRelPath}\` on \`${project.default_branch}\``);
+
+    return path.relative(process.cwd(), path.join(stagedSprintsDir, sprintPlanFilename)).replace(/\\/g, "/");
   }
 
   private formatMarkdown(plan: PlannerPhasePlan): string {
@@ -865,11 +872,13 @@ ${designArtifacts}
 
     const tdnIndex = designInputs.tdn_context.map((file) => {
       const id = this.readTdnId(file.content);
+      const title = this.readTdnTitle(file.content);
       const status = this.readArtifactStatus(file.content);
       const approved = status ? APPROVED_STATUSES.has(status.toLowerCase()) : false;
       return {
         path: file.path,
         normalizedId: this.normalizeTitle(id ?? ""),
+        normalizedTitle: this.normalizeTitle(title ?? ""),
         status,
         approved,
       };
@@ -882,7 +891,10 @@ ${designArtifacts}
         (tdn) =>
           tdn.normalizedId === requiredNorm ||
           tdn.normalizedId.includes(requiredNorm) ||
-          requiredNorm.includes(tdn.normalizedId)
+          requiredNorm.includes(tdn.normalizedId) ||
+          tdn.normalizedTitle === requiredNorm ||
+          tdn.normalizedTitle.includes(requiredNorm) ||
+          requiredNorm.includes(tdn.normalizedTitle)
       );
 
       if (!matched) {
@@ -975,6 +987,19 @@ ${designArtifacts}
   private readAdrId(content: string): string | undefined {
     const m = /^ADR ID:\s*(.+)$/im.exec(content);
     return m?.[1]?.trim();
+  }
+
+  /**
+   * Extracts the subject from a TDN H1 heading, stripping the "Technical Design Note:" prefix.
+   * e.g. "# Technical Design Note: Main Application Window — Aesthetic Theme Implementation"
+   *   → "Main Application Window — Aesthetic Theme Implementation"
+   */
+  private readTdnTitle(content: string): string | undefined {
+    const m = /^#[^\n]*Technical Design Note[:\s]+(.+)$/im.exec(content);
+    if (m?.[1]?.trim()) return m[1].trim();
+    // Fallback: first H1 line stripped of leading #
+    const h1 = /^#\s+(.+)$/im.exec(content);
+    return h1?.[1]?.trim();
   }
 
   private normalizeTitle(value: string): string {

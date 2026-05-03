@@ -16,6 +16,8 @@ type Tab = "phases" | "sprints" | "tasks";
 interface StagedWorkPanelProps {
   pipelineId: string;
   onArtifactSelect: (path: string) => void;
+  /** When true, staged queries poll every 5 s to stay in sync with an active pipeline. */
+  isLive?: boolean;
 }
 
 function SkeletonRows() {
@@ -105,10 +107,11 @@ function TaskRow({
   );
 }
 
-export function StagedWorkPanel({ pipelineId, onArtifactSelect }: StagedWorkPanelProps) {
-  const phasesQuery = useStagedPhases(pipelineId);
-  const sprintsQuery = useStagedSprints(pipelineId);
-  const tasksQuery = useStagedTasks(pipelineId);
+export function StagedWorkPanel({ pipelineId, onArtifactSelect, isLive }: StagedWorkPanelProps) {
+  const interval = isLive ? 5000 : false;
+  const phasesQuery = useStagedPhases(pipelineId, interval);
+  const sprintsQuery = useStagedSprints(pipelineId, interval);
+  const tasksQuery = useStagedTasks(pipelineId, interval);
 
   const phaseCount = phasesQuery.data?.phases.length ?? 0;
   const sprintCount = sprintsQuery.data?.sprints.length ?? 0;

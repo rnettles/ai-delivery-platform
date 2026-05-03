@@ -22,8 +22,10 @@ export default function PipelineDetailPage({ params }: PageProps) {
 
   // Fetch staged phases and sprints for the Planner supplemental artifact display.
   // These queries are shared with StagedWorkPanel via React Query cache — no double fetch.
-  const phasesQuery = useStagedPhases(id);
-  const sprintsQuery = useStagedSprints(id);
+  // Poll while the pipeline is active so artifacts appear as soon as they are written.
+  const stagedInterval = isLive ? 5000 : false;
+  const phasesQuery = useStagedPhases(id, stagedInterval);
+  const sprintsQuery = useStagedSprints(id, stagedInterval);
 
   const plannerSupplementalPaths = [
     ...(phasesQuery.data?.phases.map((p) => p.artifact_path) ?? []),
@@ -88,7 +90,7 @@ export default function PipelineDetailPage({ params }: PageProps) {
         />
       </div>
       {/* Staged work — collapsible panel below timeline */}
-      <StagedWorkPanel pipelineId={pipeline.pipeline_id} onArtifactSelect={setSelectedArtifact} />
+      <StagedWorkPanel pipelineId={pipeline.pipeline_id} onArtifactSelect={setSelectedArtifact} isLive={isLive} />
     </div>
   );
 }

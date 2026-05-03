@@ -7,10 +7,11 @@ async function fetchStagedPhases(pipelineId: string): Promise<StagedPhasesResult
   return res.json() as Promise<StagedPhasesResult>;
 }
 
-export function useStagedPhases(pipelineId: string) {
+export function useStagedPhases(pipelineId: string, refetchInterval?: number | false) {
   return useQuery<StagedPhasesResult>({
     queryKey: ["staged-phases", pipelineId],
     queryFn: () => fetchStagedPhases(pipelineId),
     enabled: Boolean(pipelineId),
+    refetchInterval: refetchInterval ?? false,
   });
 }

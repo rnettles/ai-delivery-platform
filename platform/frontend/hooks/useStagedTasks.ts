@@ -7,10 +7,11 @@ async function fetchStagedTasks(pipelineId: string): Promise<StagedTasksResult> 
   return res.json() as Promise<StagedTasksResult>;
 }
 
-export function useStagedTasks(pipelineId: string) {
+export function useStagedTasks(pipelineId: string, refetchInterval?: number | false) {
   return useQuery<StagedTasksResult>({
     queryKey: ["staged-tasks", pipelineId],
     queryFn: () => fetchStagedTasks(pipelineId),
     enabled: Boolean(pipelineId),
+    refetchInterval: refetchInterval ?? false,
   });
 }

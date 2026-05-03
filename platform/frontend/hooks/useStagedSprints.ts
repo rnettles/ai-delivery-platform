@@ -7,10 +7,11 @@ async function fetchStagedSprints(pipelineId: string): Promise<StagedSprintsResu
   return res.json() as Promise<StagedSprintsResult>;
 }
 
-export function useStagedSprints(pipelineId: string) {
+export function useStagedSprints(pipelineId: string, refetchInterval?: number | false) {
   return useQuery<StagedSprintsResult>({
     queryKey: ["staged-sprints", pipelineId],
     queryFn: () => fetchStagedSprints(pipelineId),
     enabled: Boolean(pipelineId),
+    refetchInterval: refetchInterval ?? false,
   });
 }
