@@ -791,6 +791,29 @@ ${designArtifacts}
         }
       );
     }
+
+    const adrDependencyIssues = this.findUnapprovedAdrDependencies(plan, designInputs);
+    if (adrDependencyIssues.length > 0) {
+      const issueList = adrDependencyIssues
+        .map((issue) => {
+          if (issue.reason === "missing") {
+            return `- **${issue.title}** (not found in docs/adr/)`;
+          } else {
+            return `- **${issue.title}** (not approved, Status: ${issue.status || "missing"}, in: ${issue.path || "unknown"})`;
+          }
+        })
+        .join("\n");
+
+      throw new HttpError(
+        422,
+        "ADR_DEPENDENCIES_NOT_APPROVED",
+        `Planner cannot create a phase plan because required ADR dependencies are missing or not human-approved:\n\n${issueList}\n\nCreate or approve these ADRs, then rerun Planner.`,
+        {
+          phase_id: plan.phase_id,
+          adr_dependencies_pending_approval: adrDependencyIssues,
+        }
+      );
+    }
   }
 
   private findUnapprovedFrDependencies(
@@ -841,13 +864,12 @@ ${designArtifacts}
     }
 
     const tdnIndex = designInputs.tdn_context.map((file) => {
-      const title = this.readArtifactTitle(file.content);
+      const id = this.readTdnId(file.content);
       const status = this.readArtifactStatus(file.content);
       const approved = status ? APPROVED_STATUSES.has(status.toLowerCase()) : false;
       return {
         path: file.path,
-        title,
-        normalizedTitle: this.normalizeTitle(title),
+        normalizedId: this.normalizeTitle(id ?? ""),
         status,
         approved,
       };
@@ -858,9 +880,58 @@ ${designArtifacts}
       const requiredNorm = this.normalizeTitle(required.title);
       const matched = tdnIndex.find(
         (tdn) =>
-          tdn.normalizedTitle === requiredNorm ||
-          tdn.normalizedTitle.includes(requiredNorm) ||
-          requiredNorm.includes(tdn.normalizedTitle)
+          tdn.normalizedId === requiredNorm ||
+          tdn.normalizedId.includes(requiredNorm) ||
+          requiredNorm.includes(tdn.normalizedId)
+      );
+
+      if (!matched) {
+        issues.push({ title: required.title, reason: "missing" });
+        continue;
+      }
+
+      if (!matched.approved) {
+        issues.push({
+          title: required.title,
+          reason: "not_approved",
+          path: matched.path,
+          status: matched.status,
+        });
+      }
+    }
+
+    return issues;
+  }
+
+  private findUnapprovedAdrDependencies(
+    plan: PlannerPhasePlan,
+    designInputs: DesignInputGateResult
+  ): Array<{ title: string; reason: "missing" | "not_approved"; path?: string; status?: string }> {
+    const requiredAdrs = (plan.required_design_artifacts ?? []).filter((a) => a.type === "ADR");
+    if (requiredAdrs.length === 0) {
+      return [];
+    }
+
+    const adrIndex = designInputs.adr_context.map((file) => {
+      const id = this.readAdrId(file.content);
+      const status = this.readArtifactStatus(file.content);
+      const approved = status ? APPROVED_STATUSES.has(status.toLowerCase()) : false;
+      return {
+        path: file.path,
+        normalizedId: this.normalizeTitle(id ?? ""),
+        status,
+        approved,
+      };
+    });
+
+    const issues: Array<{ title: string; reason: "missing" | "not_approved"; path?: string; status?: string }> = [];
+    for (const required of requiredAdrs) {
+      const requiredNorm = this.normalizeTitle(required.title);
+      const matched = adrIndex.find(
+        (adr) =>
+          adr.normalizedId === requiredNorm ||
+          adr.normalizedId.includes(requiredNorm) ||
+          requiredNorm.includes(adr.normalizedId)
       );
 
       if (!matched) {
@@ -896,9 +967,14 @@ ${designArtifacts}
     return plainStatus?.[1]?.trim() || undefined;
   }
 
-  private readArtifactTitle(content: string): string {
-    const h1 = /^#\s+(.+)$/m.exec(content);
-    return h1?.[1]?.trim() || "";
+  private readTdnId(content: string): string | undefined {
+    const m = /^TDN ID:\s*(.+)$/im.exec(content);
+    return m?.[1]?.trim();
+  }
+
+  private readAdrId(content: string): string | undefined {
+    const m = /^ADR ID:\s*(.+)$/im.exec(content);
+    return m?.[1]?.trim();
   }
 
   private normalizeTitle(value: string): string {
