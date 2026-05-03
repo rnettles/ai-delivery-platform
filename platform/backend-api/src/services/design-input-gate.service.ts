@@ -7,10 +7,11 @@ import { projectGitService } from "./project-git.service";
 import { HttpError } from "../utils/http-error";
 
 // Document roots by category — searched in priority order within each category
-const FR_ROOTS = ["docs/functional_requirements", "docs/prd"];
-const ADR_ROOTS = ["docs/adr"];
+const FR_ROOTS = ["docs/functional_requirements"];
+const PRD_ROOTS = ["docs/prd"];
+const ADR_ROOTS = ["docs/adr", "docs/architecture/adr"];
 const TDN_ROOTS = ["docs/design/tdn"];  // TDNs only in tdn/ subdirectory — design_system.md, ux_principles.md etc. are reference docs
-const DESIGN_ROOTS = [...FR_ROOTS, ...ADR_ROOTS, ...TDN_ROOTS];
+const DESIGN_ROOTS = [...FR_ROOTS, ...PRD_ROOTS, ...ADR_ROOTS, ...TDN_ROOTS];
 const INTAKE_ROOT = "project_work/ai_project_tasks/intake";
 
 export type EntryMode = "intake" | "plan";
@@ -79,12 +80,13 @@ export interface DesignInputGateResult {
 export interface DesignArtifactEntry {
   path: string;
   filename: string;
-  category: "fr" | "adr" | "tdn";
+  category: "fr" | "prd" | "adr" | "tdn";
 }
 
 export interface ProjectDesignArtifactsResult {
   project_id: string;
   fr: DesignArtifactEntry[];
+  prd: DesignArtifactEntry[];
   adr: DesignArtifactEntry[];
   tdn: DesignArtifactEntry[];
   total: number;
@@ -107,8 +109,9 @@ export class DesignInputGateService {
       ? project.clone_path
       : path.join(process.cwd(), project.clone_path);
 
-    const [frPaths, adrPaths, tdnPaths] = await Promise.all([
+    const [frPaths, prdPaths, adrPaths, tdnPaths] = await Promise.all([
       this.collectCategoryFiles(repoRoot, FR_ROOTS),
+      this.collectCategoryFiles(repoRoot, PRD_ROOTS),
       this.collectCategoryFiles(repoRoot, ADR_ROOTS),
       this.collectCategoryFiles(repoRoot, TDN_ROOTS),
     ]);
@@ -120,15 +123,17 @@ export class DesignInputGateService {
     });
 
     const fr = frPaths.map((p) => toEntry(p, "fr"));
+    const prd = prdPaths.map((p) => toEntry(p, "prd"));
     const adr = adrPaths.map((p) => toEntry(p, "adr"));
     const tdn = tdnPaths.map((p) => toEntry(p, "tdn"));
 
     return {
       project_id: projectId,
       fr,
+      prd,
       adr,
       tdn,
-      total: fr.length + adr.length + tdn.length,
+      total: fr.length + prd.length + adr.length + tdn.length,
     };
   }
 

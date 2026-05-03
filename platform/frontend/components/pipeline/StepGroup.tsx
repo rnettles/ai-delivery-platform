@@ -4,6 +4,8 @@ import { useState } from "react";
 import type { UIStepGroup, UIStepStatus } from "@/types";
 import { StepCard } from "./StepCard";
 import { GateCard } from "./GateCard";
+import { useStepDesignRefs } from "@/hooks/useStepDesignRefs";
+import type { DesignRef } from "@/lib/parse-design-refs";
 
 const STATUS_DOT: Record<UIStepStatus, string> = {
   running:  "bg-blue-500 animate-pulse",
@@ -29,6 +31,96 @@ const ROLE_DEPTH: Record<string, number> = {
 };
 
 const DEPTH_PADDING = ["pl-0", "pl-5", "pl-10", "pl-16"] as const;
+
+// ── Category styles for design ref tags ──────────────────────────────────────
+
+const REF_BADGE_STYLE: Record<string, string> = {
+  FR: "bg-green-50 text-green-700 border-green-200",
+  PRD: "bg-orange-50 text-orange-700 border-orange-200",
+  ADR: "bg-blue-50 text-blue-700 border-blue-200",
+  TDN: "bg-purple-50 text-purple-700 border-purple-200",
+  DOC: "bg-gray-50 text-gray-600 border-gray-200",
+  Spike: "bg-yellow-50 text-yellow-700 border-yellow-200",
+};
+
+function refBadgeStyle(category?: string): string {
+  return REF_BADGE_STYLE[category ?? "DOC"] ?? REF_BADGE_STYLE.DOC;
+}
+
+function DesignRefTag({ ref: r }: { ref: DesignRef }) {
+  const label = r.kind === "fr-id"
+    ? r.value
+    : r.kind === "required-artifact"
+    ? r.value
+    : r.value.split("/").pop() ?? r.value;
+
+  const badge =
+    r.kind === "fr-id"
+      ? "FR"
+      : r.kind === "required-artifact"
+      ? (r.category ?? "DOC")
+      : (r.category ?? "DOC");
+
+  const statusSuffix =
+    r.kind === "required-artifact" && r.status
+      ? ` · ${r.status}`
+      : "";
+
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] leading-tight ${refBadgeStyle(badge)}`}
+      title={r.value}
+    >
+      <span className="font-semibold uppercase tracking-wide">{badge}</span>
+      <span className="font-normal">{label}{statusSuffix}</span>
+    </span>
+  );
+}
+
+/**
+ * Design context panel rendered inside an expanded step group.
+ * Fetches and parses design refs from the role's primary artifact.
+ */
+function DesignContextSection({
+  pipelineId,
+  group,
+}: {
+  pipelineId: string;
+  group: UIStepGroup;
+}) {
+  const { refs, isLoading } = useStepDesignRefs(
+    pipelineId,
+    group.role,
+    group.record.artifact_paths
+  );
+
+  if (isLoading) {
+    return (
+      <div className="mb-3">
+        <p className="text-xs font-medium text-gray-500 mb-1.5">Design Context</p>
+        <div className="flex gap-1.5">
+          <div className="h-4 w-16 rounded bg-gray-100 animate-pulse" />
+          <div className="h-4 w-12 rounded bg-gray-100 animate-pulse" />
+        </div>
+      </div>
+    );
+  }
+
+  if (refs.length === 0) return null;
+
+  return (
+    <div className="mb-3">
+      <p className="text-xs font-medium text-gray-500 mb-1.5">Design Context</p>
+      <div className="flex flex-wrap gap-1.5">
+        {refs.map((r, i) => (
+          <DesignRefTag key={i} ref={r} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── StepGroup ─────────────────────────────────────────────────────────────────
 
 interface StepGroupProps {
   group: UIStepGroup;
@@ -95,6 +187,7 @@ export function StepGroup({ group, isFirst: _isFirst, isActive, pipelineId, onAr
 
         {open && (
           <div className="border-t border-gray-100 px-4 pb-4 pt-3">
+            <DesignContextSection pipelineId={pipelineId} group={group} />
             <StepCard
               record={group.record}
               pipelineId={pipelineId}

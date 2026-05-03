@@ -3,12 +3,13 @@ import { useQuery } from "@tanstack/react-query";
 export interface DesignArtifactEntry {
   path: string;
   filename: string;
-  category: "fr" | "adr" | "tdn";
+  category: "fr" | "prd" | "adr" | "tdn";
 }
 
 export interface ProjectDesignArtifactsResult {
   project_id: string;
   fr: DesignArtifactEntry[];
+  prd: DesignArtifactEntry[];
   adr: DesignArtifactEntry[];
   tdn: DesignArtifactEntry[];
   total: number;

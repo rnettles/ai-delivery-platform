@@ -9,18 +9,21 @@ interface PageProps {
 }
 
 const CATEGORY_LABELS: Record<DesignArtifactEntry["category"], string> = {
+  prd: "Product Requirements",
   fr: "Functional Requirements",
   adr: "Architecture Decision Records",
   tdn: "Technical Design Notes",
 };
 
 const CATEGORY_COLORS: Record<DesignArtifactEntry["category"], string> = {
+  prd: "bg-orange-100 text-orange-800",
   fr: "bg-green-100 text-green-800",
   adr: "bg-blue-100 text-blue-800",
   tdn: "bg-purple-100 text-purple-800",
 };
 
 const CATEGORY_BADGE: Record<DesignArtifactEntry["category"], string> = {
+  prd: "PRD",
   fr: "FR",
   adr: "ADR",
   tdn: "TDN",
@@ -140,15 +143,17 @@ export default function DesignArtifactsPage({ params }: PageProps) {
         {data && !hasArtifacts && (
           <p className="text-xs text-gray-400">
             No design artifacts found. Add files under{" "}
+            <code className="font-mono bg-gray-100 px-1 rounded">docs/prd</code>,{" "}
             <code className="font-mono bg-gray-100 px-1 rounded">docs/functional_requirements</code>,{" "}
-            <code className="font-mono bg-gray-100 px-1 rounded">docs/adr</code>, or{" "}
+            <code className="font-mono bg-gray-100 px-1 rounded">docs/adr</code>,{" "}
+            <code className="font-mono bg-gray-100 px-1 rounded">docs/architecture/adr</code>, or{" "}
             <code className="font-mono bg-gray-100 px-1 rounded">docs/design/tdn</code> in your project repo.
           </p>
         )}
 
         {hasArtifacts && (
           <>
-            {(["fr", "adr", "tdn"] as DesignArtifactEntry["category"][]).map((cat) => (
+            {(["prd", "fr", "adr", "tdn"] as DesignArtifactEntry["category"][]).map((cat) => (
               <CategorySection
                 key={cat}
                 category={cat}
