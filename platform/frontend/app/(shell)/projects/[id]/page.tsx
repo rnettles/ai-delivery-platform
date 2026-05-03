@@ -477,37 +477,82 @@ function StartRunPanel({
 
 function FailedBranchCard({
   branch,
+  projectId,
   onResume,
 }: {
   branch: ProjectBranchSummary;
+  projectId: string;
   onResume: (branch: ProjectBranchSummary) => void;
 }) {
+  const queryClient = useQueryClient();
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
   const stepLabel = STEP_LABELS[branch.current_step] ?? branch.current_step;
   const failedAt = new Date(branch.updated_at).toLocaleString();
 
+  async function handleCancel() {
+    setCancelling(true);
+    setCancelError(null);
+    try {
+      const res = await fetch(
+        `/api/pipelines/${encodeURIComponent(branch.latest_pipeline_id)}/actions`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "cancel" }),
+        }
+      );
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? `Cancel failed: ${res.status}`);
+      }
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["project-branches", projectId] }),
+        queryClient.invalidateQueries({ queryKey: ["project-pipelines", projectId] }),
+      ]);
+    } catch (err) {
+      setCancelError(err instanceof Error ? err.message : "Unknown error");
+    } finally {
+      setCancelling(false);
+    }
+  }
+
   return (
-    <div className="flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3">
-      <div className="min-w-0">
-        <p className="font-mono text-xs font-medium text-gray-700 truncate">{branch.sprint_branch}</p>
-        <p className="text-[10px] text-gray-500 mt-0.5">
-          Failed at <span className="font-medium">{stepLabel}</span> · {failedAt}
-        </p>
+    <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="font-mono text-xs font-medium text-gray-700 truncate">{branch.sprint_branch}</p>
+          <p className="text-[10px] text-gray-500 mt-0.5">
+            Failed at <span className="font-medium">{stepLabel}</span> · {failedAt}
+          </p>
+        </div>
+        <div className="flex gap-2 flex-shrink-0">
+          <Link
+            href={`/pipelines/${branch.latest_pipeline_id}`}
+            className="text-xs text-blue-600 hover:underline"
+          >
+            View
+          </Link>
+          <button
+            type="button"
+            disabled={cancelling}
+            onClick={() => void handleCancel()}
+            className="rounded bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50 transition-colors"
+          >
+            {cancelling ? "…" : "Dismiss"}
+          </button>
+          <button
+            type="button"
+            onClick={() => onResume(branch)}
+            className="rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 transition-colors"
+          >
+            Resume
+          </button>
+        </div>
       </div>
-      <div className="flex gap-2 flex-shrink-0">
-        <Link
-          href={`/pipelines/${branch.latest_pipeline_id}`}
-          className="text-xs text-blue-600 hover:underline"
-        >
-          View
-        </Link>
-        <button
-          type="button"
-          onClick={() => onResume(branch)}
-          className="rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 transition-colors"
-        >
-          Resume
-        </button>
-      </div>
+      {cancelError && (
+        <p className="mt-2 text-[11px] text-red-600">{cancelError}</p>
+      )}
     </div>
   );
 }
@@ -766,6 +811,7 @@ export default function ProjectDetailPage() {
               <FailedBranchCard
                 key={branch.sprint_branch}
                 branch={branch}
+                projectId={id}
                 onResume={(b) => setResumeBranch(b)}
               />
             ))}
