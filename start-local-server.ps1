@@ -1,3 +1,8 @@
+# Clear any dry-run state that may have leaked from a previous dryrun terminal session.
+[Environment]::SetEnvironmentVariable('DRY_RUN', $null, 'Process')
+[Environment]::SetEnvironmentVariable('DRY_RUN_SCENARIO_PATH', $null, 'Process')
+[Environment]::SetEnvironmentVariable('DRY_RUN_REPO_ALLOWLIST', $null, 'Process')
+
 Get-Content .\platform\backend-api\.env.local | ForEach-Object {
   if ($_ -match '^\s*#' -or $_ -match '^\s*$') { return }
   $name, $value = $_ -split '=', 2
