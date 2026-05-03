@@ -1137,13 +1137,13 @@ export class PipelineService {
 
   async cancel(pipelineId: string, actor: string): Promise<PipelineRun> {
     const run = await this.get(pipelineId);
-    this.assertStatus(run, ["running", "awaiting_approval", "paused_takeover", "awaiting_pr_review"]);
+    this.assertStatus(run, ["running", "awaiting_approval", "paused_takeover", "awaiting_pr_review", "failed"]);
 
     const steps = [...run.steps];
 
-    // When awaiting_pr_review, current_step is "complete" (not a role) — all steps are
-    // already finished, so there is nothing to stamp; just flip the pipeline status.
-    if (run.status !== "awaiting_pr_review") {
+    // When awaiting_pr_review or failed, the step is already in a terminal state —
+    // nothing to stamp; just flip the pipeline status to cancelled.
+    if (run.status !== "awaiting_pr_review" && run.status !== "failed") {
       const stepIdx = this.currentStepIdx(steps, run.current_step as PipelineRole);
       steps[stepIdx] = { ...steps[stepIdx], actor, status: "complete", completed_at: new Date().toISOString() };
     }
