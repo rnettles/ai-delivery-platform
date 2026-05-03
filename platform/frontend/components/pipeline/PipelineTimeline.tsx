@@ -65,7 +65,7 @@ export function PipelineTimeline({ groups, pipelineId, onArtifactSelect, planner
           // Include the brief.md from the nearest preceding sprint-controller step.
           for (let j = i - 1; j >= 0; j--) {
             if (groups[j].role === "sprint-controller") {
-              const briefPath = groups[j].record.artifact_paths.find((p) => p.endsWith("brief.md"));
+              const briefPath = groups[j].record.artifact_paths.find((p) => p.toLowerCase().endsWith("brief.md"));
               if (briefPath && !thisStepSet.has(briefPath)) supplemental.push(briefPath);
               break;
             }

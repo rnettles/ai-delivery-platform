@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { UIStepGroup, UIStepStatus } from "@/types";
 import { StepCard } from "./StepCard";
 import { GateCard } from "./GateCard";
+import { TurnLogPanel } from "./TurnLogPanel";
 import { useStepDesignRefs } from "@/hooks/useStepDesignRefs";
 import type { DesignRef } from "@/lib/parse-design-refs";
 
@@ -195,6 +196,9 @@ export function StepGroup({ group, isFirst: _isFirst, isActive, pipelineId, onAr
               extraArtifacts={extraArtifacts}
             />
             <GateCard record={group.record} />
+            {group.role === "implementer" && (
+              <TurnLogPanel pipelineId={pipelineId} isLive={isActive} />
+            )}
           </div>
         )}
       </div>

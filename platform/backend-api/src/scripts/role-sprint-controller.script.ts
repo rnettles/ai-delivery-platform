@@ -785,26 +785,67 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
         await projectGitService.ensureReady(project);
         await projectGitService.checkoutBranch(project, project.default_branch);
         await projectGitService.ensureReady(project, { forcePull: true });
+
+        const sprintIdForFile = closeout.sprint_id ?? "unknown";
+
+        // Archive all pipeline artifacts into a sprint-scoped history subdirectory.
+        // Sources: sprint_complete_artifacts (curated in Phase 1) + full previousArtifacts.
+        // Deduped by filename — first occurrence wins. sprint_closeout.json excluded here,
+        // written explicitly below with the sprint-specific filename.
         const historyDir = path.join(
           project.clone_path,
           "project_work",
           "ai_project_tasks",
-          "history"
+          "history",
+          sprintIdForFile
         );
         await fs.mkdir(historyDir, { recursive: true });
-        const sprintIdForFile = closeout.sprint_id ?? "unknown";
+
+        const allArtifactPaths = [
+          ...(closeout.sprint_complete_artifacts ?? []),
+          ...previousArtifacts,
+        ].filter((p) => !p.includes("sprint_closeout.json"));
+
+        const seenNames = new Set<string>();
+        const toArchive: { srcPath: string; filename: string }[] = [];
+        for (const artifactPath of allArtifactPaths) {
+          const filename = path.basename(artifactPath);
+          if (!seenNames.has(filename)) {
+            seenNames.add(filename);
+            toArchive.push({ srcPath: artifactPath, filename });
+          }
+        }
+
+        let archivedCount = 0;
+        for (const { srcPath, filename } of toArchive) {
+          try {
+            const content = await artifactService.tryRead(srcPath);
+            if (content !== null) {
+              await fs.writeFile(path.join(historyDir, filename), content, "utf-8");
+              archivedCount++;
+            }
+          } catch {
+            context.log("Sprint Controller: artifact archive skipped (best-effort)", { path: srcPath });
+          }
+        }
+
+        // Sprint-closeout record written with sprint-specific filename for disambiguation.
         await fs.writeFile(
           path.join(historyDir, `sprint_closeout_${sprintIdForFile}.json`),
           JSON.stringify(updated, null, 2),
           "utf-8"
         );
+
         await projectGitService.commitAll(
           project,
           project.default_branch,
-          `chore(${sprintIdForFile}): record sprint closeout`
+          `chore(${sprintIdForFile}): archive sprint artifacts (${archivedCount} file(s))`
         );
         await projectGitService.push(project, project.default_branch);
-        context.notify(`📝 Sprint closeout recorded on \`${project.default_branch}\``);
+        context.notify(
+          `📦 Sprint ${sprintIdForFile} archived: ${archivedCount} artifact(s) committed to \`${project.default_branch}\` ` +
+          `under \`project_work/ai_project_tasks/history/${sprintIdForFile}/\``
+        );
       } catch (err) {
         context.log("Sprint Controller: closeout repo write failed (non-fatal)", { error: String(err) });
       }
@@ -982,6 +1023,81 @@ ${richDetailSections}
   }
 
   /**
+   * Reads `package.json` from the contract's working directory and normalises the three gate
+   * command names in the execution contract so they match what the project actually exports.
+   *
+   * Rules:
+   *  • `typecheck` — if `scripts.typecheck` is absent but `scripts.type-check` exists, rewrite to
+   *    `npm run type-check`.
+   *  • `test` — if `scripts.test` is absent, set `success_criteria.all_tests_pass = false` and
+   *    rewrite to `echo "no test runner configured"` so the Implementer's gate can pass without
+   *    a failing exit code.  Emits an operator warning so the gap is visible.
+   *  • `lint` — if `scripts.lint` is absent, applies the same graceful-skip pattern.
+   *
+   * Mutations are applied in-place on the contract object before the brief is serialised.
+   */
+  private async normalizeContractCommands(
+    contract: ExecutionContract,
+    workDirAbs: string,
+    context: ScriptExecutionContext
+  ): Promise<void> {
+    let pkgScripts: Record<string, string> = {};
+    try {
+      const raw = await fs.readFile(path.join(workDirAbs, "package.json"), "utf-8");
+      const pkg = JSON.parse(raw) as { scripts?: Record<string, string> };
+      pkgScripts = pkg.scripts ?? {};
+    } catch {
+      // If package.json is unreadable we emit nothing extra — validateContractPaths
+      // already warns about a missing package.json.
+      return;
+    }
+
+    const warnings: string[] = [];
+
+    // ── typecheck ────────────────────────────────────────────────────────────
+    const tcScript = (contract.commands as { typecheck?: string }).typecheck ?? "";
+    const tcName = tcScript.replace(/^npm run /, "");
+    if (tcName && !(tcName in pkgScripts)) {
+      // Try the hyphenated variant
+      const hyphenated = tcName.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase();
+      if (hyphenated !== tcName && hyphenated in pkgScripts) {
+        (contract.commands as Record<string, string>).typecheck = `npm run ${hyphenated}`;
+        warnings.push(`typecheck command corrected: \`npm run ${tcName}\` → \`npm run ${hyphenated}\` (matched package.json)`);
+      } else {
+        // Unknown — skip gracefully
+        (contract.commands as Record<string, string>).typecheck = `echo "typecheck not configured"`;
+        contract.success_criteria.typecheck_pass = false;
+        warnings.push(`typecheck script \`${tcName}\` not found in package.json — gate disabled`);
+      }
+    }
+
+    // ── test ─────────────────────────────────────────────────────────────────
+    const testScript = (contract.commands as { test?: string }).test ?? "";
+    const testName = testScript.replace(/^npm run /, "");
+    if (testName && !(testName in pkgScripts)) {
+      (contract.commands as Record<string, string>).test = `echo "no test runner configured"`;
+      contract.success_criteria.all_tests_pass = false;
+      warnings.push(`test script \`${testName}\` not found in package.json — \`all_tests_pass\` disabled. Add a test runner and rerun the sprint planner to enable this gate.`);
+    }
+
+    // ── lint ─────────────────────────────────────────────────────────────────
+    const lintScript = (contract.commands as { lint?: string }).lint ?? "";
+    const lintName = lintScript.replace(/^npm run /, "");
+    if (lintName && !(lintName in pkgScripts)) {
+      (contract.commands as Record<string, string>).lint = `echo "lint not configured"`;
+      contract.success_criteria.lint_pass = false;
+      warnings.push(`lint script \`${lintName}\` not found in package.json — gate disabled`);
+    }
+
+    if (warnings.length > 0) {
+      context.notify(
+        `⚠️ Contract command normalization (package.json mismatch detected):\n` +
+        warnings.map((w) => `  • ${w}`).join("\n")
+      );
+    }
+  }
+
+  /**
    * Validates execution contract paths against the actual cloned repo on disk.
    *
    * For each literal (non-glob) path in `allowed_paths`, checks whether the file exists.
@@ -989,7 +1105,8 @@ ${richDetailSections}
    * before the Implementer wastes turns discovering the mismatch at runtime.
    *
    * Also validates `commands.working_directory` when present — warns if the directory
-   * does not exist or contains no package.json.
+   * does not exist or contains no package.json.  When a valid working directory is found,
+   * normalises the gate command names against the actual package.json scripts.
    */
   private async validateContractPaths(
     contract: ExecutionContract,
@@ -1041,14 +1158,19 @@ ${richDetailSections}
           `All gate commands will fail. Update the sprint plan.`
         );
       } else {
-        // Check for package.json
+        // Check for package.json and normalise gate command names against actual scripts.
+        let pkgJsonExists = true;
         try {
           await fs.access(path.join(absWorkDir, "package.json"));
         } catch {
+          pkgJsonExists = false;
           context.notify(
             `⚠️ Contract working_directory warning: \`${workDir}\` exists but contains no package.json. ` +
             `npm commands will fail. Verify the correct working directory.`
           );
+        }
+        if (pkgJsonExists) {
+          await this.normalizeContractCommands(contract, absWorkDir, context);
         }
       }
     }

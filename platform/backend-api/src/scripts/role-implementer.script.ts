@@ -43,6 +43,7 @@ export interface ImplementerOutput {
   artifact_path: string;
   current_task_path?: string;
   test_results_path?: string;
+  turn_log_path?: string;
   artifact_paths?: string[];
 }
 
@@ -487,6 +488,8 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       result_summary: string;
       timestamp: string;
     }[] = [];
+    /** Path to the persisted turn_log.json artifact (hoisted so all paths — success, failure — can populate it). */
+    let turnLogArtifactPath: string | undefined;
 
     /** Phase 4 helper: persist progress snapshot to pipeline artifact service (ADR-035). */
     const persistProgress = async (snapshot: {
@@ -757,6 +760,15 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
         result_summary: result.slice(0, 300),
         timestamp: new Date().toISOString(),
       });
+      // Best-effort incremental write so the frontend can poll turn_log.json while the loop is live.
+      try {
+        const snapshot = JSON.stringify(
+          { stop_reason: "in_progress", turn_count: turnLog.length, turns: turnLog },
+          null,
+          2
+        );
+        turnLogArtifactPath = await artifactService.write(pipelineId, "turn_log.json", snapshot);
+      } catch { /* best effort — never mask primary result */ }
       return result;
     };
 
@@ -832,7 +844,8 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
         await this.checkpointCommitOnFailure(project, sprintBranch, gateResults, writtenFiles, failureReason, context, resolvedTaskId, resolvedSprintId);
       }
       // Persist per-turn log so operator can inspect what each iteration attempted.
-      let turnLogArtifactPath: string | undefined;
+      // (turnLogArtifactPath already has the incremental path from instrumentedToolExecutor;
+      // overwrite it now with the final stop_reason so the artifact reflects terminal state.)
       try {
         const turnLogJson = JSON.stringify(
           { stop_reason: failureReason, turn_count: turnLog.length, turns: turnLog },
@@ -976,6 +989,17 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       testResultsArtifactContent
     );
 
+    // Finalize turn_log.json with stop_reason: "completed" so it's durable and retrievable from history.
+    try {
+      const finalTurnLog = JSON.stringify(
+        { stop_reason: "completed", turn_count: turnLog.length, turns: turnLog },
+        null,
+        2
+      );
+      turnLogArtifactPath = await artifactService.write(pipelineId, "turn_log.json", finalTurnLog);
+      context.log("Implementer: turn_log.json finalized", { turn_count: turnLog.length });
+    } catch { /* best effort */ }
+
     context.log("Implementer complete", {
       task_id: payload.task_id,
       files_changed: payload.files_changed.length,
@@ -985,13 +1009,17 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       test_results_path: testResultsPath,
     });
 
+    const successArtifactPaths: string[] = [artifactPath, currentTaskPath, testResultsPath];
+    if (turnLogArtifactPath) successArtifactPaths.push(turnLogArtifactPath);
+
     return {
       ...payload,
       commit_sha: commitSha,
       artifact_path: artifactPath,
       current_task_path: currentTaskPath,
       test_results_path: testResultsPath,
-      artifact_paths: [artifactPath, currentTaskPath, testResultsPath],
+      turn_log_path: turnLogArtifactPath,
+      artifact_paths: successArtifactPaths,
     } satisfies ImplementerOutput;
   }
 
