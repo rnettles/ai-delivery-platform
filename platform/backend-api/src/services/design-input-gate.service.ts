@@ -81,6 +81,10 @@ export interface DesignArtifactEntry {
   path: string;
   filename: string;
   category: "fr" | "prd" | "adr" | "tdn";
+  /** Raw status value read from the file header (e.g. "Approved", "Active", "Draft"). Null if not found. */
+  status: string | null;
+  /** True when the status satisfies the gate (Approved or Accepted). */
+  gate_ok: boolean;
 }
 
 export interface ProjectDesignArtifactsResult {
@@ -116,16 +120,32 @@ export class DesignInputGateService {
       this.collectCategoryFiles(repoRoot, TDN_ROOTS),
     ]);
 
-    const toEntry = (relPath: string, category: DesignArtifactEntry["category"]): DesignArtifactEntry => ({
-      path: relPath,
-      filename: path.basename(relPath),
-      category,
-    });
+    const toEntry = async (relPath: string, category: DesignArtifactEntry["category"]): Promise<DesignArtifactEntry> => {
+      const absPath = path.join(repoRoot, relPath);
+      let status: string | null = null;
+      try {
+        // Read only the first 2 KB — enough to find the status header without loading the whole file.
+        const fd = await fs.open(absPath, "r");
+        const buf = Buffer.alloc(2048);
+        const { bytesRead } = await fd.read(buf, 0, 2048, 0);
+        await fd.close();
+        const head = buf.subarray(0, bytesRead).toString("utf-8");
+        // Match "Status: <value>" or "- Status: <value>" or "**Status:** <value>"
+        const m = /^(?:-\s+)?(?:\*\*Status:\*\*\s*|Status:\s*)([^\n]+)/im.exec(head);
+        if (m) status = m[1].trim().replace(/[|*`]/g, "").trim() || null;
+      } catch {
+        // File unreadable — leave status null
+      }
+      const gate_ok = status ? new Set(["approved", "accepted"]).has(status.toLowerCase()) : false;
+      return { path: relPath, filename: path.basename(relPath), category, status, gate_ok };
+    };
 
-    const fr = frPaths.map((p) => toEntry(p, "fr"));
-    const prd = prdPaths.map((p) => toEntry(p, "prd"));
-    const adr = adrPaths.map((p) => toEntry(p, "adr"));
-    const tdn = tdnPaths.map((p) => toEntry(p, "tdn"));
+    const [fr, prd, adr, tdn] = await Promise.all([
+      Promise.all(frPaths.map((p) => toEntry(p, "fr"))),
+      Promise.all(prdPaths.map((p) => toEntry(p, "prd"))),
+      Promise.all(adrPaths.map((p) => toEntry(p, "adr"))),
+      Promise.all(tdnPaths.map((p) => toEntry(p, "tdn"))),
+    ]);
 
     return {
       project_id: projectId,

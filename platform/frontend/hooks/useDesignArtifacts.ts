@@ -4,6 +4,10 @@ export interface DesignArtifactEntry {
   path: string;
   filename: string;
   category: "fr" | "prd" | "adr" | "tdn";
+  /** Raw status from the file header, e.g. "Approved", "Active". Null if not found. */
+  status: string | null;
+  /** True when status satisfies the gate (Approved or Accepted). */
+  gate_ok: boolean;
 }
 
 export interface ProjectDesignArtifactsResult {

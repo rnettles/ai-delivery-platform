@@ -29,6 +29,31 @@ const CATEGORY_BADGE: Record<DesignArtifactEntry["category"], string> = {
   tdn: "TDN",
 };
 
+function StatusPill({ entry }: { entry: DesignArtifactEntry }) {
+  if (!entry.status) {
+    return (
+      <span className="flex-shrink-0 rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[10px] text-gray-400">
+        no status
+      </span>
+    );
+  }
+  if (entry.gate_ok) {
+    return (
+      <span className="flex-shrink-0 rounded border border-green-200 bg-green-50 px-1.5 py-0.5 text-[10px] font-medium text-green-700">
+        {entry.status}
+      </span>
+    );
+  }
+  return (
+    <span
+      className="flex-shrink-0 rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700"
+      title="This status will not satisfy a gate check (requires Approved or Accepted)"
+    >
+      ⚠ {entry.status}
+    </span>
+  );
+}
+
 function ArtifactListItem({
   entry,
   selected,
@@ -53,7 +78,8 @@ function ArtifactListItem({
       >
         {CATEGORY_BADGE[entry.category]}
       </span>
-      <span className="truncate text-xs">{entry.filename}</span>
+      <span className="flex-1 truncate text-xs">{entry.filename}</span>
+      <StatusPill entry={entry} />
     </button>
   );
 }
@@ -181,6 +207,7 @@ export default function DesignArtifactsPage({ params }: PageProps) {
                 {CATEGORY_LABELS[selected.category]}
               </span>
               <span className="text-sm font-medium text-gray-800">{selected.filename}</span>
+              <StatusPill entry={selected} />
               <span className="text-xs text-gray-400 font-mono truncate">{selected.path}</span>
             </div>
             <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
