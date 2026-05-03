@@ -451,7 +451,7 @@ async function executeCurrentStep(
       const project = await projectService.getById(currentRun.project_id);
       if (project) {
         logger.info("git: force-pull before role execution", { pipeline_id: pipelineId, role, project: project.name });
-        const gitCtx = await projectGitService.ensureReady(project, { forcePull: true });
+        const gitCtx = await projectGitService.ensureReady(project, { forcePull: true, caller: "pre-execution" });
         if (!gitCtx.is_repo_accessible) {
           logger.error("git: force-pull failed before role execution; clone may be stale", { pipeline_id: pipelineId, role, project: project.name });
         }
@@ -601,7 +601,10 @@ async function executeCurrentStep(
       error: errorMessage,
     });
 
-    // Attempt to mark step as failed in the pipeline
+    // Attempt to mark step as failed in the pipeline.
+    // First try the normal path (completeStep); if current_step has drifted due
+    // to a concurrent write, fall back to failStepDirect which bypasses the
+    // assertCurrentStep guard and corrects the DB state directly.
     try {
       const run = await pipelineService.completeStep(pipelineId, role, "failed", [], true, undefined, errorMessage);
       await pipelineNotifierService.notify({
@@ -614,9 +617,33 @@ async function executeCurrentStep(
         agent_caller: callerLabel,
         message: errorMessage,
       });
-    } catch {
-      // If this also fails, the pipeline is in an inconsistent state — log only
-      logger.error("Failed to mark pipeline step as failed", { pipeline_id: pipelineId, role });
+    } catch (completeStepError) {
+      logger.warn("completeStep failed — attempting failStepDirect recovery", {
+        pipeline_id: pipelineId,
+        role,
+        error: completeStepError instanceof Error ? completeStepError.message : String(completeStepError),
+      });
+      try {
+        const recovered = await pipelineService.failStepDirect(pipelineId, role, "failed", errorMessage);
+        if (recovered) {
+          logger.info("failStepDirect recovery succeeded", { pipeline_id: pipelineId, role });
+          await pipelineNotifierService.notify({
+            pipeline_id: pipelineId,
+            step: recovered.current_step,
+            status: "failed",
+            gate_required: false,
+            artifact_paths: [],
+            metadata: recovered.metadata,
+            agent_caller: callerLabel,
+            message: errorMessage,
+          });
+        } else {
+          logger.error("failStepDirect: no running step found — pipeline state unrecoverable", { pipeline_id: pipelineId, role });
+        }
+      } catch {
+        // Pipeline is in an inconsistent state — log only, do not re-throw
+        logger.error("Failed to mark pipeline step as failed (both paths exhausted)", { pipeline_id: pipelineId, role });
+      }
     }
   }
 }

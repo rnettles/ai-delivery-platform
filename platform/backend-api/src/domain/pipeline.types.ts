@@ -73,6 +73,8 @@ export interface PipelineRun {
   pr_number?: number;
   pr_url?: string;
   implementer_attempts: number;
+  // optimistic lock version — incremented on every DB write
+  lock_version: number;
   created_at: string;
   updated_at: string;
 }

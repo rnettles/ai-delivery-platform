@@ -265,7 +265,7 @@ export class DesignInputGateService {
       const operatorForcedPull = (run.metadata as Record<string, unknown> | undefined)
         ?.operator_forced_pull === true;
       const shouldForcePull = firstInvocation || operatorForcedPull;
-      await projectGitService.ensureReady(project, { forcePull: shouldForcePull });
+      await projectGitService.ensureReady(project, { forcePull: shouldForcePull, caller: "design-input-gate" });
     }
 
     const repoRoot = path.isAbsolute(project.clone_path)

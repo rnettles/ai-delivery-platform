@@ -138,6 +138,8 @@ export const pipelineRuns = pgTable(
     pr_url: text("pr_url"),
     // implementer retry count (ADR-030) — max 3 attempts
     implementer_attempts: integer("implementer_attempts").notNull().default(0),
+    // optimistic lock version — incremented on every save to prevent concurrent-write corruption
+    lock_version: integer("lock_version").notNull().default(0),
     // steps: full ordered history of step records (jsonb array)
     steps: jsonb("steps").notNull().$type<object[]>().default([]),
     // metadata: slack_channel, slack_user, slack_thread_ts, source, etc.

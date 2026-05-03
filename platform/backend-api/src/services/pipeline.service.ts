@@ -240,6 +240,7 @@ function rowToRun(row: typeof pipelineRuns.$inferSelect): PipelineRun {
     pr_number: row.pr_number ?? undefined,
     pr_url: row.pr_url ?? undefined,
     implementer_attempts: row.implementer_attempts ?? 0,
+    lock_version: row.lock_version ?? 0,
     created_at: row.created_at.toISOString(),
     updated_at: row.updated_at.toISOString(),
   };
@@ -494,13 +495,21 @@ export class PipelineService {
     const gitRefresh = await this.refreshGitForStatus(run);
 
     if (gitRefresh.headCommit) {
-      run = await this.save(run, {
-        metadata: {
-          ...run.metadata,
-          last_status_git_head: gitRefresh.headCommit,
-          last_status_git_refresh_at: new Date().toISOString(),
-        },
-      });
+      try {
+        run = await this.save(run, {
+          metadata: {
+            ...run.metadata,
+            last_status_git_head: gitRefresh.headCommit,
+            last_status_git_refresh_at: new Date().toISOString(),
+          },
+        });
+      } catch (err) {
+        if (err instanceof HttpError && err.code === "CONCURRENT_WRITE") {
+          logger.warn("getArtifactDrivenRun: metadata save skipped due to concurrent write", { pipeline_id: pipelineId });
+        } else {
+          throw err;
+        }
+      }
     }
 
     run = await this.reconcileRunFromControlArtifacts(run);
@@ -565,7 +574,7 @@ export class PipelineService {
       throw new HttpError(404, "PROJECT_NOT_FOUND", "No project resolved for staged artifact lookup.");
     }
 
-    const git = await projectGitService.ensureReady(project, { forcePull: true });
+    const git = await projectGitService.ensureReady(project, { forcePull: true, caller: "staged-artifact-lookup" });
     return {
       project,
       git_head_commit: git.head_commit,
@@ -600,7 +609,7 @@ export class PipelineService {
         return { project, headCommit: cachedHead };
       }
 
-      const git = await projectGitService.ensureReady(project, { forcePull: true });
+      const git = await projectGitService.ensureReady(project, { forcePull: true, caller: "status-refresh" });
       return { project, headCommit: git.head_commit };
     } catch (err) {
       logger.info("Status git refresh skipped", {
@@ -1391,6 +1400,58 @@ export class PipelineService {
     }
   }
 
+  /**
+   * Record a step failure directly, bypassing assertCurrentStep.
+   *
+   * Used in error-recovery paths where a concurrent write has already moved
+   * current_step to a different role (e.g. a getStatusSummary metadata save
+   * that re-stamped current_step=sprint-controller while the implementer was
+   * running). Instead of losing the failure silently, this method finds the
+   * most-recent running step for the given role in the steps array and stamps
+   * it failed, then corrects current_step and status in the DB row.
+   *
+   * Returns the updated PipelineRun on success, or null when no running step
+   * for the role exists (non-throwing — caller logs and continues).
+   */
+  async failStepDirect(
+    pipelineId: string,
+    role: PipelineRole,
+    executionId: string,
+    errorMessage: string
+  ): Promise<PipelineRun | null> {
+    let run: PipelineRun;
+    try {
+      run = await this.get(pipelineId);
+    } catch {
+      return null;
+    }
+
+    const steps = [...run.steps];
+    // Find the last running step for this role regardless of current_step
+    const stepIdx = steps.reduce((found, s, i) =>
+      s.role === role && s.status === "running" ? i : found, -1
+    );
+    if (stepIdx === -1) {
+      return null;
+    }
+
+    const now = new Date().toISOString();
+    steps[stepIdx] = {
+      ...steps[stepIdx],
+      status: "failed",
+      execution_id: executionId,
+      artifact_paths: steps[stepIdx].artifact_paths ?? [],
+      completed_at: now,
+      error_message: errorMessage,
+    };
+
+    return this.save(run, {
+      current_step: role,
+      status: "failed",
+      steps,
+    });
+  }
+
   private assertStatus(run: PipelineRun, allowed: PipelineStatus[]): void {
     if (!allowed.includes(run.status)) {
       throw new HttpError(
@@ -1426,7 +1487,18 @@ export class PipelineService {
     run: PipelineRun,
     patch: Partial<Pick<PipelineRun, "current_step" | "status" | "steps" | "sprint_branch" | "pr_number" | "pr_url" | "implementer_attempts" | "metadata">>
   ): Promise<PipelineRun> {
-    const [row] = await db
+    // Build a compact summary of what this save is actually changing so log readers
+    // can distinguish the 3–4 rapid consecutive saves that happen during sprint-controller setup.
+    const changed: Record<string, unknown> = {};
+    if (patch.current_step !== undefined) changed.current_step = patch.current_step;
+    if (patch.status !== undefined) changed.status = patch.status;
+    if (patch.sprint_branch !== undefined) changed.sprint_branch = patch.sprint_branch;
+    if (patch.pr_number !== undefined) changed.pr_number = patch.pr_number;
+    if (patch.pr_url !== undefined) changed.pr_url = patch.pr_url;
+    if (patch.implementer_attempts !== undefined) changed.implementer_attempts = patch.implementer_attempts;
+    if (patch.metadata !== undefined) changed.metadata = "(updated)";
+
+    const rows = await db
       .update(pipelineRuns)
       .set({
         current_step: patch.current_step ?? run.current_step,
@@ -1437,15 +1509,27 @@ export class PipelineService {
         ...(patch.pr_number !== undefined ? { pr_number: patch.pr_number } : {}),
         ...(patch.pr_url !== undefined ? { pr_url: patch.pr_url } : {}),
         ...(patch.implementer_attempts !== undefined ? { implementer_attempts: patch.implementer_attempts } : {}),
+        lock_version: run.lock_version + 1,
         updated_at: new Date(),
       })
-      .where(eq(pipelineRuns.pipeline_id, run.pipeline_id))
+      .where(and(eq(pipelineRuns.pipeline_id, run.pipeline_id), eq(pipelineRuns.lock_version, run.lock_version)))
       .returning();
 
+    if (rows.length === 0) {
+      throw new HttpError(
+        409,
+        "CONCURRENT_WRITE",
+        `Pipeline ${run.pipeline_id} was modified by a concurrent request (lock_version mismatch). Retry.`
+      );
+    }
+
+    const row = rows[0];
     logger.info("Pipeline run updated", {
       pipeline_id: run.pipeline_id,
       status: row.status,
       current_step: row.current_step,
+      lock_version: row.lock_version,
+      changed,
     });
 
     return rowToRun(row);
@@ -1461,13 +1545,26 @@ export class PipelineService {
     const gitRefresh = await this.refreshGitForStatus(run);
 
     if (gitRefresh.headCommit) {
-      run = await this.save(run, {
-        metadata: {
-          ...run.metadata,
-          last_status_git_head: gitRefresh.headCommit,
-          last_status_git_refresh_at: new Date().toISOString(),
-        },
-      });
+      try {
+        run = await this.save(run, {
+          metadata: {
+            ...run.metadata,
+            last_status_git_head: gitRefresh.headCommit,
+            last_status_git_refresh_at: new Date().toISOString(),
+          },
+        });
+      } catch (err) {
+        // CONCURRENT_WRITE here means another request advanced the pipeline while we were
+        // doing the git pull. The metadata refresh is non-critical — skip it and continue
+        // with the stale run snapshot; the next status poll will succeed.
+        if (err instanceof HttpError && err.code === "CONCURRENT_WRITE") {
+          logger.warn("getStatusSummary: metadata save skipped due to concurrent write", {
+            pipeline_id: pipelineId,
+          });
+        } else {
+          throw err;
+        }
+      }
     }
 
     run = await this.reconcileRunFromControlArtifacts(run);

@@ -478,6 +478,16 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       recorded_at: string;
     } | null = null;
 
+    /** Per-turn log for diagnostics — one entry per toolExecutor call. */
+    let turnCounter = 0;
+    const turnLog: {
+      turn: number;
+      tool: string;
+      args_summary: string;
+      result_summary: string;
+      timestamp: string;
+    }[] = [];
+
     /** Phase 4 helper: persist progress snapshot to pipeline artifact service (ADR-035). */
     const persistProgress = async (snapshot: {
       current_focus: string;
@@ -727,6 +737,23 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       return `Unknown tool: ${name}`;
     };
 
+    /**
+     * Wraps toolExecutor to record a per-turn log entry after every tool call.
+     * The log is persisted as turn_log.json when the loop ends abnormally.
+     */
+    const instrumentedToolExecutor = async (toolCall: ToolCall): Promise<string> => {
+      const turn = ++turnCounter;
+      const result = await toolExecutor(toolCall);
+      turnLog.push({
+        turn,
+        tool: toolCall.name,
+        args_summary: JSON.stringify(toolCall.arguments).slice(0, 200),
+        result_summary: result.slice(0, 300),
+        timestamp: new Date().toISOString(),
+      });
+      return result;
+    };
+
     // Run the agentic loop (max 30 iterations for a real implementation)
     let maxIterationsExceeded = false;
     try {
@@ -736,7 +763,7 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
           { role: "user", content: userContent },
         ],
         FILESYSTEM_TOOLS,
-        toolExecutor,
+        instrumentedToolExecutor,
         {
           maxIterations: 30,
           max_tokens: 8192,
@@ -798,22 +825,37 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       if (project && sprintBranch) {
         await this.checkpointCommitOnFailure(project, sprintBranch, gateResults, writtenFiles, failureReason, context, resolvedTaskId, resolvedSprintId);
       }
+      // Persist per-turn log so operator can inspect what each iteration attempted.
+      try {
+        const turnLogJson = JSON.stringify(
+          { stop_reason: failureReason, turn_count: turnLog.length, turns: turnLog },
+          null,
+          2
+        );
+        await artifactService.write(pipelineId, "turn_log.json", turnLogJson);
+        context.log("Implementer: turn_log.json written", {
+          stop_reason: failureReason,
+          turn_count: turnLog.length,
+          last_tool: turnLog.at(-1)?.tool,
+        });
+      } catch { /* best effort — do not mask the primary error */ }
       if (maxIterationsExceeded) {
         throw new HttpError(
           422,
           "MAX_ITERATIONS",
-          "Implementer agent loop exceeded maximum iterations (30). Work has been checkpointed to the branch. " +
+          `Implementer agent loop exceeded maximum iterations (30) after ${turnLog.length} turn(s). ` +
+            "Work has been checkpointed to the branch. " +
             "Rerun Implementer — the next run will load prior gate results and continue from where it left off.",
-          { gate_results: gateResults, written_files: writtenFiles }
+          { gate_results: gateResults, written_files: writtenFiles, turn_count: turnLog.length }
         );
       }
       throw new HttpError(
         422,
         "FINISH_NOT_CALLED",
-        "Implementer agent loop terminated without calling the finish tool. " +
+        `Implementer agent loop terminated after ${turnLog.length} turn(s) without calling the finish tool. ` +
           "Work has been checkpointed to the branch. " +
           "Inspect the agent trace, resolve any gate failures, and rerun.",
-        { gate_results: gateResults, written_files: writtenFiles }
+        { gate_results: gateResults, written_files: writtenFiles, turn_count: turnLog.length }
       );
     }
 

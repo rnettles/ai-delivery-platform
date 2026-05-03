@@ -12,6 +12,13 @@ interface LogEntry {
 type Level = "info" | "warn" | "error" | "debug";
 const ALL_LEVELS: Level[] = ["error", "warn", "info", "debug"];
 
+// Keys that carry the most diagnostic value — always shown inline.
+// Everything else is secondary and visible only in Detail mode.
+const PRIMARY_KEYS = new Set([
+  "pipeline_id", "role", "status", "current_step", "project",
+  "caller", "sprint_branch", "pr_number", "changed",
+]);
+
 const LEVEL_STYLES: Record<string, string> = {
   info:  "bg-blue-50 text-blue-700 border-blue-200",
   warn:  "bg-yellow-50 text-yellow-700 border-yellow-200",
@@ -35,17 +42,43 @@ const LEVEL_ACTIVE_STYLE: Record<string, string> = {
 
 const LEVEL_INACTIVE_STYLE = "bg-white text-gray-500 border-gray-200 hover:border-gray-400 hover:text-gray-800";
 
-function ContextCell({ ctx }: { ctx: Record<string, unknown> }) {
+function fmtValue(v: unknown): string {
+  if (typeof v === "object" && v !== null) {
+    // Flatten objects to k=v pairs for readability instead of a JSON blob
+    return Object.entries(v as Record<string, unknown>)
+      .map(([ik, iv]) => `${ik}=${typeof iv === "object" ? JSON.stringify(iv) : String(iv)}`)
+      .join(" ");
+  }
+  return String(v);
+}
+
+function ContextCell({ ctx, showDetail }: { ctx: Record<string, unknown>; showDetail: boolean }) {
   const pairs = Object.entries(ctx);
   if (pairs.length === 0) return null;
+
+  const primary = pairs.filter(([k]) => PRIMARY_KEYS.has(k));
+  const secondary = pairs.filter(([k]) => !PRIMARY_KEYS.has(k));
+
   return (
-    <span className="font-mono text-xs text-gray-400 break-all">
-      {pairs.map(([k, v]) => (
-        <span key={k} className="mr-3">
+    <span className="font-mono text-xs">
+      {/* Primary — always shown inline */}
+      {primary.map(([k, v]) => (
+        <span key={k} className="mr-3 whitespace-nowrap">
           <span className="text-gray-500">{k}=</span>
-          <span>{typeof v === "object" ? JSON.stringify(v) : String(v)}</span>
+          <span className="text-gray-800 font-medium">{fmtValue(v)}</span>
         </span>
       ))}
+      {/* Secondary — shown on a second line when Detail is on */}
+      {showDetail && secondary.length > 0 && (
+        <span className="block mt-0.5 text-[10px] text-gray-400 break-all">
+          {secondary.map(([k, v]) => (
+            <span key={k} className="mr-3">
+              <span>{k}=</span>
+              <span>{fmtValue(v)}</span>
+            </span>
+          ))}
+        </span>
+      )}
     </span>
   );
 }
@@ -55,6 +88,7 @@ export default function LogsPage() {
   // Empty set = all levels shown (same as "All")
   const [activeLevels, setActiveLevels] = useState<Set<Level>>(new Set());
   const [autoScroll, setAutoScroll] = useState(true);
+  const [showDetail, setShowDetail] = useState(true);
   const [lastFetch, setLastFetch] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -165,7 +199,17 @@ export default function LogsPage() {
           </span>
         )}
 
-        <div className="ml-auto flex items-center gap-3">
+        <div className="ml-auto flex items-center gap-4">
+          <label className="flex cursor-pointer items-center gap-1.5 text-xs text-gray-500">
+            <input
+              type="checkbox"
+              checked={showDetail}
+              onChange={(e) => setShowDetail(e.target.checked)}
+              className="h-3 w-3 rounded"
+            />
+            Detail
+          </label>
+
           <label className="flex cursor-pointer items-center gap-1.5 text-xs text-gray-500">
             <input
               type="checkbox"
@@ -228,9 +272,9 @@ export default function LogsPage() {
                   </td>
 
                   {/* Message + context */}
-                  <td className="px-3 py-1.5 text-gray-800 break-all">
-                    <span className="mr-4">{entry.message}</span>
-                    <ContextCell ctx={entry.context} />
+                  <td className="px-3 py-1.5 break-all">
+                    <span className="mr-4 font-medium text-gray-900">{entry.message}</span>
+                    <ContextCell ctx={entry.context} showDetail={showDetail} />
                   </td>
                 </tr>
               ))}

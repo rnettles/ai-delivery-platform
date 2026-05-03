@@ -33,16 +33,16 @@ class ProjectGitService {
    * Ensure the project repo is cloned and up-to-date (within TTL).
    * Serialises concurrent callers for the same project via mutex.
    */
-  async ensureReady(project: Project, opts?: { forcePull?: boolean }): Promise<GitSyncContext> {
-    return this.withLock(project.project_id, () => this.doEnsureReady(project, opts?.forcePull ?? false));
+  async ensureReady(project: Project, opts?: { forcePull?: boolean; caller?: string }): Promise<GitSyncContext> {
+    return this.withLock(project.project_id, () => this.doEnsureReady(project, opts?.forcePull ?? false, opts?.caller));
   }
 
   /**
    * Like ensureReady but assumes the per-project lock is already held by the caller.
    * Use this when calling from inside withProjectLock to avoid self-deadlock.
    */
-  async ensureReadyUnderLock(project: Project, opts?: { forcePull?: boolean }): Promise<GitSyncContext> {
-    return this.doEnsureReady(project, opts?.forcePull ?? false);
+  async ensureReadyUnderLock(project: Project, opts?: { forcePull?: boolean; caller?: string }): Promise<GitSyncContext> {
+    return this.doEnsureReady(project, opts?.forcePull ?? false, opts?.caller);
   }
 
   /**
@@ -269,7 +269,7 @@ class ProjectGitService {
 
   // ─── PRIVATE ─────────────────────────────────────────────────────────────
 
-  private async doEnsureReady(project: Project, forcePull: boolean): Promise<GitSyncContext> {
+  private async doEnsureReady(project: Project, forcePull: boolean, caller?: string): Promise<GitSyncContext> {
     const state = this.getState(project.project_id);
     const now = Date.now();
     const needsSync = forcePull || (now - state.lastSyncAt > SYNC_TTL_MS);
@@ -292,7 +292,7 @@ class ProjectGitService {
           // permanently stale. forcePull is used for pre-execution gate reads only;
           // in-progress branch work uses the TTL path and is never reset.
           if (forcePull) {
-            logger.info("git: fetch + reset (force-pull)", { project: project.name, clonePath });
+            logger.info("git: fetch + reset (force-pull)", { project: project.name, clonePath, ...(caller ? { caller } : {}) });
             this.git(clonePath, ["fetch", "origin"]);
             // Checkout the default branch before reset so an in-progress feature branch
             // left checked out by a prior sprint-controller run is never clobbered.
