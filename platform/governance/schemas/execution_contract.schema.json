@@ -24,7 +24,7 @@
     "scope": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["allowed_paths", "forbidden_actions"],
+      "required": ["allowed_paths", "allowed_paths_extra", "forbidden_actions"],
       "properties": {
         "allowed_paths": {
           "type": "array",
@@ -80,7 +80,7 @@
       "required": ["idempotent_runtime", "no_randomness", "no_external_calls"],
       "properties": {
         "idempotent_runtime": {
-          "oneOf": [
+          "anyOf": [
             { "type": "boolean" },
             { "type": "string", "const": "n/a" }
           ]

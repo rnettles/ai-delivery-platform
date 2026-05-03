@@ -12,7 +12,6 @@ import { prRemediationService } from "../services/pr-remediation.service";
 import { designInputGateService, EntryMode, DesignInputGateResult } from "../services/design-input-gate.service";
 import { HttpError } from "../utils/http-error";
 import { buildProjectPreamble } from "../utils/prompt-preamble";
-import { featureFlags } from "../utils/feature-flags";
 import { sprintPlanValidatorService } from "../services/sprint-plan-validator.service";
 import { sprintPlanRendererService } from "../services/sprint-plan-renderer.service";
 import type { RichSprintLlmResponse } from "../domain/sprint-plan.types";
@@ -474,8 +473,7 @@ export class PlannerScript implements Script<Record<string, unknown>, unknown> {
       pipelineId,
       phasePlanContent,
       description,
-      project,
-      { includeFirstTaskInLegacy: true }
+      project
     );
 
     const sprintPlanFilename = `sprint_plan_${sprintIdRaw.toLowerCase()}.md`;
@@ -1185,8 +1183,7 @@ ${designArtifacts}
         pipelineId,
         phasePlanContent,
         description,
-        _preambleProject,
-        { includeFirstTaskInLegacy: false }
+        _preambleProject
       );
 
     const sprintPlanPath = await artifactService.write(
@@ -1250,23 +1247,17 @@ ${designArtifacts}
   }
 
   /**
-   * Calls the Sprint Planner LLM and returns the rendered sprint-plan markdown plus
-   * top-level identifiers. Behavior depends on the SPRINT_PLAN_RICH feature flag:
-   *
-   *  - Flag ON: uses the rich (Plan v1) prompt, validates the response with
-   *    sprintPlanValidatorService, and renders deterministic markdown via
-   *    sprintPlanRendererService. Validation failure → falls back to legacy path.
-   *  - Flag OFF (default): uses the legacy thin prompt and `formatSprintMarkdown`.
-   *
-   * The rich path also returns the parsed `RichSprintLlmResponse` so callers can persist
-   * structured data alongside the markdown if they wish (current callers do not yet).
+   * Calls the Sprint Planner LLM using the rich (Plan v1) prompt and returns the
+   * rendered sprint-plan markdown plus top-level identifiers. Validates the response
+   * with sprintPlanValidatorService and renders deterministic markdown via
+   * sprintPlanRendererService. Also returns the parsed RichSprintLlmResponse so
+   * callers can persist the structured JSON alongside the markdown.
    */
   private async generateSprintPlanContent(
     pipelineId: string,
     phasePlanContent: string,
     description: string,
-    project: Awaited<ReturnType<typeof projectService.getById>> | null,
-    options: { includeFirstTaskInLegacy: boolean }
+    project: Awaited<ReturnType<typeof projectService.getById>> | null
   ): Promise<{
     content: string;
     sprint_id: string;
@@ -1276,137 +1267,51 @@ ${designArtifacts}
     const provider = await llmFactory.forRole("sprint-controller");
     const userContent =
       `Phase plan:\n\n${phasePlanContent}\n\n` +
-      `Produce a sprint plan for Sprint 1${options.includeFirstTaskInLegacy ? " including the first task detail" : " only. Do not generate task briefs or current_task artifacts"}. ` +
+      `Produce a sprint plan for Sprint 1. Do not generate task briefs or current_task artifacts. ` +
       (description ? `Additional context: ${description}` : "");
 
-    if (featureFlags.sprintPlanRich()) {
-      const invariants = await governanceService.processInvariantsFor("sprint-controller");
-      const richPrompt = await governanceService.getPrompt("sprint-controller-rich");
-      const systemPrompt =
-        buildProjectPreamble(project) +
-        `## PROCESS INVARIANTS (non-overridable)\n\n${invariants}\n\n---\n\n## ROLE-SPECIFIC MECHANICS\n\n${richPrompt}`;
+    const invariants = await governanceService.processInvariantsFor("sprint-controller");
+    const richPrompt = await governanceService.getPrompt("sprint-controller-rich");
+    const systemPrompt =
+      buildProjectPreamble(project) +
+      `## PROCESS INVARIANTS (non-overridable)\n\n${invariants}\n\n---\n\n## ROLE-SPECIFIC MECHANICS\n\n${richPrompt}`;
 
-      const richSchema = (await governanceService.getSchema("sprint_plan_rich")) as Record<string, unknown>;
+    const richSchema = (await governanceService.getSchema("sprint_plan_rich")) as Record<string, unknown>;
 
-      try {
-        const llm = await provider.chatJson<RichSprintLlmResponse>(
-          [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userContent },
-          ],
-          {
-            meta: { role: "sprint-controller", pipeline_id: pipelineId, call_type: "sprint-plan-rich" },
-            output_schema: richSchema,
-          }
-        );
-
-        const result = await sprintPlanValidatorService.validateRichResponse(llm);
-        if (!result.ok) {
-          logger.warn("Rich sprint plan failed validation; falling back to legacy path", {
-            pipeline_id: pipelineId,
-            error_count: result.errors.length,
-            first_errors: result.errors.slice(0, 3),
-          });
-        } else {
-          const content = sprintPlanRendererService.render(
-            result.value.sprint_plan,
-            result.value.task_specifications
-          );
-          return {
-            content,
-            sprint_id: result.value.sprint_plan.sprint_id,
-            phase_id: result.value.sprint_plan.phase_id,
-            rich: result.value,
-          };
-        }
-      } catch (err) {
-        logger.warn("Rich sprint plan LLM call failed; falling back to legacy path", {
-          pipeline_id: pipelineId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-
-    // Legacy thin path.
-    interface LegacyResponse {
-      sprint_plan: { sprint_id: string; phase_id: string; name: string; goals: string[]; tasks: string[]; status: "staged"; execution_mode?: "normal" | "fast-track" };
-      first_task?: { task_id: string; title: string; description: string; acceptance_criteria: string[]; estimated_effort: "S" | "M" | "L"; files_likely_affected: string[]; status: "pending" };
-    }
-    const systemPrompt = buildProjectPreamble(project) + (await governanceService.getComposedPrompt("sprint-controller"));
-    const llm = await provider.chatJson<LegacyResponse>(
+    const llm = await provider.chatJson<RichSprintLlmResponse>(
       [
         { role: "system", content: systemPrompt },
         { role: "user", content: userContent },
       ],
-      { meta: { role: "sprint-controller", pipeline_id: pipelineId, call_type: "sprint-plan" } }
+      {
+        meta: { role: "sprint-controller", pipeline_id: pipelineId, call_type: "sprint-plan-rich" },
+        output_schema: richSchema,
+      }
     );
 
-    if (!llm.sprint_plan?.sprint_id) {
-      throw new Error("Sprint planning LLM response missing required fields (sprint_plan.sprint_id)");
+    const result = await sprintPlanValidatorService.validateRichResponse(llm);
+    if (!result.ok) {
+      throw new HttpError(
+        422,
+        "SPRINT_PLAN_VALIDATION_FAILED",
+        `Rich sprint plan failed schema validation (${result.errors.length} error(s)).`,
+        { errors: result.errors.slice(0, 5) }
+      );
     }
 
-    const content = llm.first_task
-      ? this.formatSprintMarkdown(llm.sprint_plan, llm.first_task)
-      : this.formatSprintMarkdownFromPlan(llm.sprint_plan);
-
+    const content = sprintPlanRendererService.render(
+      result.value.sprint_plan,
+      result.value.task_specifications
+    );
     return {
       content,
-      sprint_id: llm.sprint_plan.sprint_id,
-      phase_id: llm.sprint_plan.phase_id,
+      sprint_id: result.value.sprint_plan.sprint_id,
+      phase_id: result.value.sprint_plan.phase_id,
+      rich: result.value,
     };
   }
 
-  private formatSprintMarkdown(
-    plan: { sprint_id: string; phase_id: string; name: string; goals: string[]; tasks: string[]; status: string },
-    firstTask: { task_id: string; title: string; description: string; estimated_effort: string; files_likely_affected: string[]; acceptance_criteria: string[] }
-  ): string {    const goals = plan.goals.map((g) => `- ${g}`).join("\n");
-    const tasks = plan.tasks.map((t) => `- ${t}`).join("\n");
-    return `# Sprint Plan: ${plan.sprint_id}
 
-**Phase:** ${plan.phase_id}
-**Name:** ${plan.name}
-**Status:** ${plan.status}
-
-## Goals
-${goals}
-
-## Tasks
-${tasks}
-
----
-
-## First Task Detail: ${firstTask.task_id}
-
-**${firstTask.title}** [${firstTask.estimated_effort}]
-
-${firstTask.description}
-
-**Files likely affected:**
-${firstTask.files_likely_affected.map((f) => `- \`${f}\``).join("\n")}
-
-**Acceptance criteria:**
-${firstTask.acceptance_criteria.map((c) => `- ${c}`).join("\n")}
-`;
-  }
-
-  private formatSprintMarkdownFromPlan(
-    plan: { sprint_id: string; phase_id: string; name: string; goals: string[]; tasks: string[]; status: string }
-  ): string {
-    const goals = plan.goals.map((g) => `- ${g}`).join("\n");
-    const tasks = plan.tasks.map((t) => `- ${t}`).join("\n");
-    return `# Sprint Plan: ${plan.sprint_id}
-
-**Phase:** ${plan.phase_id}
-**Name:** ${plan.name}
-**Status:** ${plan.status}
-
-## Goals
-${goals}
-
-## Tasks
-${tasks}
-`;
-  }
 
   private formatBrief(
     task: { task_id: string; title: string; description: string; files_likely_affected: string[]; acceptance_criteria: string[] },

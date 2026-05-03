@@ -27,7 +27,10 @@
         "dependency_graph",
         "test_matrix",
         "validation_gates",
-        "definition_of_done"
+        "definition_of_done",
+        "fast_track_lane",
+        "fast_track_rationale",
+        "fast_track_intake_id"
       ],
       "properties": {
         "sprint_id": { "type": "string", "pattern": "^S\\d{2,}$" },
@@ -72,7 +75,7 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["name", "kind", "json_schema"],
+            "required": ["name", "kind", "description", "json_schema"],
             "properties": {
               "name": { "type": "string", "minLength": 1 },
               "kind": {
@@ -80,7 +83,7 @@
                 "enum": ["request", "response", "entity", "event", "db_row", "config"]
               },
               "description": { "type": "string" },
-              "json_schema": { "type": "object" }
+              "json_schema": { "type": "string" }
             }
           }
         },
@@ -98,10 +101,18 @@
           }
         },
         "dependency_graph": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "array",
-            "items": { "type": "string", "pattern": "^S\\d{2,}-\\d{3,}$" }
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["task_id", "depends_on"],
+            "properties": {
+              "task_id": { "type": "string", "pattern": "^S\\d{2,}-\\d{3,}$" },
+              "depends_on": {
+                "type": "array",
+                "items": { "type": "string", "pattern": "^S\\d{2,}-\\d{3,}$" }
+              }
+            }
           }
         },
         "test_matrix": {
@@ -177,7 +188,7 @@
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["name", "type"],
+              "required": ["name", "type", "source", "sink"],
               "properties": {
                 "name": { "type": "string" },
                 "type": { "type": "string" },
@@ -191,7 +202,7 @@
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["name", "type"],
+              "required": ["name", "type", "source", "sink"],
               "properties": {
                 "name": { "type": "string" },
                 "type": { "type": "string" },
@@ -223,11 +234,15 @@
           "contract_refs": { "type": "array", "items": { "type": "string" } },
           "task_flags": {
             "type": "object",
+            "additionalProperties": false,
             "required": [
               "fr_ids_in_scope",
               "architecture_contract_change",
               "ui_evidence_required",
-              "incident_tier"
+              "incident_tier",
+              "schema_change",
+              "migration_change",
+              "cross_subsystem_change"
             ],
             "properties": {
               "fr_ids_in_scope": {
