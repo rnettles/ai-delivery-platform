@@ -135,8 +135,7 @@
           "items": {
             "type": "string",
             "enum": ["lint", "typecheck", "unit", "integration", "contract"]
-          },
-          "uniqueItems": true
+          }
         },
         "definition_of_done": {
           "type": "array",

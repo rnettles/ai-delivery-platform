@@ -47,8 +47,7 @@
               "move_directories",
               "refactor_unrelated_code"
             ]
-          },
-          "uniqueItems": true
+          }
         }
       }
     },
