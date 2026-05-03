@@ -610,6 +610,12 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
 
         const timestamp = new Date().toISOString();
 
+        // Resolve command working directory: use contract.commands.working_directory when
+        // present (e.g. project has package.json in a subdirectory like "health-prototype").
+        const commandCwd = executionContract?.commands?.working_directory
+          ? path.join(clonePath, executionContract.commands.working_directory)
+          : clonePath;
+
         // ─── Phase 9 (ADR-033): cross-run gate evidence reuse ──────────────
         // If the prior run recorded an exit_code=0 for this exact command and
         // none of the relevant files changed since, reuse the prior pass.
@@ -627,7 +633,7 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
 
         try {
           const { stdout, stderr } = await execAsync(command, {
-            cwd: clonePath,
+            cwd: commandCwd,
             timeout: GATE_COMMAND_TIMEOUT_MS,
             maxBuffer: 10 * 1024 * 1024,
           });

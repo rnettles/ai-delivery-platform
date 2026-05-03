@@ -27,6 +27,12 @@ export interface ContractCommands {
   lint: string;
   typecheck: string;
   test: string;
+  /**
+   * Optional sub-directory (relative to repo root) from which all commands should be run.
+   * Used when the project's package.json lives in a subdirectory (e.g. `health-prototype`).
+   * When absent, commands run from the repo root.
+   */
+  working_directory?: string;
 }
 
 export interface ContractScope {

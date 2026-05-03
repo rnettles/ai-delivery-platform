@@ -405,6 +405,17 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       `> Effort: ${stagedSprint.firstTask.estimated_effort} | ${stagedSprint.firstTask.files_likely_affected.length} file(s) likely affected`
     );
 
+    // Validate execution contract paths against the actual repo on disk.
+    // Catches mismatches early (e.g. Planner wrote "tailwind.config.js" but repo has
+    // "health-prototype/tailwind.config.ts") so the Implementer doesn't waste turns.
+    if (richSpec?.execution_contract) {
+      await this.validateContractPaths(
+        richSpec.execution_contract,
+        designInputs.clone_path,
+        context
+      );
+    }
+
     // Write AI_IMPLEMENTATION_BRIEF.md — the Implementer's source of truth.
     // Phase 5.4 (SCT-005): isFastTrack controls Fast Track Controls block injection.
     // Phase 3 (deterministic staging): when richSpec is present, brief gains Section 0
@@ -968,6 +979,79 @@ ${richDetailSections}
 - \`ai_dev_stack/ai_guidance/AI_RUNTIME_POLICY.md\`
 - \`ai_dev_stack/ai_guidance/AI_RUNTIME_GATES.md\`
 `;
+  }
+
+  /**
+   * Validates execution contract paths against the actual cloned repo on disk.
+   *
+   * For each literal (non-glob) path in `allowed_paths`, checks whether the file exists.
+   * Emits a warning for any path that is missing so the operator can correct the sprint plan
+   * before the Implementer wastes turns discovering the mismatch at runtime.
+   *
+   * Also validates `commands.working_directory` when present — warns if the directory
+   * does not exist or contains no package.json.
+   */
+  private async validateContractPaths(
+    contract: ExecutionContract,
+    clonePath: string,
+    context: ScriptExecutionContext
+  ): Promise<void> {
+    const repoBase = path.isAbsolute(clonePath)
+      ? clonePath
+      : path.join(process.cwd(), clonePath);
+
+    const literalPaths = (contract.scope.allowed_paths ?? []).filter(
+      (p) => !p.includes("*") && !p.includes("{")
+    );
+
+    const missing: string[] = [];
+    for (const relPath of literalPaths) {
+      const abs = path.join(repoBase, relPath);
+      try {
+        await fs.access(abs);
+      } catch {
+        missing.push(relPath);
+      }
+    }
+
+    if (missing.length > 0) {
+      context.notify(
+        `⚠️ Contract path warning: the following allowed_paths do not exist in the repo. ` +
+        `The Implementer will be blocked from writing to these paths. ` +
+        `Update the sprint plan to use the correct paths before retrying.\n` +
+        missing.map((p) => `  • \`${p}\``).join("\n")
+      );
+    }
+
+    // Validate working_directory if present
+    const workDir = contract.commands?.working_directory;
+    if (workDir) {
+      const absWorkDir = path.join(repoBase, workDir);
+      let workDirExists = false;
+      try {
+        await fs.access(absWorkDir);
+        workDirExists = true;
+      } catch {
+        // directory not found
+      }
+
+      if (!workDirExists) {
+        context.notify(
+          `⚠️ Contract working_directory warning: \`${workDir}\` does not exist in the repo. ` +
+          `All gate commands will fail. Update the sprint plan.`
+        );
+      } else {
+        // Check for package.json
+        try {
+          await fs.access(path.join(absWorkDir, "package.json"));
+        } catch {
+          context.notify(
+            `⚠️ Contract working_directory warning: \`${workDir}\` exists but contains no package.json. ` +
+            `npm commands will fail. Verify the correct working directory.`
+          );
+        }
+      }
+    }
   }
 
   /**

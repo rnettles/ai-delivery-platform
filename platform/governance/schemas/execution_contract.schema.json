@@ -101,6 +101,10 @@
         },
         "test": {
           "type": "string"
+        },
+        "working_directory": {
+          "type": "string",
+          "description": "Optional sub-directory relative to repo root from which all commands run. Used when package.json lives in a subdirectory."
         }
       }
     },
