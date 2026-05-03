@@ -34,12 +34,15 @@ const makeValidPlan = (): RichSprintLlmResponse => ({
     goals: ["Deliver feature X"],
     tasks: ["S01-001", "S01-002"],
     data_contracts: [
-      { name: "FooRequest", kind: "request", json_schema: { type: "object" } },
+      { name: "FooRequest", kind: "request", json_schema: JSON.stringify({ type: "object" }) },
     ],
     invariants: [
       { id: "INV-1", statement: "All writes are idempotent", testable_via: "unit test" },
     ],
-    dependency_graph: { "S01-001": [], "S01-002": ["S01-001"] },
+    dependency_graph: [
+      { task_id: "S01-001", depends_on: [] },
+      { task_id: "S01-002", depends_on: ["S01-001"] },
+    ],
     test_matrix: [
       { task_id: "S01-001", normal: ["happy path"], edge: [], failure: [], idempotency: [] },
       { task_id: "S01-002", normal: ["happy path"], edge: [], failure: [], idempotency: [] },
@@ -117,7 +120,8 @@ describe("SprintPlanValidatorService", () => {
 
   it("rejects when dependency_graph references unknown task", async () => {
     const plan = makeValidPlan();
-    plan.sprint_plan.dependency_graph["S01-002"] = ["S01-999"];
+    const entry = plan.sprint_plan.dependency_graph.find((e) => e.task_id === "S01-002")!;
+    entry.depends_on = ["S01-999"];
     const result = await sprintPlanValidatorService.validateRichResponse(plan);
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -127,7 +131,8 @@ describe("SprintPlanValidatorService", () => {
 
   it("rejects when dependency_graph contains a cycle", async () => {
     const plan = makeValidPlan();
-    plan.sprint_plan.dependency_graph["S01-001"] = ["S01-002"];
+    const entry = plan.sprint_plan.dependency_graph.find((e) => e.task_id === "S01-001")!;
+    entry.depends_on = ["S01-002"];
     const result = await sprintPlanValidatorService.validateRichResponse(plan);
     expect(result.ok).toBe(false);
     if (!result.ok) {

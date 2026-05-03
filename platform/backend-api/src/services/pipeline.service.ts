@@ -109,6 +109,14 @@ export interface ChannelPipelineStatusListResult {
   runs: PipelineStatusChoice[];
 }
 
+export interface ProjectBranchSummary {
+  sprint_branch: string;
+  latest_pipeline_id: string;
+  status: PipelineStatus;
+  current_step: PipelineRole | "complete";
+  updated_at: string;
+}
+
 export interface StagedPhaseRecord {
   phase_id: string;
   name?: string;
@@ -226,6 +234,7 @@ function rowToRun(row: typeof pipelineRuns.$inferSelect): PipelineRun {
     status: row.status as PipelineStatus,
     steps: (row.steps as PipelineStepRecord[]) ?? [],
     metadata: (row.metadata as PipelineRun["metadata"]) ?? { source: "api" },
+    input: (row.input as Record<string, unknown>) ?? undefined,
     project_id: row.project_id ?? undefined,
     sprint_branch: row.sprint_branch ?? undefined,
     pr_number: row.pr_number ?? undefined,
@@ -716,6 +725,52 @@ export class PipelineService {
 
     const projectId = mappedProject.project_id;
 
+    // ── Prior-pipeline inheritance (ADR-037 UC2: failure recovery) ────────────
+    // If the caller supplies prior_pipeline_id in input, inherit sprint_branch
+    // from the prior pipeline so the continuation runs on the same branch.
+    const priorPipelineId =
+      req.input && typeof req.input["prior_pipeline_id"] === "string"
+        ? req.input["prior_pipeline_id"]
+        : undefined;
+
+    if (priorPipelineId) {
+      const priorRun = await this.get(priorPipelineId);
+      if (!req.sprint_branch && priorRun.sprint_branch) {
+        req.sprint_branch = priorRun.sprint_branch;
+      }
+    }
+
+    // ── Active-branch guard (ADR-037) ─────────────────────────────────────────
+    // A branch with an active pipeline cannot start a second pipeline.
+    // A failed branch is explicitly allowed through (continuation use-case).
+    if (req.sprint_branch) {
+      const activeBranchStatuses: PipelineStatus[] = [
+        "running",
+        "awaiting_approval",
+        "awaiting_pr_review",
+        "paused_takeover",
+      ];
+      const [existingRow] = await db
+        .select({ pipeline_id: pipelineRuns.pipeline_id })
+        .from(pipelineRuns)
+        .where(
+          and(
+            eq(pipelineRuns.project_id, projectId),
+            eq(pipelineRuns.sprint_branch, req.sprint_branch),
+            inArray(pipelineRuns.status, activeBranchStatuses)
+          )
+        )
+        .limit(1);
+
+      if (existingRow) {
+        throw new HttpError(
+          409,
+          "BRANCH_ALREADY_ACTIVE",
+          `Pipeline ${existingRow.pipeline_id} is already active on branch ${req.sprint_branch}. Cancel it before starting a new pipeline on the same branch.`
+        );
+      }
+    }
+
     // Build step history: mark all roles before entry_point as not_applicable
     const entryIdx = ROLE_SEQUENCE.indexOf(req.entry_point);
     const steps: PipelineStepRecord[] = ROLE_SEQUENCE.slice(0, entryIdx).map((role) => ({
@@ -759,6 +814,49 @@ export class PipelineService {
     logger.info("Pipeline run created", { pipeline_id: pipelineId, entry_point: req.entry_point });
 
     return rowToRun(row);
+  }
+
+  // ─── LIST BRANCHES BY PROJECT ─────────────────────────────────────────────
+
+  async listBranchesByProject(projectId: string): Promise<ProjectBranchSummary[]> {
+    // Fetch the most-recent pipeline per distinct sprint_branch for this project.
+    // We use a subquery to get the latest pipeline_id per branch, then join back.
+    const rows = await db
+      .select({
+        sprint_branch: pipelineRuns.sprint_branch,
+        pipeline_id: pipelineRuns.pipeline_id,
+        status: pipelineRuns.status,
+        current_step: pipelineRuns.current_step,
+        updated_at: pipelineRuns.updated_at,
+      })
+      .from(pipelineRuns)
+      .where(
+        and(
+          eq(pipelineRuns.project_id, projectId),
+          sql`${pipelineRuns.sprint_branch} IS NOT NULL`
+        )
+      )
+      .orderBy(desc(pipelineRuns.updated_at));
+
+    // Keep only the first (most-recent) row per branch.
+    const seen = new Set<string>();
+    const branches: ProjectBranchSummary[] = [];
+    for (const row of rows) {
+      const branch = row.sprint_branch ?? "";
+      if (!branch || seen.has(branch)) continue;
+      seen.add(branch);
+      branches.push({
+        sprint_branch: branch,
+        latest_pipeline_id: row.pipeline_id,
+        status: row.status as PipelineStatus,
+        current_step: row.current_step as PipelineRole | "complete",
+        updated_at: row.updated_at instanceof Date
+          ? row.updated_at.toISOString()
+          : String(row.updated_at),
+      });
+    }
+
+    return branches;
   }
 
   // ─── GET ──────────────────────────────────────────────────────────────────

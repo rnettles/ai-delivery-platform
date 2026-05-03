@@ -87,3 +87,12 @@ export interface PipelineStatusChoice {
   updated_at: string;
   wait_state?: string;
 }
+
+// ADR-037: branch-level summary per project
+export interface ProjectBranchSummary {
+  sprint_branch: string;
+  latest_pipeline_id: string;
+  status: PipelineStatus;
+  current_step: PipelineRole | "complete";
+  updated_at: string;
+}

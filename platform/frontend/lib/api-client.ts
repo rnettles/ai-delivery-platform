@@ -1,4 +1,4 @@
-import type { PipelineAction, PipelineRun, PipelineStatusChoice } from "@/types";
+import type { PipelineAction, PipelineRun, PipelineStatusChoice, ProjectBranchSummary } from "@/types";
 import type { ProjectWithChannels } from "@/types/project";
 
 function getBackendUrl(): string {
@@ -45,6 +45,12 @@ export async function fetchProjectPipelines(projectId: string): Promise<Pipeline
   const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/pipelines`);
   if (!res.ok) throw new Error("Failed to fetch pipelines");
   return res.json() as Promise<PipelineStatusChoice[]>;
+}
+
+export async function fetchProjectBranches(projectId: string): Promise<ProjectBranchSummary[]> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/branches`);
+  if (!res.ok) throw new Error("Failed to fetch project branches");
+  return res.json() as Promise<ProjectBranchSummary[]>;
 }
 
 export async function fetchProjects(): Promise<ProjectWithChannels[]> {

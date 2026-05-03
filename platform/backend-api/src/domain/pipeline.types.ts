@@ -65,6 +65,7 @@ export interface PipelineRun {
   status: PipelineStatus;
   steps: PipelineStepRecord[];
   metadata: PipelineSlackMetadata & Record<string, unknown>;
+  input?: Record<string, unknown>;
   // project linkage (ADR-027)
   project_id?: string;
   // sprint execution fields (ADR-030)

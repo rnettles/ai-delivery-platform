@@ -30,9 +30,12 @@ const plan: RichSprintPlan = {
   design_decisions: [{ decision: "DB", choice: "Postgres", rationale: "ACID" }],
   goals: ["Deliver X"],
   tasks: ["S01-001", "S01-002"],
-  data_contracts: [{ name: "FooReq", kind: "request", json_schema: { type: "object" } }],
+  data_contracts: [{ name: "FooReq", kind: "request", json_schema: JSON.stringify({ type: "object" }) }],
   invariants: [{ id: "INV-1", statement: "Idempotent writes", testable_via: "unit" }],
-  dependency_graph: { "S01-001": [], "S01-002": ["S01-001"] },
+  dependency_graph: [
+    { task_id: "S01-001", depends_on: [] },
+    { task_id: "S01-002", depends_on: ["S01-001"] },
+  ],
   test_matrix: [
     { task_id: "S01-001", normal: ["happy"], edge: [], failure: [], idempotency: [] },
     { task_id: "S01-002", normal: ["happy"], edge: ["empty"], failure: [], idempotency: [] },

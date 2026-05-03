@@ -461,6 +461,34 @@ async function executeCurrentStep(
       .filter((s) => s.status === "complete" || s.status === "not_applicable")
       .flatMap((s) => s.artifact_paths);
 
+    // ADR-037 UC2: merge prior pipeline's artifact paths for failure recovery.
+    // When a continuation pipeline inherits prior_pipeline_id, append all of
+    // the prior run's step artifact_paths so roles can read prior-run outputs.
+    const priorPipelineId =
+      typeof currentRun.input?.["prior_pipeline_id"] === "string"
+        ? currentRun.input["prior_pipeline_id"]
+        : undefined;
+
+    if (priorPipelineId) {
+      try {
+        const priorRun = await pipelineService.get(priorPipelineId);
+        const priorArtifacts = priorRun.steps.flatMap((s) => s.artifact_paths);
+        previousArtifacts.push(...priorArtifacts);
+        logger.info("Prior pipeline artifacts merged", {
+          pipeline_id: pipelineId,
+          prior_pipeline_id: priorPipelineId,
+          prior_artifact_count: priorArtifacts.length,
+        });
+      } catch (err) {
+        // Non-fatal: log and continue without prior artifacts.
+        logger.warn("Failed to merge prior pipeline artifacts", {
+          pipeline_id: pipelineId,
+          prior_pipeline_id: priorPipelineId,
+          error: String(err),
+        });
+      }
+    }
+
     const enrichedInput: Record<string, unknown> = {
       ...input,
       pipeline_id: pipelineId,

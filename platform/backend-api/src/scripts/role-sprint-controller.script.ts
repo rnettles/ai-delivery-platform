@@ -1170,9 +1170,10 @@ ${JSON.stringify(contract, null, 2)}
    */
   private pickNextTaskId(rich: RichSprintLlmResponse, completedTaskIds: string[]): string {
     const completed = new Set(completedTaskIds);
+    const depMap = new Map(rich.sprint_plan.dependency_graph.map((e) => [e.task_id, e.depends_on]));
     for (const id of rich.sprint_plan.tasks) {
       if (completed.has(id)) continue;
-      const deps = rich.sprint_plan.dependency_graph[id] ?? [];
+      const deps = depMap.get(id) ?? [];
       if (deps.every((d) => completed.has(d))) return id;
     }
     return rich.first_task_id;

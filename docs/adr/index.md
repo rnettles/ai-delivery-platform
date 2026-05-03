@@ -40,3 +40,5 @@ This directory contains all architectural decisions for the system.
 - ADR-033: Deterministic Artifact Contracts and Script-Side Housekeeping
 - ADR-034: Native Slack Integration (Deprecation of n8n as Slack Adapter)
 - ADR-035: Pipeline-Scoped Task Artifacts for Concurrent Pipeline Support
+- ADR-036: Governance Artifact Source of Truth (git-only; no artifact-store duplication)
+- ADR-037: Branch as First-Class Entity (concurrent executor pipelines + failure recovery)

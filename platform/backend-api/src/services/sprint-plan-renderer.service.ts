@@ -119,10 +119,15 @@ ${blocks}`;
   private dataContracts(plan: RichSprintPlan): string {
     if (plan.data_contracts.length === 0) return "## Data Contracts\n\n_None._";
     const blocks = plan.data_contracts
-      .map(
-        (c) =>
-          `### ${c.name} (${c.kind})\n\n\`\`\`json\n${JSON.stringify(c.json_schema, null, 2)}\n\`\`\``
-      )
+      .map((c) => {
+        let prettySchema: string;
+        try {
+          prettySchema = JSON.stringify(JSON.parse(c.json_schema), null, 2);
+        } catch {
+          prettySchema = c.json_schema;
+        }
+        return `### ${c.name} (${c.kind})\n\n\`\`\`json\n${prettySchema}\n\`\`\``;
+      })
       .join("\n\n");
     return `## Data Contracts\n\n${blocks}`;
   }
@@ -159,10 +164,10 @@ ${rows}`;
   }
 
   private dependencyGraph(plan: RichSprintPlan): string {
-    const keys = Object.keys(plan.dependency_graph).sort();
-    if (keys.length === 0) return "## Dependency Graph\n\n_None._";
-    const rows = keys
-      .map((k) => `- \`${k}\` → ${plan.dependency_graph[k].length ? plan.dependency_graph[k].map((d) => `\`${d}\``).join(", ") : "_(no deps)_"}`)
+    if (plan.dependency_graph.length === 0) return "## Dependency Graph\n\n_None._";
+    const sorted = [...plan.dependency_graph].sort((a, b) => a.task_id.localeCompare(b.task_id));
+    const rows = sorted
+      .map((e) => `- \`${e.task_id}\` → ${e.depends_on.length ? e.depends_on.map((d) => `\`${d}\``).join(", ") : "_(no deps)_"}`)
       .join("\n");
     return `## Dependency Graph
 

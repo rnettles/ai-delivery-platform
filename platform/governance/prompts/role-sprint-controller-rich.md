@@ -44,15 +44,15 @@ will be rejected by the schema validator. On any unresolvable invariant or desig
     "goals": ["Goal 1", "Goal 2"],
     "tasks": ["S01-001", "S01-002"],
     "data_contracts": [
-      { "name": "FooRequest", "kind": "request", "json_schema": { "type": "object" } }
+      { "name": "FooRequest", "kind": "request", "json_schema": "{\"type\": \"object\", \"properties\": {\"id\": {\"type\": \"string\"}}}" }
     ],
     "invariants": [
       { "id": "INV-1", "statement": "All writes are idempotent", "testable_via": "unit test" }
     ],
-    "dependency_graph": {
-      "S01-001": [],
-      "S01-002": ["S01-001"]
-    },
+    "dependency_graph": [
+      { "task_id": "S01-001", "depends_on": [] },
+      { "task_id": "S01-002", "depends_on": ["S01-001"] }
+    ],
     "test_matrix": [
       { "task_id": "S01-001", "normal": ["happy"], "edge": [], "failure": [], "idempotency": [] }
     ],

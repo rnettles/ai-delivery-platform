@@ -6,19 +6,13 @@ import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
 import { useProject } from "@/hooks/useProject";
 import { useProjectPipelines } from "@/hooks/useProjectPipelines";
+import { useProjectBranches } from "@/hooks/useProjectBranches";
 import { useCurrentProject } from "@/hooks/useCurrentProject";
 import { useProjectWork, type WorkPhase } from "@/hooks/useProjectWork";
 import { deriveAllowedActions, ACTION_LABELS } from "@/lib/action-map";
 import { LiveBadge } from "@/components/LiveBadge";
 import { updateProjectPromptFields } from "@/lib/api-client";
-import type { PipelineStatus, PipelineStatusChoice, PipelineAction } from "@/types";
-
-const OPEN_STATUSES: PipelineStatus[] = [
-  "running",
-  "awaiting_approval",
-  "awaiting_pr_review",
-  "paused_takeover",
-];
+import type { PipelineStatus, PipelineStatusChoice, PipelineAction, ProjectBranchSummary } from "@/types";
 
 const STATUS_STYLES: Record<PipelineStatus, { badge: string; border: string; dot: string }> = {
   running:            { badge: "bg-blue-100 text-blue-800",    border: "border-blue-400",   dot: "bg-blue-500 animate-pulse" },
@@ -264,10 +258,16 @@ function ActivePipelinePanel({
 
 function StartRunPanel({
   projectId,
+  activeBranches,
   onCreated,
+  resumeBranch,
+  onClearResume,
 }: {
   projectId: string;
+  activeBranches: ProjectBranchSummary[];
   onCreated: (pipelineId: string) => void;
+  resumeBranch?: ProjectBranchSummary | null;
+  onClearResume?: () => void;
 }) {
   const { phases } = useProjectWork(projectId);
   const recommendedEntryPoint = recommendEntryPoint(phases);
@@ -280,11 +280,26 @@ function StartRunPanel({
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
+  // Sync resume state into form fields when caller selects a failed branch
+  useEffect(() => {
+    if (resumeBranch) {
+      setSprintBranch(resumeBranch.sprint_branch);
+      setEntryPoint(resumeBranch.current_step === "complete" ? "planner" : resumeBranch.current_step as EntryPoint);
+      setEntryPointOverridden(true);
+      setShowAdvanced(true);
+    }
+  }, [resumeBranch]);
+
   useEffect(() => {
     if (!entryPointOverridden) {
       setEntryPoint(recommendedEntryPoint);
     }
   }, [entryPointOverridden, recommendedEntryPoint]);
+
+  // Detect if the typed branch matches an already-active pipeline
+  const branchConflict = sprintBranch.trim()
+    ? activeBranches.find((b) => b.sprint_branch === sprintBranch.trim())
+    : undefined;
 
   async function handleCreate(mode: ExecutionMode) {
     setDropdownOpen(false);
@@ -299,6 +314,7 @@ function StartRunPanel({
           execution_mode: mode,
           description: description.trim() || undefined,
           sprint_branch: sprintBranch.trim() || undefined,
+          prior_pipeline_id: resumeBranch?.latest_pipeline_id || undefined,
         }),
       });
       if (!res.ok) {
@@ -313,10 +329,32 @@ function StartRunPanel({
     }
   }
 
+  const isResuming = Boolean(resumeBranch);
+
   return (
     <section className="mb-6 rounded-xl border-2 border-dashed border-gray-200 bg-gray-50 p-5">
-      <p className="text-sm font-semibold text-gray-700 mb-1">No active pipeline</p>
-      <p className="text-xs text-gray-400 mb-5">Start a new run for this project.</p>
+      {isResuming ? (
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <p className="text-sm font-semibold text-blue-700 mb-0.5">Resume pipeline</p>
+            <p className="font-mono text-xs text-gray-500">{resumeBranch!.sprint_branch}</p>
+          </div>
+          {onClearResume && (
+            <button
+              type="button"
+              onClick={onClearResume}
+              className="text-xs text-gray-400 hover:text-gray-600"
+            >
+              Clear ✕
+            </button>
+          )}
+        </div>
+      ) : (
+        <>
+          <p className="text-sm font-semibold text-gray-700 mb-1">Start new run</p>
+          <p className="text-xs text-gray-400 mb-5">Start a new pipeline for this project.</p>
+        </>
+      )}
 
       {/* Split button */}
       <div className="flex items-stretch">
@@ -407,8 +445,13 @@ function StartRunPanel({
               value={sprintBranch}
               onChange={(e) => setSprintBranch(e.target.value)}
               placeholder="feature/S01-001"
-              className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+              className={`w-full rounded border px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 ${branchConflict ? "border-amber-400 bg-amber-50" : "border-gray-300"}`}
             />
+            {branchConflict && (
+              <p className="mt-1 text-[11px] text-amber-700">
+                Branch <span className="font-mono">{branchConflict.sprint_branch}</span> already has an active pipeline — choose a different branch or use the active card above.
+              </p>
+            )}
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">
@@ -430,82 +473,41 @@ function StartRunPanel({
   );
 }
 
-// ─── Multiple active pipelines warning ───────────────────────────────────────
+// ─── Failed Branch Card ───────────────────────────────────────────────────────
 
-function MultiPipelineWarning({
-  pipelines,
-  projectId,
+function FailedBranchCard({
+  branch,
+  onResume,
 }: {
-  pipelines: PipelineStatusChoice[];
-  projectId: string;
+  branch: ProjectBranchSummary;
+  onResume: (branch: ProjectBranchSummary) => void;
 }) {
-  const queryClient = useQueryClient();
-  const [cancelling, setCancelling] = useState<string | null>(null);
-  const [cancelError, setCancelError] = useState<string | null>(null);
-
-  async function cancelPipeline(pipelineId: string) {
-    setCancelling(pipelineId);
-    setCancelError(null);
-    try {
-      const res = await fetch(`/api/pipelines/${encodeURIComponent(pipelineId)}/actions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "cancel" }),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? `Cancel failed: ${res.status}`);
-      }
-      await queryClient.invalidateQueries({ queryKey: ["project-pipelines", projectId] });
-    } catch (err) {
-      setCancelError(err instanceof Error ? err.message : "Unknown error");
-    } finally {
-      setCancelling(null);
-    }
-  }
+  const stepLabel = STEP_LABELS[branch.current_step] ?? branch.current_step;
+  const failedAt = new Date(branch.updated_at).toLocaleString();
 
   return (
-    <div className="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-4">
-      <p className="text-sm font-semibold text-amber-800 mb-1">
-        ⚠ Multiple active pipelines — data issue
-      </p>
-      <p className="text-xs text-amber-700 mb-3">
-        Only one pipeline should be active at a time. Cancel the extras below.
-      </p>
-      <div className="flex flex-col gap-2">
-        {pipelines.map((p) => (
-          <div
-            key={p.pipeline_id}
-            className="flex items-center justify-between gap-3 rounded bg-white border border-amber-200 px-3 py-2"
-          >
-            <div className="min-w-0">
-              <p className="font-mono text-xs text-gray-600 truncate">{p.pipeline_id}</p>
-              <p className="text-[10px] text-gray-400">
-                {p.status.replace(/_/g, " ")} · {p.current_step}
-              </p>
-            </div>
-            <div className="flex gap-2 flex-shrink-0">
-              <Link
-                href={`/pipelines/${p.pipeline_id}`}
-                className="text-xs text-blue-600 hover:underline"
-              >
-                View
-              </Link>
-              <button
-                type="button"
-                disabled={cancelling === p.pipeline_id}
-                onClick={() => void cancelPipeline(p.pipeline_id)}
-                className="rounded bg-red-600 px-2 py-0.5 text-xs text-white hover:bg-red-700 disabled:opacity-50"
-              >
-                {cancelling === p.pipeline_id ? "…" : "Cancel"}
-              </button>
-            </div>
-          </div>
-        ))}
+    <div className="flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3">
+      <div className="min-w-0">
+        <p className="font-mono text-xs font-medium text-gray-700 truncate">{branch.sprint_branch}</p>
+        <p className="text-[10px] text-gray-500 mt-0.5">
+          Failed at <span className="font-medium">{stepLabel}</span> · {failedAt}
+        </p>
       </div>
-      {cancelError && (
-        <p className="mt-2 text-xs text-red-600">{cancelError}</p>
-      )}
+      <div className="flex gap-2 flex-shrink-0">
+        <Link
+          href={`/pipelines/${branch.latest_pipeline_id}`}
+          className="text-xs text-blue-600 hover:underline"
+        >
+          View
+        </Link>
+        <button
+          type="button"
+          onClick={() => onResume(branch)}
+          className="rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 transition-colors"
+        >
+          Resume
+        </button>
+      </div>
     </div>
   );
 }
@@ -692,15 +694,29 @@ export default function ProjectDetailPage() {
   const { setCurrentProject } = useCurrentProject();
   const { data: project, isLoading, isError } = useProject(id);
   const { data: pipelines, isLive } = useProjectPipelines(id);
+  const { data: branches } = useProjectBranches(id);
+  const [resumeBranch, setResumeBranch] = useState<ProjectBranchSummary | null>(null);
 
   // Persist as current project whenever this page is visited
   useEffect(() => {
     setCurrentProject(id);
   }, [id, setCurrentProject]);
 
-  const openPipelines = (pipelines ?? []).filter((p) => OPEN_STATUSES.includes(p.status));
-  const activePipeline = openPipelines.length === 1 ? openPipelines[0] : null;
-  const hasDataIssue = openPipelines.length > 1;
+  const ACTIVE_STATUSES: PipelineStatus[] = [
+    "running",
+    "awaiting_approval",
+    "awaiting_pr_review",
+    "paused_takeover",
+  ];
+
+  // Active pipelines — used for the existing ActivePipelinePanel cards
+  const activePipelines = (pipelines ?? []).filter((p) => ACTIVE_STATUSES.includes(p.status));
+
+  // Failed branches — for resumption (UC2)
+  const failedBranches = (branches ?? []).filter((b) => b.status === "failed");
+
+  // Active branch summaries — for conflict detection in the start form
+  const activeBranchSummaries = (branches ?? []).filter((b) => ACTIVE_STATUSES.includes(b.status));
 
   if (isLoading) {
     return (
@@ -730,22 +746,41 @@ export default function ProjectDetailPage() {
         <LiveBadge active={isLive} />
       </div>
 
-      {/* Data issue warning */}
-      {hasDataIssue && (
-        <MultiPipelineWarning pipelines={openPipelines} projectId={id} />
+      {/* Active pipeline cards — one per active pipeline (UC1: multiple allowed) */}
+      {activePipelines.length > 0 && (
+        <div className="mb-2 flex flex-col gap-4">
+          {activePipelines.map((pipeline) => (
+            <ActivePipelinePanel key={pipeline.pipeline_id} pipeline={pipeline} projectId={id} />
+          ))}
+        </div>
       )}
 
-      {/* Active pipeline OR start new run */}
-      {!hasDataIssue && (
-        activePipeline ? (
-          <ActivePipelinePanel pipeline={activePipeline} projectId={id} />
-        ) : (
-          <StartRunPanel
-            projectId={id}
-            onCreated={(pid) => router.push(`/pipelines/${pid}`)}
-          />
-        )
+      {/* Failed branch cards — resumable (UC2) */}
+      {failedBranches.length > 0 && (
+        <div className="mb-6">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-2">
+            Failed Branches
+          </p>
+          <div className="flex flex-col gap-2">
+            {failedBranches.map((branch) => (
+              <FailedBranchCard
+                key={branch.sprint_branch}
+                branch={branch}
+                onResume={(b) => setResumeBranch(b)}
+              />
+            ))}
+          </div>
+        </div>
       )}
+
+      {/* Start new run — always visible */}
+      <StartRunPanel
+        projectId={id}
+        activeBranches={activeBranchSummaries}
+        resumeBranch={resumeBranch}
+        onClearResume={() => setResumeBranch(null)}
+        onCreated={(pid) => router.push(`/pipelines/${pid}`)}
+      />
 
       {/* Collapsed project metadata + agent prompt configuration */}
       <ProjectDetails project={project} projectId={id} />

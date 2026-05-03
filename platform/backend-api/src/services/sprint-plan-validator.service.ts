@@ -139,8 +139,11 @@ export class SprintPlanValidatorService {
       });
     }
 
-    // dependency_graph closure: keys + values must all be in tasks[].
-    for (const [k, deps] of Object.entries(plan.sprint_plan.dependency_graph)) {
+    // dependency_graph closure: task_ids + deps must all be in tasks[].
+    const depGraphMap = new Map(
+      plan.sprint_plan.dependency_graph.map((e) => [e.task_id, e.depends_on])
+    );
+    for (const [k, deps] of depGraphMap) {
       if (!taskIdsInPlan.has(k)) {
         errors.push({
           instance_path: `/sprint_plan/dependency_graph/${k}`,
@@ -162,7 +165,7 @@ export class SprintPlanValidatorService {
     }
 
     // dependency_graph acyclic check (DFS).
-    const cycle = this.findCycle(plan.sprint_plan.dependency_graph);
+    const cycle = this.findCycle(depGraphMap);
     if (cycle) {
       errors.push({
         instance_path: "/sprint_plan/dependency_graph",
@@ -246,16 +249,16 @@ export class SprintPlanValidatorService {
   }
 
   /** Returns a cycle path if found, else null. */
-  private findCycle(graph: Record<string, string[]>): string[] | null {
+  private findCycle(graph: Map<string, string[]>): string[] | null {
     const WHITE = 0, GRAY = 1, BLACK = 2;
     const color: Record<string, number> = {};
     const parent: Record<string, string | null> = {};
-    const allNodes = new Set<string>([...Object.keys(graph), ...Object.values(graph).flat()]);
+    const allNodes = new Set<string>([...graph.keys(), ...Array.from(graph.values()).flat()]);
     for (const n of allNodes) color[n] = WHITE;
 
     const dfs = (u: string): string[] | null => {
       color[u] = GRAY;
-      for (const v of graph[u] ?? []) {
+      for (const v of graph.get(u) ?? []) {
         if (color[v] === WHITE) {
           parent[v] = u;
           const c = dfs(v);

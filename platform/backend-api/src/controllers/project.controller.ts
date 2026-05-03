@@ -1,6 +1,7 @@
 import { NextFunction, Request, Response } from "express";
 import path from "path";
 import { projectService } from "../services/project.service";
+import { pipelineService } from "../services/pipeline.service";
 import { designInputGateService } from "../services/design-input-gate.service";
 import { HttpError } from "../utils/http-error";
 
@@ -184,6 +185,20 @@ export async function getProjectDesignArtifactContent(req: Request, res: Respons
     } else {
       res.status(200).type("text/plain").send(content);
     }
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function getProjectBranches(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const projectId = String(req.params.projectId ?? "");
+    if (!projectId) {
+      throw new HttpError(400, "PROJECT_ID_REQUIRED", "projectId path parameter is required");
+    }
+
+    const branches = await pipelineService.listBranchesByProject(projectId);
+    res.status(200).json(branches);
   } catch (error) {
     next(error);
   }

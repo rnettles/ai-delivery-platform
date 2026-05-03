@@ -37,7 +37,7 @@ export interface DataContract {
   name: string;
   kind: "request" | "response" | "entity" | "event" | "db_row" | "config";
   description?: string;
-  json_schema: Record<string, unknown>;
+  json_schema: string;
 }
 
 export interface SprintInvariant {
@@ -101,8 +101,8 @@ export interface RichSprintPlan {
   tasks: string[];
   data_contracts: DataContract[];
   invariants: SprintInvariant[];
-  /** Adjacency list: task_id -> [prerequisite task_ids]. Must be acyclic and closed (refs only listed task_ids). */
-  dependency_graph: Record<string, string[]>;
+  /** Adjacency list serialized as an array of edges. Each entry lists one task and its prerequisites. Must be acyclic and closed (refs only listed task_ids). */
+  dependency_graph: Array<{ task_id: string; depends_on: string[] }>;
   test_matrix: TestMatrixEntry[];
   validation_gates: ValidationGate[];
   definition_of_done: string[];

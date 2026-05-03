@@ -66,6 +66,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
     execution_mode?: string;
     description?: string;
     sprint_branch?: string;
+    prior_pipeline_id?: string;
   };
 
   const pipelineRes = await fetch(`${BACKEND}/pipeline`, {
@@ -75,7 +76,10 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
       entry_point: body.entry_point ?? "planner",
       execution_mode: body.execution_mode,
       sprint_branch: body.sprint_branch || undefined,
-      input: { description: body.description ?? "" },
+      input: {
+        description: body.description ?? "",
+        ...(body.prior_pipeline_id ? { prior_pipeline_id: body.prior_pipeline_id } : {}),
+      },
       metadata: { source: "api", slack_channel: channelId },
     }),
   });
