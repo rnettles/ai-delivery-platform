@@ -6,6 +6,7 @@ import { useProjectWork } from "@/hooks/useProjectWork";
 import { useProjectPipelines } from "@/hooks/useProjectPipelines";
 import { useProjectBranches } from "@/hooks/useProjectBranches";
 import { WorkStatusBadge } from "@/components/work/WorkStatusBadge";
+import { ArtifactViewer } from "@/components/pipeline/ArtifactViewer";
 import type { WorkPhase, WorkSprint, WorkTask } from "@/hooks/useProjectWork";
 import type { PipelineStatus, PipelineStatusChoice, ProjectBranchSummary } from "@/types";
 
@@ -39,16 +40,51 @@ function RawStatusChip({ status }: { status: string }) {
   return <span className={cls}>{rawStatusLabel(status)}</span>;
 }
 
+// ── Artifact viewer section ───────────────────────────────────────────────────
+// Inline collapsible panel that renders an artifact file via ArtifactViewer.
+
+function ArtifactSection({ pipelineId, path }: { pipelineId: string; path: string }) {
+  const [open, setOpen] = useState(false);
+  const filename = path.split("/").pop() ?? path;
+  return (
+    <div className="rounded border border-gray-200 bg-white overflow-hidden">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-500 hover:bg-gray-50 transition-colors"
+      >
+        <span className="text-gray-400">{open ? "▼" : "▶"}</span>
+        <span className="font-mono text-gray-600">{filename}</span>
+      </button>
+      {open && (
+        <div className="border-t border-gray-100 px-4 py-3 max-h-96 overflow-y-auto bg-white">
+          <ArtifactViewer pipelineId={pipelineId} path={path} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Task row ────────────────────────────────────────────────────────────────
 
-function TaskRow({ task }: { task: WorkTask }) {
+function TaskRow({ task, pipelineId }: { task: WorkTask; pipelineId?: string }) {
+  const effectivePid = task.pipeline_id ?? pipelineId;
   return (
     <div className="flex items-center justify-between gap-3 rounded border border-gray-100 bg-white px-3 py-2 text-sm">
       <div className="min-w-0 flex-1">
         <span className="font-mono text-xs text-gray-400 mr-2">{task.task_id}</span>
         <span className="text-gray-700">{task.label}</span>
       </div>
-      <WorkStatusBadge status={task.workStatus} />
+      <div className="flex items-center gap-2 flex-shrink-0">
+        {task.workStatus === "current" && effectivePid && (
+          <Link
+            href={`/pipelines/${effectivePid}`}
+            className="text-xs text-blue-600 hover:underline whitespace-nowrap"
+          >
+            View →
+          </Link>
+        )}
+        <WorkStatusBadge status={task.workStatus} />
+      </div>
     </div>
   );
 }
@@ -58,11 +94,14 @@ function TaskRow({ task }: { task: WorkTask }) {
 function SprintAccordion({
   sprint,
   defaultOpen,
+  fallbackPipelineId,
 }: {
   sprint: WorkSprint;
   defaultOpen: boolean;
+  fallbackPipelineId?: string;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const effectivePid = sprint.pipeline_id ?? fallbackPipelineId;
 
   return (
     <div className="rounded border border-gray-200 bg-gray-50 overflow-hidden">
@@ -81,6 +120,15 @@ function SprintAccordion({
           </span>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
+          {sprint.workStatus === "current" && effectivePid && (
+            <Link
+              href={`/pipelines/${effectivePid}`}
+              onClick={(e) => e.stopPropagation()}
+              className="text-xs text-blue-600 hover:underline whitespace-nowrap"
+            >
+              View →
+            </Link>
+          )}
           <RawStatusChip status={sprint.status} />
           <WorkStatusBadge status={sprint.workStatus} />
         </div>
@@ -91,7 +139,12 @@ function SprintAccordion({
           {sprint.tasks.length === 0 ? (
             <p className="text-xs text-gray-400 py-1">No tasks found.</p>
           ) : (
-            sprint.tasks.map((task) => <TaskRow key={task.task_id} task={task} />)
+            sprint.tasks.map((task) => (
+              <TaskRow key={task.task_id} task={task} pipelineId={effectivePid} />
+            ))
+          )}
+          {effectivePid && (
+            <ArtifactSection pipelineId={effectivePid} path={sprint.sprint_plan_path} />
           )}
         </div>
       )}
@@ -101,9 +154,10 @@ function SprintAccordion({
 
 // ── Phase accordion ──────────────────────────────────────────────────────────
 
-function PhaseAccordion({ phase }: { phase: WorkPhase }) {
+function PhaseAccordion({ phase, fallbackPipelineId }: { phase: WorkPhase; fallbackPipelineId?: string }) {
   const defaultOpen = phase.workStatus === "current";
   const [open, setOpen] = useState(defaultOpen);
+  const effectivePid = phase.pipeline_id ?? fallbackPipelineId;
 
   return (
     <div className="rounded-lg border border-gray-200 bg-white overflow-hidden shadow-sm">
@@ -127,6 +181,15 @@ function PhaseAccordion({ phase }: { phase: WorkPhase }) {
               {phase.sprints.length} sprint{phase.sprints.length !== 1 ? "s" : ""}
             </span>
           )}
+          {phase.workStatus === "current" && effectivePid && (
+            <Link
+              href={`/pipelines/${effectivePid}`}
+              onClick={(e) => e.stopPropagation()}
+              className="text-xs text-blue-600 hover:underline whitespace-nowrap"
+            >
+              View →
+            </Link>
+          )}
           <RawStatusChip status={phase.status} />
           <WorkStatusBadge status={phase.workStatus} />
         </div>
@@ -134,6 +197,9 @@ function PhaseAccordion({ phase }: { phase: WorkPhase }) {
 
       {open && (
         <div className="px-5 pb-4 pt-1 space-y-2 border-t border-gray-100 bg-gray-50">
+          {effectivePid && (
+            <ArtifactSection pipelineId={effectivePid} path={phase.artifact_path} />
+          )}
           {phase.sprints.length === 0 ? (
             <p className="text-sm text-gray-400 py-2">No sprints found for this phase.</p>
           ) : (
@@ -142,6 +208,7 @@ function PhaseAccordion({ phase }: { phase: WorkPhase }) {
                 key={sprint.sprint_id}
                 sprint={sprint}
                 defaultOpen={sprint.workStatus === "current"}
+                fallbackPipelineId={effectivePid}
               />
             ))
           )}
@@ -459,7 +526,11 @@ export default function WorkPage({ params }: PageProps) {
           {phases && phases.length > 0 && (
             <div className="space-y-3">
               {phases.map((phase) => (
-                <PhaseAccordion key={phase.phase_id} phase={phase} />
+                <PhaseAccordion
+                  key={phase.phase_id}
+                  phase={phase}
+                  fallbackPipelineId={activePipelineIds[0]}
+                />
               ))}
             </div>
           )}

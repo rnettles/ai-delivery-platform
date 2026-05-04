@@ -14,16 +14,22 @@ export type WorkStatus = "done" | "current" | "pending" | "approval" | "pr_revie
 
 export interface WorkTask extends StagedTaskRecord {
   workStatus: WorkStatus;
+  /** Pipeline that produced this task record (from feature branch artifact store). */
+  pipeline_id?: string;
 }
 
 export interface WorkSprint extends StagedSprintRecord {
   workStatus: WorkStatus;
   tasks: WorkTask[];
+  /** Pipeline that produced this sprint record (from feature branch artifact store). */
+  pipeline_id?: string;
 }
 
 export interface WorkPhase extends StagedPhaseRecord {
   workStatus: WorkStatus;
   sprints: WorkSprint[];
+  /** Pipeline associated with this phase (derived from child sprints). */
+  pipeline_id?: string;
 }
 
 function derivePhaseStatus(status: string): WorkStatus {
@@ -139,6 +145,26 @@ export function useProjectWork(projectId: string, activePipelineIds: string[] = 
     (q) => q.data?.tasks ?? []
   );
 
+  // Pipeline ID lookup maps: sprint_id → pipeline_id, task_id → pipeline_id.
+  // Used to annotate work items with the pipeline that produced them so the UI
+  // can render a direct link to the active pipeline and fetch artifacts.
+  const sprintPipelineIdMap = new Map<string, string>();
+  for (const q of pipelineSprintQueries) {
+    if (q.data) {
+      for (const s of q.data.sprints) {
+        sprintPipelineIdMap.set(s.sprint_id, q.data.pipeline_id);
+      }
+    }
+  }
+  const taskPipelineIdMap = new Map<string, string>();
+  for (const q of pipelineTaskQueries) {
+    if (q.data) {
+      for (const t of q.data.tasks) {
+        taskPipelineIdMap.set(t.task_id, q.data.pipeline_id);
+      }
+    }
+  }
+
   const isLoading = phasesQuery.isLoading || sprintsQuery.isLoading || tasksQuery.isLoading;
   const isError = phasesQuery.isError || sprintsQuery.isError || tasksQuery.isError;
   const error =
@@ -177,20 +203,24 @@ export function useProjectWork(projectId: string, activePipelineIds: string[] = 
             let markedCurrent = false;
 
             const tasks: WorkTask[] = sprintTasks.map((task) => {
+              const taskPid =
+                taskPipelineIdMap.get(task.task_id) ??
+                sprintPipelineIdMap.get(task.sprint_id);
               if (task.status === "done") {
-                return { ...task, workStatus: "done" as WorkStatus };
+                return { ...task, workStatus: "done" as WorkStatus, pipeline_id: taskPid };
               }
               if (isSprintActive && !markedCurrent) {
                 markedCurrent = true;
-                return { ...task, workStatus: "current" as WorkStatus };
+                return { ...task, workStatus: "current" as WorkStatus, pipeline_id: taskPid };
               }
-              return { ...task, workStatus: "pending" as WorkStatus };
+              return { ...task, workStatus: "pending" as WorkStatus, pipeline_id: taskPid };
             });
 
             return {
               ...sprint,
               workStatus: sprintWorkStatus,
               tasks,
+              pipeline_id: sprintPipelineIdMap.get(sprint.sprint_id),
             };
           });
 
@@ -198,6 +228,7 @@ export function useProjectWork(projectId: string, activePipelineIds: string[] = 
             ...phase,
             workStatus: derivePhaseStatus(phase.status),
             sprints,
+            pipeline_id: sprints.find((s) => s.pipeline_id)?.pipeline_id,
           };
         })
       : undefined;
