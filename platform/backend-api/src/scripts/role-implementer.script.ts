@@ -312,6 +312,25 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       sprintArtifact = sprintArtifact ?? repoSprintArtifact;
     }
 
+    // Fallback: load brief + current_task from the repo's active/ slot when not in previous_artifacts.
+    // This handles continuation pipelines where prior_pipeline_id chains are shallow (the sprint-controller
+    // that wrote these files may be 2+ hops back, beyond what the controller merges).
+    const activeSlot = path.join(clonePath ?? project.clone_path, "project_work", "ai_project_tasks", "active");
+    if (!briefArtifact) {
+      try {
+        const content = await fs.readFile(path.join(activeSlot, "AI_IMPLEMENTATION_BRIEF.md"), "utf-8");
+        briefArtifact = { path: path.join(activeSlot, "AI_IMPLEMENTATION_BRIEF.md"), content };
+        context.log("Implementer: loaded brief from repo active slot (prior_pipeline chain fallback)");
+      } catch { /* not present */ }
+    }
+    if (!taskArtifact) {
+      try {
+        const content = await fs.readFile(path.join(activeSlot, "current_task.json"), "utf-8");
+        taskArtifact = { path: path.join(activeSlot, "current_task.json"), content };
+        context.log("Implementer: loaded current_task from repo active slot (prior_pipeline chain fallback)");
+      } catch { /* not present */ }
+    }
+
     if (!briefArtifact || !taskArtifact || !sprintArtifact) {
       throw new HttpError(
         409,
