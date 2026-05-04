@@ -507,6 +507,15 @@ export class SprintControllerScript implements Script<Record<string, unknown>, u
       );
       await fs.writeFile(path.join(repoBase, activeDir, "sprint_state.json"), activePointer, "utf-8");
 
+      // Persist brief and current_task to active/ slot so continuation pipelines can load them
+      // without needing the original sprint-controller pipeline in their prior_pipeline_id chain.
+      await fs.writeFile(path.join(repoBase, activeDir, "AI_IMPLEMENTATION_BRIEF.md"), briefContent, "utf-8");
+      await fs.writeFile(
+        path.join(repoBase, activeDir, "current_task.json"),
+        JSON.stringify(currentTask, null, 2),
+        "utf-8"
+      );
+
       await projectGitService.commitAll(
         project,
         sprintBranch,
