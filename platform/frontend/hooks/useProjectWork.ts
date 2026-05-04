@@ -13,7 +13,7 @@ import type {
 export type WorkStatus = "done" | "current" | "pending" | "approval" | "pr_review";
 
 export interface WorkTask extends StagedTaskRecord {
-  workStatus: "done" | "pending";
+  workStatus: WorkStatus;
 }
 
 export interface WorkSprint extends StagedSprintRecord {
@@ -169,14 +169,27 @@ export function useProjectWork(projectId: string, activePipelineIds: string[] = 
               (t) => t.sprint_id === sprint.sprint_id
             );
 
-            const tasks: WorkTask[] = sprintTasks.map((task) => ({
-              ...task,
-              workStatus: task.status === "done" ? "done" : "pending",
-            }));
+            const sprintWorkStatus = deriveSprintStatus(sprint.status);
+            // If the sprint is active and there is a pipeline running, the first
+            // pending task is the one currently being executed (sequential model).
+            const isSprintActive =
+              sprintWorkStatus === "current" && activePipelineIds.length > 0;
+            let markedCurrent = false;
+
+            const tasks: WorkTask[] = sprintTasks.map((task) => {
+              if (task.status === "done") {
+                return { ...task, workStatus: "done" as WorkStatus };
+              }
+              if (isSprintActive && !markedCurrent) {
+                markedCurrent = true;
+                return { ...task, workStatus: "current" as WorkStatus };
+              }
+              return { ...task, workStatus: "pending" as WorkStatus };
+            });
 
             return {
               ...sprint,
-              workStatus: deriveSprintStatus(sprint.status),
+              workStatus: sprintWorkStatus,
               tasks,
             };
           });
