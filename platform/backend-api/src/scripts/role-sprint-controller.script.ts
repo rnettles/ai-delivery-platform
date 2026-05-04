@@ -1140,8 +1140,59 @@ ${richDetailSections}
       );
     }
 
-    // Validate working_directory if present
-    const workDir = contract.commands?.working_directory;
+    // Validate working_directory if present; auto-detect when absent but root has no package.json
+    let workDir = contract.commands?.working_directory;
+
+    if (!workDir) {
+      // Check if there is a package.json at the repo root. If not, scan one level of
+      // subdirectories for a package.json and auto-set working_directory so gate commands
+      // and file writes use the correct base path.
+      let rootPkgExists = false;
+      try {
+        await fs.access(path.join(repoBase, "package.json"));
+        rootPkgExists = true;
+      } catch {
+        // no root package.json
+      }
+
+      if (!rootPkgExists) {
+        const entries = await fs.readdir(repoBase, { withFileTypes: true });
+        const candidates: string[] = [];
+        for (const entry of entries) {
+          if (!entry.isDirectory()) continue;
+          if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
+          try {
+            await fs.access(path.join(repoBase, entry.name, "package.json"));
+            candidates.push(entry.name);
+          } catch {
+            // no package.json in this subdir
+          }
+        }
+
+        if (candidates.length === 1) {
+          workDir = candidates[0];
+          contract.commands.working_directory = workDir;
+          context.notify(
+            `⚠️ Contract working_directory was not set but no package.json found at repo root. ` +
+            `Auto-detected \`${workDir}\` as working_directory. ` +
+            `Update the sprint plan to set \`working_directory: "${workDir}"\` explicitly to suppress this warning.`
+          );
+        } else if (candidates.length > 1) {
+          context.notify(
+            `⚠️ Contract working_directory not set and no root package.json found. ` +
+            `Multiple subdirectories contain package.json: ${candidates.map((c) => `\`${c}\``).join(", ")}. ` +
+            `Gate commands will run from repo root and will fail. ` +
+            `Update the sprint plan to set \`working_directory\` explicitly.`
+          );
+        } else {
+          context.notify(
+            `⚠️ Contract working_directory not set and no package.json found at root or in any subdirectory. ` +
+            `Gate commands will fail. Update the sprint plan.`
+          );
+        }
+      }
+    }
+
     if (workDir) {
       const absWorkDir = path.join(repoBase, workDir);
       let workDirExists = false;
