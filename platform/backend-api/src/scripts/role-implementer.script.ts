@@ -446,6 +446,69 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
         allowed_paths: executionContract.scope.allowed_paths.length,
         forbidden: executionContract.scope.forbidden_actions.length,
       });
+
+      // Runtime fallback: if working_directory is absent and there is no package.json at
+      // the repo root, auto-detect from one level of subdirectories. Handles contracts
+      // staged before the sprint-controller auto-detect was added (2026-05-03).
+      if (clonePath && !executionContract.commands.working_directory) {
+        let rootPkgExists = false;
+        try {
+          await fs.access(path.join(clonePath, "package.json"));
+          rootPkgExists = true;
+        } catch { /* no root package.json */ }
+
+        if (!rootPkgExists) {
+          const entries = await fs.readdir(clonePath, { withFileTypes: true });
+          const candidates: string[] = [];
+          for (const entry of entries) {
+            if (!entry.isDirectory() || entry.name.startsWith(".") || entry.name === "node_modules") continue;
+            try {
+              await fs.access(path.join(clonePath, entry.name, "package.json"));
+              candidates.push(entry.name);
+            } catch { /* no package.json */ }
+          }
+          if (candidates.length === 1) {
+            executionContract.commands.working_directory = candidates[0];
+            context.notify(
+              `⚠️ Contract missing working_directory — auto-detected \`${candidates[0]}\` (no root package.json). ` +
+              `Re-stage the task to make this permanent.`
+            );
+          }
+        }
+      }
+    }
+
+    // Auto-install: if the contract declares a working_directory + install_command and node_modules
+    // is absent, run the install command before the agent loop so gate commands (lint, tsc) can
+    // execute. This is deterministic — no LLM involvement. node_modules is gitignored and will
+    // always be absent on a fresh clone or a machine that hasn't installed deps yet.
+    if (clonePath && executionContract?.commands?.working_directory && executionContract?.dependencies?.install_command) {
+      const workDir = path.join(clonePath, executionContract.commands.working_directory);
+      const nodeModulesPath = path.join(workDir, "node_modules");
+      let nodeModulesMissing = false;
+      try {
+        await fs.access(nodeModulesPath);
+      } catch {
+        nodeModulesMissing = true;
+      }
+      if (nodeModulesMissing) {
+        context.notify(`📦 Installing dependencies in \`${executionContract.commands.working_directory}\`...`);
+        try {
+          await execAsync(executionContract.dependencies.install_command, {
+            cwd: workDir,
+            timeout: 180_000,
+          });
+          context.notify(`✅ Dependencies installed`);
+          context.log("Implementer: auto-installed dependencies", {
+            working_directory: executionContract.commands.working_directory,
+            install_command: executionContract.dependencies.install_command,
+          });
+        } catch (installErr) {
+          // Non-fatal: log and continue — gate commands will surface the error naturally.
+          context.log("Implementer: auto-install failed (non-fatal)", { error: String(installErr) });
+          context.notify(`⚠️ Dependency install failed — gate commands may fail. Check \`${executionContract.commands.working_directory}/package.json\`.`);
+        }
+      }
     }
 
     const repoNote = clonePath
@@ -710,7 +773,21 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
         // Block finish while any gate is still failing (using latest result per command so retried
         // gates that now pass do not count as failures). Returning an error string keeps the agent
         // in the loop to fix remaining failures rather than handing off broken work.
-        const openFailures = latestResultPerCommand(gateResults).filter((r) => r.exit_code !== 0);
+        // Respect execution contract success_criteria: if a criterion is false, a failing gate for
+        // that command is not a blocker (e.g. typecheck_pass=false means pre-existing TS errors
+        // outside scope do not prevent the task from completing).
+        const isRequired = (command: string): boolean => {
+          if (!executionContract?.success_criteria) return true;
+          const sc = executionContract.success_criteria;
+          const c = command.trim();
+          if (c === executionContract.commands.lint.trim()) return sc.lint_pass;
+          if (c === executionContract.commands.typecheck.trim()) return sc.typecheck_pass;
+          if (c === executionContract.commands.test.trim()) return sc.all_tests_pass;
+          return true;
+        };
+        const openFailures = latestResultPerCommand(gateResults).filter(
+          (r) => r.exit_code !== 0 && isRequired(r.command)
+        );
         if (openFailures.length > 0) {
           return (
             `Error: ${openFailures.length} gate(s) still failing. Fix all gate failures before calling finish.\n` +
@@ -720,9 +797,9 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
         }
 
         // Phase 4 (ADR-033): Execution Contract pre-finish gate.
-        // When a contract is present the latest result per command must contain
-        // exit 0 for each of {lint, typecheck, test}. This catches the case
-        // where the agent calls finish without ever invoking a required gate.
+        // When a contract is present, gates required by success_criteria must have passed.
+        // Gates with success_criteria=false (e.g. typecheck_pass=false) are skipped — the
+        // contract author declared they are not required for this task.
         if (executionContract) {
           const preFinish = executionContractEnforcer.checkPreFinishGates(
             executionContract,
