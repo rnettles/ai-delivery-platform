@@ -21,6 +21,8 @@ interface TurnLogPanelProps {
   pipelineId: string;
   /** True when the implementer step is currently running — enables 2s polling. */
   isLive: boolean;
+  /** ISO timestamp of when the current step started. Used to suppress stale turn logs from prior runs. */
+  stepStartedAt?: string;
 }
 
 async function fetchTurnLog(pipelineId: string): Promise<TurnLogData> {
@@ -203,7 +205,7 @@ function TurnLogModal({
 
 // ── TurnLogPanel ──────────────────────────────────────────────────────────────
 
-export function TurnLogPanel({ pipelineId, isLive }: TurnLogPanelProps) {
+export function TurnLogPanel({ pipelineId, isLive, stepStartedAt }: TurnLogPanelProps) {
   const [expandedTurn, setExpandedTurn] = useState<number | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const listRef = useRef<HTMLOListElement>(null);
@@ -227,8 +229,32 @@ export function TurnLogPanel({ pipelineId, isLive }: TurnLogPanelProps) {
   }, [isLive, data?.turn_count]);
 
   if (isError || !data) {
-    // Silently absent — turn_log.json may not exist yet (first few turns)
+    // Silently absent — turn_log.json may not exist yet (first few turns).
+    // If the step is live and we have a start time, show a starting indicator so the
+    // operator knows execution has begun rather than seeing nothing.
+    if (isLive && stepStartedAt) {
+      return (
+        <div className="mt-3 rounded border border-gray-100 bg-gray-50 px-3 py-2">
+          <span className="inline-block h-2 w-2 flex-shrink-0 rounded-full bg-blue-500 animate-pulse mr-2" />
+          <span className="text-xs text-gray-400">Starting… waiting for first turn</span>
+        </div>
+      );
+    }
     return null;
+  }
+
+  // Suppress stale turns from a prior run that completed before this step started.
+  // This prevents the old turn log from briefly rendering at the top of a retry.
+  if (isLive && stepStartedAt && data.turns.length > 0) {
+    const lastTurnAt = data.turns[data.turns.length - 1]?.timestamp;
+    if (lastTurnAt && new Date(lastTurnAt) < new Date(stepStartedAt)) {
+      return (
+        <div className="mt-3 rounded border border-gray-100 bg-gray-50 px-3 py-2">
+          <span className="inline-block h-2 w-2 flex-shrink-0 rounded-full bg-blue-500 animate-pulse mr-2" />
+          <span className="text-xs text-gray-400">Starting… waiting for first turn</span>
+        </div>
+      );
+    }
   }
 
   const stopReasonClass = STOP_REASON_STYLE[data.stop_reason] ?? "text-gray-500";

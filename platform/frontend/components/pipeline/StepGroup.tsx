@@ -197,7 +197,7 @@ export function StepGroup({ group, isFirst: _isFirst, isActive, pipelineId, onAr
             />
             <GateCard record={group.record} />
             {group.role === "implementer" && (
-              <TurnLogPanel pipelineId={pipelineId} isLive={isActive} />
+              <TurnLogPanel pipelineId={pipelineId} isLive={isActive} stepStartedAt={group.record.started_at} />
             )}
           </div>
         )}
