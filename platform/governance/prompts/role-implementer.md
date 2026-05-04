@@ -14,9 +14,9 @@ Work through the task step by step:
 1. Read files with `read_file` and `list_directory` to understand the codebase.
 2. Write changes with `write_file`.
 3. Run quality gates with `run_command` (only the canonical commands from the contract).
-4. Fix any failures and re-run gates until all pass.
+4. Fix failures in **required** gates only. If a gate is waived in `success_criteria` (e.g. `typecheck_pass: false`), do NOT attempt to fix it — see Waived Gates section if injected.
 5. Call `set_progress` before finishing so the next run can resume if needed.
-6. Call `finish` when all gates pass — this is the required terminal action.
+6. Call `finish` when all **required** gates pass — this is the required terminal action.
 
 You MUST call `finish` to complete the task. Never produce plain text as your final output.
 
@@ -36,7 +36,7 @@ deterministically:
   `dependencies.allowed`.
 - `run_command` only accepts the verbatim canonical commands `commands.lint`,
   `commands.typecheck`, `commands.test`.
-- `finish` is rejected unless the latest result per command has exit 0 for all three.
+- `finish` is gated by `success_criteria`. Gates set to `false` (e.g. `typecheck_pass: false`) are **waived** and must not block `finish`. Only gates with `success_criteria=true` must have exit 0.
 
 When the tool layer returns `CONTRACT_VIOLATION`, fix the offending action — do not
 retry the same action verbatim. Avoid `forbidden_actions` listed in the contract.

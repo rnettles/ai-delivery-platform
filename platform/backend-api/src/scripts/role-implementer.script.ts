@@ -534,6 +534,30 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       ? `\n\nThe repository is available for you to read and write. Use the provided tools to explore the codebase and implement the task. When you are done, call the \`finish\` tool.`
       : `\n\nNo repository is available. Describe what you would implement in the finish tool's summary.`;
 
+    // Inject a waived-gates notice when success_criteria explicitly opts out of a gate.
+    // This surfaces the contract intent to the LLM so it does not waste turns trying
+    // to fix failures in gates that the operator has declared out-of-scope.
+    if (executionContract?.success_criteria) {
+      const sc = executionContract.success_criteria;
+      const waived: string[] = [];
+      if (!sc.lint_pass) waived.push(`\`${executionContract.commands.lint}\` (lint_pass=false)`);
+      if (!sc.typecheck_pass) waived.push(`\`${executionContract.commands.typecheck}\` (typecheck_pass=false)`);
+      if (!sc.all_tests_pass) waived.push(`\`${executionContract.commands.test}\` (all_tests_pass=false)`);
+      if (waived.length > 0) {
+        const notice = [
+          "# Waived Gates (from Execution Contract success_criteria)",
+          "",
+          "The following gate(s) are **explicitly waived** by the operator via `success_criteria` in the contract.",
+          "You **MUST NOT** attempt to fix failures in these commands — they are pre-existing or out-of-scope.",
+          "Run them once to confirm they run, then call `finish` regardless of their exit code.",
+          "",
+          ...waived.map((g) => `- ${g} — waived, do not fix`),
+        ].join("\n");
+        contextParts.push(notice);
+        context.log("Implementer: injected waived-gates notice", { waived });
+      }
+    }
+
     const userContent =
       contextParts.length > 0
         ? `${contextParts.join("\n\n---\n\n")}${repoNote}`
@@ -965,12 +989,18 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
           { gate_results: gateResults, written_files: writtenFiles, turn_count: turnLog.length, turn_log_path: turnLogArtifactPath }
         );
       }
+      const failingAtClose = latestResultPerCommand(gateResults).filter((r) => r.exit_code !== 0);
+      const lastTool = turnLog.at(-1)?.tool ?? "none";
+      const finishNotCalledDetail = failingAtClose.length > 0
+        ? `Last tool called: \`${lastTool}\`. Gate(s) still failing when loop ended: ` +
+          failingAtClose.map((g) => `\`${g.command}\` (exit ${g.exit_code})`).join(", ") +
+          ". Check whether these are waived in the contract's success_criteria before retrying."
+        : `Last tool called: \`${lastTool}\`. All gates passed but finish was not called — ` +
+          "the LLM produced a text response instead of a tool call. Retry to continue.";
       throw new HttpError(
         422,
         "FINISH_NOT_CALLED",
-        `Implementer agent loop terminated after ${turnLog.length} turn(s) without calling the finish tool. ` +
-          "Work has been checkpointed to the branch. " +
-          "Inspect the agent trace, resolve any gate failures, and rerun.",
+        `Implementer stopped after ${turnLog.length} turn(s) without calling finish. ${finishNotCalledDetail}`,
         { gate_results: gateResults, written_files: writtenFiles, turn_count: turnLog.length, turn_log_path: turnLogArtifactPath }
       );
     }
