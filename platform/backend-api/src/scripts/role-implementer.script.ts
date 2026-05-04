@@ -1004,15 +1004,63 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
 
     // Phase 4.3: Safety-net gate check (defense-in-depth; the in-loop finish guard is the primary
     // enforcement). Uses latest result per command so retried gates that now pass do not block handoff.
-    const failedGates = latestResultPerCommand(gateResults).filter((r) => r.exit_code !== 0);
+    // Applies the same success_criteria waiver as the in-loop finish guard — a gate with
+    // success_criteria=false (e.g. typecheck_pass=false) must not block handoff here either.
+    const isGateRequired = (command: string): boolean => {
+      if (!executionContract?.success_criteria) return true;
+      const sc = executionContract.success_criteria;
+      const c = command.trim();
+      if (c === executionContract.commands.lint?.trim()) return sc.lint_pass;
+      if (c === executionContract.commands.typecheck?.trim()) return sc.typecheck_pass;
+      if (c === executionContract.commands.test?.trim()) return sc.all_tests_pass;
+      return true;
+    };
+    const failedGates = latestResultPerCommand(gateResults).filter(
+      (r) => r.exit_code !== 0 && isGateRequired(r.command)
+    );
     if (failedGates.length > 0) {
       if (project && sprintBranch) {
         await this.checkpointCommitOnFailure(project, sprintBranch, gateResults, writtenFiles, "GATE_FAILURE", context, resolvedTaskId, resolvedSprintId);
       }
+
+      // Build operator-actionable message: include gate name and first 3 lines of output.
+      const gateDetail = failedGates
+        .map((g) => {
+          const outputLines = (g.stdout + g.stderr).trim().split("\n").slice(0, 3).join(" | ");
+          return `  ✗ \`${g.command}\` (exit ${g.exit_code})${outputLines ? ": " + outputLines : ""}`;
+        })
+        .join("\n");
+
+      // Write a blocked_finish_attempt record to progress.json so the next run's context
+      // envelope surfaces this as a directive, not just a re-discovered blocker.
+      try {
+        const lastProgressSnapshot = lastProgress ?? {
+          current_focus: "unknown",
+          open_todos: [],
+          blockers: [],
+          planned_next_action: "",
+          recorded_at: new Date().toISOString(),
+        };
+        const blockedFinishRecord = {
+          ...lastProgressSnapshot,
+          blocked_finish_attempt: {
+            blocked_at: new Date().toISOString(),
+            reason: "GATE_FAILURE",
+            failed_gates: failedGates.map((g) => ({
+              command: g.command,
+              exit_code: g.exit_code,
+              output_snippet: (g.stdout + g.stderr).trim().split("\n").slice(0, 5).join("\n"),
+            })),
+            llm_rationale: lastProgressSnapshot.current_focus,
+          },
+        };
+        await artifactService.write(pipelineId, "progress.json", JSON.stringify(blockedFinishRecord, null, 2));
+      } catch { /* best effort — never mask the primary error */ }
+
       throw new HttpError(
         422,
         "GATE_FAILURE",
-        `${failedGates.length} gate(s) failed. Handoff blocked until all mandatory gates pass.`,
+        `${failedGates.length} gate(s) failed. Fix before handoff:\n${gateDetail}`,
         { failed_gates: failedGates.map((g) => ({ command: g.command, exit_code: g.exit_code })) }
       );
     }
@@ -1446,6 +1494,27 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       if (p.blockers && p.blockers.length > 0) {
         lines.push("", "**Blockers:**");
         for (const b of p.blockers) lines.push(`- ${b}`);
+      }
+      // Surface blocked_finish_attempt as a prominent directive so the next run
+      // knows it already attempted finish and was blocked — and must not repeat the same call.
+      const pAny = p as Record<string, unknown>;
+      if (pAny["blocked_finish_attempt"]) {
+        const bfa = pAny["blocked_finish_attempt"] as {
+          blocked_at?: string;
+          failed_gates?: Array<{ command: string; exit_code: number; output_snippet?: string }>;
+          llm_rationale?: string;
+        };
+        lines.push("", "**⛔ Prior run attempted `finish` but was blocked by gate failures:**");
+        if (bfa.blocked_at) lines.push(`> Blocked at: ${bfa.blocked_at}`);
+        if (bfa.llm_rationale) lines.push(`> Your stated focus when calling finish: "${bfa.llm_rationale}"`);
+        if (bfa.failed_gates && bfa.failed_gates.length > 0) {
+          lines.push("", "Failing gates:");
+          for (const g of bfa.failed_gates) {
+            lines.push(`- \`${g.command}\` (exit ${g.exit_code})`);
+            if (g.output_snippet) lines.push(`  \`\`\`\n  ${g.output_snippet.split("\n").join("\n  ")}\n  \`\`\``);
+          }
+        }
+        lines.push("", "**Directive:** You must fix the failing gate(s) or confirm they are waived by the execution contract's `success_criteria` before calling `finish` again. Do not call `finish` with the same failures unresolved.");
       }
       return lines.length > 0 ? lines.join("\n") : null;
     } catch {
