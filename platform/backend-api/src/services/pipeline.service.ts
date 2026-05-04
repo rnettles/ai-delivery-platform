@@ -1189,6 +1189,7 @@ export class PipelineService {
       execution_id: undefined,
       artifact_paths: [],
       gate_outcome: null,
+      error_message: undefined,
     };
 
     // Resume pipeline execution (system takes control, not the operator)
