@@ -1100,6 +1100,23 @@ export class PipelineService {
       }
     }
 
+    // Implementer close-out: when the implementer completes and a verifier step already passed
+    // in this pipeline, this is the post-verification close-out hand-back — route directly to
+    // sprint-controller for task close-out, skipping a redundant verifier re-run.
+    // This mirrors the frontend's impl-closeout classification (verifier(complete) → implementer).
+    if (role === "implementer") {
+      const verifierAlreadyPassed = steps.some(
+        (s) => s.role === "verifier" && s.status === "complete"
+      );
+      if (verifierAlreadyPassed) {
+        logger.info("Implementer close-out complete — routing to sprint-controller for task close-out", {
+          pipeline_id: run.pipeline_id,
+        });
+        steps.push(this.newRunningStep("sprint-controller", now));
+        return this.save(run, { current_step: "sprint-controller", status: "running", steps });
+      }
+    }
+
     // Auto-advance
     if (nextStep === "complete") {
       return this.saveAndMaybeCleanup(run, { current_step: "complete", status: "complete", steps });
