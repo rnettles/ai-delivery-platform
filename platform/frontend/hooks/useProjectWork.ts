@@ -86,6 +86,13 @@ function mergeById<T>(keyFn: (item: T) => string, base: T[], ...extras: T[][]): 
   return Array.from(map.values());
 }
 
+/** Normalize a phase ID for comparison: lowercase, hyphens → underscores.
+ *  Phase plan filenames produce "ph_ui_001" while sprint plan Phase: fields
+ *  produce "PH-UI-001"; this makes them match. */
+function normalizePhaseId(id: string): string {
+  return id.toLowerCase().replace(/-/g, "_");
+}
+
 export function useProjectWork(projectId: string, activePipelineIds: string[] = []) {
   const phasesQuery = useQuery<RepoStagedPhasesResult>({
     queryKey: ["project-work-phases", projectId],
@@ -146,8 +153,9 @@ export function useProjectWork(projectId: string, activePipelineIds: string[] = 
             sprintsQuery.data.sprints,
             pipelineSprints
           );
+          const normalizedPhaseId = normalizePhaseId(phase.phase_id);
           const phaseSprints = allSprints.filter(
-            (s) => s.phase_id === phase.phase_id
+            (s) => s.phase_id != null && normalizePhaseId(s.phase_id) === normalizedPhaseId
           );
 
           const allTasks = mergeById(
