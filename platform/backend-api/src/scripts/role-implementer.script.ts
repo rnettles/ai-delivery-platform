@@ -312,23 +312,25 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       sprintArtifact = sprintArtifact ?? repoSprintArtifact;
     }
 
-    // Fallback: load brief + current_task from the repo's active/ slot when not in previous_artifacts.
-    // This handles continuation pipelines where prior_pipeline_id chains are shallow (the sprint-controller
-    // that wrote these files may be 2+ hops back, beyond what the controller merges).
+    // Always prefer the repo's active/ slot for brief + task — it is the authoritative source
+    // written by sprint-controller at staging time. previous_artifacts may contain stale contracts
+    // from earlier pipeline chain hops (e.g. a prior sprint-controller run with different allowed_paths).
     const activeSlot = path.join(clonePath ?? project.clone_path, "project_work", "ai_project_tasks", "active");
-    if (!briefArtifact) {
-      try {
-        const content = await fs.readFile(path.join(activeSlot, "AI_IMPLEMENTATION_BRIEF.md"), "utf-8");
-        briefArtifact = { path: path.join(activeSlot, "AI_IMPLEMENTATION_BRIEF.md"), content };
-        context.log("Implementer: loaded brief from repo active slot (prior_pipeline chain fallback)");
-      } catch { /* not present */ }
+    try {
+      const content = await fs.readFile(path.join(activeSlot, "AI_IMPLEMENTATION_BRIEF.md"), "utf-8");
+      briefArtifact = { path: path.join(activeSlot, "AI_IMPLEMENTATION_BRIEF.md"), content };
+      context.log("Implementer: loaded brief from repo active slot (authoritative)");
+    } catch {
+      // active/ slot not present — keep previous_artifacts version (may be null)
+      context.log("Implementer: AI_IMPLEMENTATION_BRIEF.md not in active slot — using previous_artifacts version");
     }
-    if (!taskArtifact) {
-      try {
-        const content = await fs.readFile(path.join(activeSlot, "current_task.json"), "utf-8");
-        taskArtifact = { path: path.join(activeSlot, "current_task.json"), content };
-        context.log("Implementer: loaded current_task from repo active slot (prior_pipeline chain fallback)");
-      } catch { /* not present */ }
+    try {
+      const content = await fs.readFile(path.join(activeSlot, "current_task.json"), "utf-8");
+      taskArtifact = { path: path.join(activeSlot, "current_task.json"), content };
+      context.log("Implementer: loaded current_task from repo active slot (authoritative)");
+    } catch {
+      // active/ slot not present — keep previous_artifacts version (may be null)
+      context.log("Implementer: current_task.json not in active slot — using previous_artifacts version");
     }
 
     if (!briefArtifact || !taskArtifact || !sprintArtifact) {
@@ -585,6 +587,10 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       recorded_at: string;
     } | null = null;
 
+    /** Consecutive set_progress calls without a productive action — triggers a nudge after limit. */
+    let consecutiveSetProgressCount = 0;
+    const CONSECUTIVE_SET_PROGRESS_LIMIT = 2;
+
     /** Per-turn log for diagnostics — one entry per toolExecutor call. */
     let turnCounter = 0;
     const turnLog: {
@@ -626,6 +632,7 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       }
 
       if (name === "write_file") {
+        consecutiveSetProgressCount = 0; // productive action
         const relPath = String(args["path"] ?? "");
         const content = String(args["content"] ?? "");
         if (!clonePath) return "Error: no repository available";
@@ -701,6 +708,7 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
       }
 
       if (name === "run_command") {
+        consecutiveSetProgressCount = 0; // productive action
         const command = String(args["command"] ?? "").trim();
         if (!command) return "Error: command is required";
         if (!clonePath) return "Error: no repository available";
@@ -787,6 +795,7 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
           return "Error: current_focus and planned_next_action are required";
         }
         lastProgress = snapshot;
+        consecutiveSetProgressCount++;
         try {
           await persistProgress(snapshot);
           context.log("Implementer: set_progress recorded", {
@@ -794,7 +803,16 @@ export class ImplementerScript implements Script<Record<string, unknown>, unknow
             todos: snapshot.open_todos.length,
             blockers: snapshot.blockers.length,
           });
-          return "OK: progress recorded";
+          let result = "OK: progress recorded";
+          if (consecutiveSetProgressCount >= CONSECUTIVE_SET_PROGRESS_LIMIT) {
+            result +=
+              `\n\n⚠️ NUDGE: You have called set_progress ${consecutiveSetProgressCount} times in a row without ` +
+              "taking a productive action. set_progress is for bookkeeping only — it does NOT advance the task. " +
+              "You MUST now either: (a) call write_file to implement the next todo, " +
+              "(b) call run_command to run a required gate, or (c) call finish if all work is complete. " +
+              "Do NOT call set_progress again until you have taken a productive action.";
+          }
+          return result;
         } catch (err) {
           return `Error persisting progress: ${String(err)}`;
         }
