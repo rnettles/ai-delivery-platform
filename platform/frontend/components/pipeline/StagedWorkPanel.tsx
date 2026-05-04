@@ -118,8 +118,8 @@ export function StagedWorkPanel({ pipelineId, onArtifactSelect, isLive }: Staged
   const taskCount = tasksQuery.data?.tasks.length ?? 0;
   const totalCount = phaseCount + sprintCount + taskCount;
 
-  // Auto-open on mount; start open so the panel is immediately visible.
-  const [open, setOpen] = useState(true);
+  // Start collapsed; user can expand when needed.
+  const [open, setOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("phases");
   const [tabAutoSelected, setTabAutoSelected] = useState(false);
 

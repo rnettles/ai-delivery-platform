@@ -206,7 +206,7 @@ function TurnLogModal({
 export function TurnLogPanel({ pipelineId, isLive }: TurnLogPanelProps) {
   const [expandedTurn, setExpandedTurn] = useState<number | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLOListElement>(null);
 
   const handleClose = useCallback(() => setModalOpen(false), []);
 
@@ -218,10 +218,11 @@ export function TurnLogPanel({ pipelineId, isLive }: TurnLogPanelProps) {
     retry: false,
   });
 
-  // Auto-scroll to bottom when live and new turns arrive
+  // Auto-scroll the turn list to bottom when live and new turns arrive.
+  // Uses scrollTop to stay within the panel — does not move the page scroll position.
   useEffect(() => {
-    if (isLive && bottomRef.current) {
-      bottomRef.current.scrollIntoView({ behavior: "smooth" });
+    if (isLive && listRef.current) {
+      listRef.current.scrollTop = listRef.current.scrollHeight;
     }
   }, [isLive, data?.turn_count]);
 
@@ -259,7 +260,7 @@ export function TurnLogPanel({ pipelineId, isLive }: TurnLogPanelProps) {
         </div>
 
         {/* Compact turn feed */}
-        <ol className="max-h-48 overflow-y-auto divide-y divide-gray-100">
+        <ol ref={listRef} className="max-h-48 overflow-y-auto divide-y divide-gray-100">
           {data.turns.map((entry) => (
             <TurnRow
               key={entry.turn}
@@ -269,8 +270,6 @@ export function TurnLogPanel({ pipelineId, isLive }: TurnLogPanelProps) {
             />
           ))}
         </ol>
-
-        <div ref={bottomRef} />
       </div>
 
       {modalOpen && (
