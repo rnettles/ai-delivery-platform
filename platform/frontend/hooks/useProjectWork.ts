@@ -1,8 +1,10 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueries } from "@tanstack/react-query";
 import type {
   RepoStagedPhasesResult,
   RepoStagedSprintsResult,
   RepoStagedTasksResult,
+  StagedSprintsResult,
+  StagedTasksResult,
   StagedPhaseRecord,
   StagedSprintRecord,
   StagedTaskRecord,
@@ -60,7 +62,31 @@ async function fetchProjectTasks(projectId: string): Promise<RepoStagedTasksResu
   return res.json() as Promise<RepoStagedTasksResult>;
 }
 
-export function useProjectWork(projectId: string) {
+async function fetchPipelineSprints(pipelineId: string): Promise<StagedSprintsResult> {
+  const res = await fetch(`/api/pipelines/${encodeURIComponent(pipelineId)}/staged/sprints`);
+  if (!res.ok) throw new Error(`Failed to fetch pipeline sprints: ${res.status}`);
+  return res.json() as Promise<StagedSprintsResult>;
+}
+
+async function fetchPipelineTasks(pipelineId: string): Promise<StagedTasksResult> {
+  const res = await fetch(`/api/pipelines/${encodeURIComponent(pipelineId)}/staged/tasks`);
+  if (!res.ok) throw new Error(`Failed to fetch pipeline tasks: ${res.status}`);
+  return res.json() as Promise<StagedTasksResult>;
+}
+
+/** Merge two arrays, deduplicating by key. Pipeline-level entries (which come from the
+ *  artifact store and reflect the feature branch) take precedence over repo-level entries
+ *  (which only reflect the default branch clone). */
+function mergeById<T>(keyFn: (item: T) => string, base: T[], ...extras: T[][]): T[] {
+  const map = new Map<string, T>();
+  for (const item of base) map.set(keyFn(item), item);
+  for (const extra of extras) {
+    for (const item of extra) map.set(keyFn(item), item); // overwrite: pipeline wins
+  }
+  return Array.from(map.values());
+}
+
+export function useProjectWork(projectId: string, activePipelineIds: string[] = []) {
   const phasesQuery = useQuery<RepoStagedPhasesResult>({
     queryKey: ["project-work-phases", projectId],
     queryFn: () => fetchProjectPhases(projectId),
@@ -79,6 +105,33 @@ export function useProjectWork(projectId: string) {
     enabled: Boolean(projectId),
   });
 
+  // Supplement with per-pipeline artifact-store data so sprints/tasks on feature branches
+  // are visible even when the default branch clone hasn't received them yet.
+  const pipelineSprintQueries = useQueries({
+    queries: activePipelineIds.map((pid) => ({
+      queryKey: ["pipeline-work-sprints", pid],
+      queryFn: () => fetchPipelineSprints(pid),
+      enabled: Boolean(pid),
+      staleTime: 10_000,
+    })),
+  });
+
+  const pipelineTaskQueries = useQueries({
+    queries: activePipelineIds.map((pid) => ({
+      queryKey: ["pipeline-work-tasks", pid],
+      queryFn: () => fetchPipelineTasks(pid),
+      enabled: Boolean(pid),
+      staleTime: 10_000,
+    })),
+  });
+
+  const pipelineSprints: StagedSprintRecord[] = pipelineSprintQueries.flatMap(
+    (q) => q.data?.sprints ?? []
+  );
+  const pipelineTasks: StagedTaskRecord[] = pipelineTaskQueries.flatMap(
+    (q) => q.data?.tasks ?? []
+  );
+
   const isLoading = phasesQuery.isLoading || sprintsQuery.isLoading || tasksQuery.isLoading;
   const isError = phasesQuery.isError || sprintsQuery.isError || tasksQuery.isError;
   const error =
@@ -87,12 +140,24 @@ export function useProjectWork(projectId: string) {
   const phases: WorkPhase[] | undefined =
     phasesQuery.data && sprintsQuery.data && tasksQuery.data
       ? phasesQuery.data.phases.map((phase) => {
-          const phaseSprints = sprintsQuery.data.sprints.filter(
+          // Merge repo-level sprints with pipeline-level sprints; pipeline wins on conflict.
+          const allSprints = mergeById(
+            (s) => s.sprint_id,
+            sprintsQuery.data.sprints,
+            pipelineSprints
+          );
+          const phaseSprints = allSprints.filter(
             (s) => s.phase_id === phase.phase_id
           );
 
+          const allTasks = mergeById(
+            (t) => t.task_id,
+            tasksQuery.data.tasks,
+            pipelineTasks
+          );
+
           const sprints: WorkSprint[] = phaseSprints.map((sprint) => {
-            const sprintTasks = tasksQuery.data.tasks.filter(
+            const sprintTasks = allTasks.filter(
               (t) => t.sprint_id === sprint.sprint_id
             );
 
