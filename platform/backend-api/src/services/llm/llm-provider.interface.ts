@@ -102,4 +102,11 @@ export interface ToolExecutor {
 export interface ToolChatOptions extends ChatOptions {
   /** Maximum number of tool-call iterations before giving up. Default: 10 */
   maxIterations?: number;
+  /**
+   * How many times to nudge the LLM back into tool use when it produces a text
+   * response instead of a tool call (end_turn with no tool calls). Each nudge
+   * injects a user message reminding the model to call a tool. Default: 2.
+   * Set to 0 to disable and preserve the old break-immediately behaviour.
+   */
+  maxTextNudges?: number;
 }

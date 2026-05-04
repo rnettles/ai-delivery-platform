@@ -88,10 +88,12 @@ export class AnthropicProvider implements LlmProvider {
     options: ToolChatOptions = {}
   ): Promise<ToolCallResult> {
     const maxIterations = options.maxIterations ?? 10;
+    const maxTextNudges = options.maxTextNudges ?? 2;
     const allToolCalls: ToolCall[] = [];
     const { system, anthropicMessages } = this.convertMessages(messages);
     const history: AnthropicMessage[] = [...anthropicMessages];
     let iterations = 0;
+    let textNudges = 0;
 
     const anthropicTools = tools.map((t) => ({
       name: t.name,
@@ -113,8 +115,26 @@ export class AnthropicProvider implements LlmProvider {
       // Push assistant turn into history
       history.push({ role: "assistant", content: data.content });
 
-      // No tool calls — done
+      // No tool calls — LLM produced a text response instead of using a tool.
+      // Nudge it back into the tool loop rather than breaking out immediately.
       if (data.stop_reason === "end_turn" || toolUseBlocks.length === 0) {
+        if (textNudges < maxTextNudges) {
+          textNudges++;
+          logger.info("LLM end_turn without tool call — nudging back into tool loop", {
+            provider: "anthropic",
+            nudge: textNudges,
+            text_preview: (textBlock?.text ?? "").slice(0, 120),
+          });
+          history.push({
+            role: "user",
+            content:
+              "You produced a text response instead of calling a tool. " +
+              "You MUST continue by calling a tool — do not produce plain text. " +
+              "If the task is complete and all required gates have passed (check success_criteria for any waived gates), call `finish`. " +
+              "Otherwise call the next tool needed to make progress.",
+          });
+          continue;
+        }
         return {
           content: textBlock?.text ?? "",
           tool_calls: allToolCalls,

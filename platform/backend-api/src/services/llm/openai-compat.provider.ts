@@ -92,9 +92,11 @@ export class OpenAiCompatProvider implements LlmProvider {
     options: ToolChatOptions = {}
   ): Promise<ToolCallResult> {
     const maxIterations = options.maxIterations ?? 10;
+    const maxTextNudges = options.maxTextNudges ?? 2;
     const allToolCalls: ToolCall[] = [];
     const history: ChatMessage[] = [...messages];
     let iterations = 0;
+    let textNudges = 0;
 
     while (iterations < maxIterations) {
       iterations++;
@@ -124,8 +126,26 @@ export class OpenAiCompatProvider implements LlmProvider {
         ...(assistantMsg.tool_calls ? { tool_calls: assistantMsg.tool_calls } as unknown as object : {}),
       });
 
-      // No tool calls — LLM is done
+      // No tool calls — LLM produced a text response instead of using a tool.
+      // Nudge it back into the tool loop rather than breaking out immediately.
       if (!assistantMsg.tool_calls || assistantMsg.tool_calls.length === 0) {
+        if (textNudges < maxTextNudges) {
+          textNudges++;
+          logger.info("LLM returned no tool calls — nudging back into tool loop", {
+            provider: "openai-compat",
+            nudge: textNudges,
+            text_preview: (assistantMsg.content ?? "").slice(0, 120),
+          });
+          history.push({
+            role: "user",
+            content:
+              "You produced a text response instead of calling a tool. " +
+              "You MUST continue by calling a tool — do not produce plain text. " +
+              "If the task is complete and all required gates have passed (check success_criteria for any waived gates), call `finish`. " +
+              "Otherwise call the next tool needed to make progress.",
+          });
+          continue;
+        }
         return {
           content: assistantMsg.content ?? "",
           tool_calls: allToolCalls,
