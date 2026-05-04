@@ -23,6 +23,8 @@ interface TurnLogPanelProps {
   isLive: boolean;
   /** ISO timestamp of when the current step started. Used to suppress stale turn logs from prior runs. */
   stepStartedAt?: string;
+  /** Operator steering note to display above the turn list so reviewers know what guidance the agent received. */
+  operatorNote?: string;
 }
 
 async function fetchTurnLog(pipelineId: string): Promise<TurnLogData> {
@@ -145,11 +147,13 @@ function TurnLogModal({
   data,
   headerLabel,
   stopReasonClass,
+  operatorNote,
   onClose,
 }: {
   data: TurnLogData;
   headerLabel: string;
   stopReasonClass: string;
+  operatorNote?: string;
   onClose: () => void;
 }) {
   const [expandedTurn, setExpandedTurn] = useState<number | null>(null);
@@ -187,6 +191,13 @@ function TurnLogModal({
             Collapse
           </button>
         </div>
+        {/* Operator note — surfaced in modal so full context is visible alongside all turns */}
+        {operatorNote && (
+          <div className="flex flex-shrink-0 items-start gap-2 border-b border-blue-100 bg-blue-50 px-5 py-2.5 text-xs text-blue-800">
+            <span className="mt-px flex-shrink-0 font-semibold">Operator note:</span>
+            <span className="break-words">{operatorNote}</span>
+          </div>
+        )}
         {/* Scrollable turn feed — all turns open by default */}
         <ol className="flex-1 overflow-y-auto divide-y divide-gray-100">
           {data.turns.map((entry) => (
@@ -205,7 +216,7 @@ function TurnLogModal({
 
 // ── TurnLogPanel ──────────────────────────────────────────────────────────────
 
-export function TurnLogPanel({ pipelineId, isLive, stepStartedAt }: TurnLogPanelProps) {
+export function TurnLogPanel({ pipelineId, isLive, stepStartedAt, operatorNote }: TurnLogPanelProps) {
   const [expandedTurn, setExpandedTurn] = useState<number | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const listRef = useRef<HTMLOListElement>(null);
@@ -234,9 +245,17 @@ export function TurnLogPanel({ pipelineId, isLive, stepStartedAt }: TurnLogPanel
     // operator knows execution has begun rather than seeing nothing.
     if (isLive && stepStartedAt) {
       return (
-        <div className="mt-3 rounded border border-gray-100 bg-gray-50 px-3 py-2">
-          <span className="inline-block h-2 w-2 flex-shrink-0 rounded-full bg-blue-500 animate-pulse mr-2" />
-          <span className="text-xs text-gray-400">Starting… waiting for first turn</span>
+        <div className="mt-3 space-y-2">
+          {operatorNote && (
+            <div className="flex items-start gap-2 rounded border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+              <span className="mt-px flex-shrink-0 font-semibold">Operator note:</span>
+              <span className="break-words">{operatorNote}</span>
+            </div>
+          )}
+          <div className="rounded border border-gray-100 bg-gray-50 px-3 py-2">
+            <span className="inline-block h-2 w-2 flex-shrink-0 rounded-full bg-blue-500 animate-pulse mr-2" />
+            <span className="text-xs text-gray-400">Starting… waiting for first turn</span>
+          </div>
         </div>
       );
     }
@@ -249,9 +268,17 @@ export function TurnLogPanel({ pipelineId, isLive, stepStartedAt }: TurnLogPanel
     const lastTurnAt = data.turns[data.turns.length - 1]?.timestamp;
     if (lastTurnAt && new Date(lastTurnAt) < new Date(stepStartedAt)) {
       return (
-        <div className="mt-3 rounded border border-gray-100 bg-gray-50 px-3 py-2">
-          <span className="inline-block h-2 w-2 flex-shrink-0 rounded-full bg-blue-500 animate-pulse mr-2" />
-          <span className="text-xs text-gray-400">Starting… waiting for first turn</span>
+        <div className="mt-3 space-y-2">
+          {operatorNote && (
+            <div className="flex items-start gap-2 rounded border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+              <span className="mt-px flex-shrink-0 font-semibold">Operator note:</span>
+              <span className="break-words">{operatorNote}</span>
+            </div>
+          )}
+          <div className="rounded border border-gray-100 bg-gray-50 px-3 py-2">
+            <span className="inline-block h-2 w-2 flex-shrink-0 rounded-full bg-blue-500 animate-pulse mr-2" />
+            <span className="text-xs text-gray-400">Starting… waiting for first turn</span>
+          </div>
         </div>
       );
     }
@@ -265,6 +292,13 @@ export function TurnLogPanel({ pipelineId, isLive, stepStartedAt }: TurnLogPanel
   return (
     <>
       <div className="mt-3 rounded border border-gray-100 bg-gray-50">
+        {/* Operator steering note — shown when creation description or per-step note is present */}
+        {operatorNote && (
+          <div className="flex items-start gap-2 border-b border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800 rounded-t">
+            <span className="mt-px flex-shrink-0 font-semibold">Operator note:</span>
+            <span className="break-words">{operatorNote}</span>
+          </div>
+        )}
         {/* Header */}
         <div className="flex items-center gap-2 border-b border-gray-100 px-3 py-2">
           {isLive && (
@@ -303,6 +337,7 @@ export function TurnLogPanel({ pipelineId, isLive, stepStartedAt }: TurnLogPanel
           data={data}
           headerLabel={headerLabel}
           stopReasonClass={stopReasonClass}
+          operatorNote={operatorNote}
           onClose={handleClose}
         />
       )}

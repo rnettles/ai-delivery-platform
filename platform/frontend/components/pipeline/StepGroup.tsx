@@ -131,9 +131,11 @@ interface StepGroupProps {
   onArtifactSelect: (path: string) => void;
   /** Accumulated + supplemental artifacts for this role, excluding this step's own artifact_paths. */
   extraArtifacts?: string[];
+  /** Operator steering note to surface in the turn log panel. */
+  operatorNote?: string;
 }
 
-export function StepGroup({ group, isFirst: _isFirst, isActive, pipelineId, onArtifactSelect, extraArtifacts }: StepGroupProps) {
+export function StepGroup({ group, isFirst: _isFirst, isActive, pipelineId, onArtifactSelect, extraArtifacts, operatorNote }: StepGroupProps) {
   const defaultOpen = group.status === "running" || group.status === "failed" || isActive;
   const [open, setOpen] = useState(defaultOpen);
 
@@ -197,7 +199,7 @@ export function StepGroup({ group, isFirst: _isFirst, isActive, pipelineId, onAr
             />
             <GateCard record={group.record} />
             {group.role === "implementer" && (
-              <TurnLogPanel pipelineId={pipelineId} isLive={isActive} stepStartedAt={group.record.started_at} />
+              <TurnLogPanel pipelineId={pipelineId} isLive={isActive} stepStartedAt={group.record.started_at} operatorNote={operatorNote} />
             )}
           </div>
         )}

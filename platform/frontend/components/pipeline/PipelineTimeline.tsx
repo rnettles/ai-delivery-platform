@@ -8,9 +8,11 @@ interface PipelineTimelineProps {
   onArtifactSelect: (path: string) => void;
   /** Artifact paths from staged phases/sprints to supplement the Planner stage display. */
   plannerSupplementalPaths?: string[];
+  /** Operator steering note — creation description or per-step note — threaded to TurnLogPanel. */
+  operatorNote?: string;
 }
 
-export function PipelineTimeline({ groups, pipelineId, onArtifactSelect, plannerSupplementalPaths }: PipelineTimelineProps) {
+export function PipelineTimeline({ groups, pipelineId, onArtifactSelect, plannerSupplementalPaths, operatorNote }: PipelineTimelineProps) {
   const activeRef = useRef<HTMLLIElement | null>(null);
 
   // Scroll the active (running) step into view on mount and when pipeline changes.
@@ -86,6 +88,7 @@ export function PipelineTimeline({ groups, pipelineId, onArtifactSelect, planner
               pipelineId={pipelineId}
               onArtifactSelect={onArtifactSelect}
               extraArtifacts={extraArtifacts.length > 0 ? extraArtifacts : undefined}
+              operatorNote={operatorNote}
             />
           </li>
         );

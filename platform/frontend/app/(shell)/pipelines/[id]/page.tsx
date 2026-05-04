@@ -79,6 +79,11 @@ export default function PipelineDetailPage({ params }: PageProps) {
             pipelineId={pipeline.pipeline_id}
             onArtifactSelect={setSelectedArtifact}
             plannerSupplementalPaths={plannerSupplementalPaths}
+            operatorNote={
+              (pipeline.metadata?.operator_note as string | undefined) ||
+              (pipeline.input?.description as string | undefined) ||
+              undefined
+            }
           />
         </main>
 
