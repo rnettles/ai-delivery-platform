@@ -97,7 +97,8 @@ export function checkWriteAllowed(contract: ExecutionContract, relPath: string):
  * Run-command gate (Implementer `run_command` precondition).
  *
  * Permits the command iff its exact string matches one of the contract's three
- * canonical commands (lint / typecheck / test). The Implementer is encouraged to
+ * canonical commands (lint / typecheck / test), or the declared
+ * `dependencies.install_command` when present. The Implementer is encouraged to
  * call these script-runner aliases verbatim; arbitrary shell strings are blocked
  * to keep the gate set deterministic and reproducible across environments.
  */
@@ -105,10 +106,16 @@ export function checkCommandAllowed(contract: ExecutionContract, command: string
   const allowed = [contract.commands.lint, contract.commands.typecheck, contract.commands.test]
     .map((c) => c.trim())
     .filter((c) => c.length > 0);
+  // Also permit the declared install_command so the agent can bootstrap deps
+  // when auto-install didn't fire (e.g. working_directory absent on prior staging).
+  const installCmd = contract.dependencies?.install_command?.trim();
+  if (installCmd) allowed.push(installCmd);
   const trimmed = command.trim();
   if (!allowed.includes(trimmed)) {
+    const allowedNames = ["lint", "typecheck", "test"];
+    if (installCmd) allowedNames.push("install");
     return fail(
-      "command rejected: not in contract.commands {lint, typecheck, test}",
+      `command rejected: not in contract.commands {${allowedNames.join(", ")}}`,
       `command=${trimmed} | allowed=${allowed.join(" | ")}`
     );
   }
@@ -225,7 +232,18 @@ export function checkPreFinishGates(
   contract: ExecutionContract,
   results: { command: string; exit_code: number }[]
 ): EnforcementResult {
-  const required = [contract.commands.lint, contract.commands.typecheck, contract.commands.test].map((c) => c.trim());
+  // Respect success_criteria: only require gates where the corresponding flag is true.
+  const sc = contract.success_criteria;
+  const commandRequired = (cmd: string): boolean => {
+    const c = cmd.trim();
+    if (c === contract.commands.lint.trim()) return sc?.lint_pass ?? true;
+    if (c === contract.commands.typecheck.trim()) return sc?.typecheck_pass ?? true;
+    if (c === contract.commands.test.trim()) return sc?.all_tests_pass ?? true;
+    return true;
+  };
+  const required = [contract.commands.lint, contract.commands.typecheck, contract.commands.test]
+    .map((c) => c.trim())
+    .filter(commandRequired);
   const passing = new Set(
     results
       .filter((r) => r.exit_code === 0)
